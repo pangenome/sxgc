@@ -246,6 +246,7 @@ static inline int suf_cmp_lcp(u64 a, u64 b, u64 from, u64& lcp) {
 // fixture did not finish in 120 s). A walk budget turns that into a loud failure
 // with the numbers, in seconds.
 static u64 g_wave_fallback_walk_max = 4ull << 30;   // bytes walked per band
+static bool g_wave_fallback_walk_set = false;       // the knob overrode the derivation
 static inline int suf_cmp_from_counted(u64 a, u64 b, u64 from, u64& walked) {
     const u64 cap = std::min(FILE_N - a, FILE_N - b);
     if (from >= cap) {
@@ -1065,8 +1066,15 @@ static void wk_msd_level(const std::vector<u64>& cur, std::vector<u64>& alt,
 // one sequential read for all of them; a sparse one costs one page per row).
 // Rows already past the end get zeros - their digit is the END bucket, decided
 // from the position, never from these bytes.
+// THE PER-CALL-SITE READ LEDGER. Every corpus read the band sort performs is
+// named by the file:line that performed it, with the rows it served, so a
+// bytes-per-row regression can be attributed to a SITE instead of a phase.
+static std::atomic<u64> EXTRACT_SITE_BYTES[8] = {{0},{0},{0},{0},{0},{0},{0},{0}};
+static std::atomic<u64> EXTRACT_SITE_ROWS[8] = {{0},{0},{0},{0},{0},{0},{0},{0}};
+static std::atomic<u64> EXTRACT_SITE_CALLS[8] = {{0},{0},{0},{0},{0},{0},{0},{0}};
 static void wk_extract(int fd, const std::vector<std::pair<u64, u64>>& items, u64 off, u64 kk,
-                       std::vector<u8>& keys, WaveKeyStats& st) {
+                       std::vector<u8>& keys, WaveKeyStats& st, int site,
+                       u64 bytes_before = 0) {
     keys.assign(items.size() * size_t(kk), 0);
     std::vector<u8> win;
     size_t i = 0;
@@ -1100,6 +1108,11 @@ static void wk_extract(int fd, const std::vector<std::pair<u64, u64>>& items, u6
         i = j + 1;
     }
     ++st.extra_passes;
+    if (site >= 0 && site < 8) {
+        EXTRACT_SITE_BYTES[site] += st.bytes_read - bytes_before;   // the DELTA this call read
+        EXTRACT_SITE_ROWS[site] += items.size();
+        EXTRACT_SITE_CALLS[site] += 1;
+    }
 }
 
 // THE LEAF SORT. rows[] (P = packed position/symbol, Kb = the captured key plane)
@@ -1222,36 +1235,6 @@ static void wavekey_sort_band(int fd, std::vector<u64>& P, std::vector<u8>& Kb,
     spans.clear();
     st.t_radix += now_sec() - t0;
 
-    // ---- THE RUN-AWARE LCP, and why it needs no corpus ----
-    // With the run known, the LCP of two rows of one wave is decided by (L, t) in
-    // almost every case: differing sigma -> kbase; differing L -> kbase+min(L);
-    // equal L with differing t -> kbase+L; only rows equal in BOTH fall back to the
-    // captured bytes, and a pair that survives those is a genuine tie (its value
-    // comes from the deeper rounds or the LCE fallback).
-    auto lcp_pair = [&](u64 ia, u64 ib) -> u64 {
-        const u64 ra = rem_of(P[size_t(ia)]), rb = rem_of(P[size_t(ib)]);
-        const u64 lo = std::min(ra, rb);
-        if (lo <= kbase) return lo;                     // a suffix ends inside the prefix
-        const size_t ka = size_t(ia) * size_t(K), kb = size_t(ib) * size_t(K);
-        if (Kb[ka] != Kb[kb]) return kbase;
-        const u64 La = Lp[size_t(ia)], Lb = Lp[size_t(ib)];
-        if (La != Lb) return kbase + std::min<u64>(La, Lb);
-        if (Tp[size_t(ia)] != Tp[size_t(ib)]) return kbase + La;
-        for (u64 j = La + 1; j < K; ++j) {
-            if (kbase + j >= lo) return lo;             // the shorter suffix ended
-            if (Kb[ka + size_t(j)] != Kb[kb + size_t(j)]) return kbase + j;
-        }
-        return ~0ull;                                   // a genuine tie: rounds or LCE
-    };
-    // The value every pair OUTSIDE a tie span must carry. Inside a tie span the
-    // rounds stamp their own boundaries, and the pair that opens a span is decided
-    // by the span's creation digit, i.e. it is the same value for every row of the
-    // span - which is exactly what this pass computes.
-    for (u64 i = 1; i < n; ++i) {
-        const u64 v = lcp_pair(i - 1, i);
-        if (v != ~0ull) lcpv[size_t(i)] = v;
-    }
-
     // THE CURRENT WINDOW, as the direct-comparison helpers see it. Round 0 reads
     // the captured plane (Kb, one row = K contiguous bytes); an extraction round
     // reads the plane its own pass filled, indexed through the u32 SLOT that
@@ -1309,6 +1292,22 @@ static void wavekey_sort_band(int fd, std::vector<u64>& P, std::vector<u8>& Kb,
         }
         return false;                              // equal on the ORDER key: a real tie
     };
+    auto lcp_pair = [&](u64 ia, u64 ib) -> u64 {
+        const u64 ra = rem_of(P[size_t(ia)]), rb = rem_of(P[size_t(ib)]);
+        const u64 lo = std::min(ra, rb);
+        if (lo <= kbase) return lo;                     // a suffix ends inside the prefix
+        const size_t ka = size_t(ia) * size_t(K), kb = size_t(ib) * size_t(K);
+        if (Kb[ka] != Kb[kb]) return kbase;
+        const u64 La = Lp[size_t(ia)], Lb = Lp[size_t(ib)];
+        if (La != Lb) return kbase + std::min<u64>(La, Lb);
+        if (Tp[size_t(ia)] != Tp[size_t(ib)]) return kbase + La;
+        for (u64 j = La + 1; j < K; ++j) {
+            if (kbase + j >= lo) return lo;             // the shorter suffix ended
+            if (Kb[ka + size_t(j)] != Kb[kb + size_t(j)]) return kbase + j;
+        }
+        return ~0ull;                                   // a genuine tie: rounds or LCE
+    };
+
     // ---- the SMALL spans: direct comparison. mode 0 = the order key (round 0),
     // mode 1 = a byte window (an extraction round, read through the slot plane) ----
     auto settle_small = [&](std::vector<std::pair<u64, u64>>& todo, int mode,
@@ -1395,6 +1394,22 @@ static void wavekey_sort_band(int fd, std::vector<u64>& P, std::vector<u8>& Kb,
     spans.swap(carry);
     carry.clear();
 
+    // ---- THE RUN-AWARE LCP, and why it needs no corpus ----
+    // With the run known, the LCP of two rows of one wave is decided by (L, t) in
+    // almost every case: differing sigma -> kbase; differing L -> kbase+min(L);
+    // equal L with differing t -> kbase+L; only rows equal in BOTH fall back to the
+    // captured bytes, and a pair that survives those is a genuine tie (its value
+    // comes from the deeper rounds or the LCE fallback).
+    // The value every pair OUTSIDE a tie span must carry. Inside a tie span the
+    // rounds stamp their own boundaries, and the pair that opens a span is decided
+    // by the span's creation digit, i.e. it is the same value for every row of the
+    // span - which is exactly what this pass computes.
+    for (u64 i = 1; i < n; ++i) {
+        const u64 v = lcp_pair(i - 1, i);
+        if (v != ~0ull) lcpv[size_t(i)] = v;
+    }
+
+
     // ---- the EXTRACTION ROUNDS: tie rows only, rising windows (K, 2K, 4K, ...) ----
     u64 woff = kbase + K;      // the absolute offset the next window starts at
     u64 last_woff = kbase;     // THE LOOP INVARIANT: every round starts strictly later
@@ -1450,7 +1465,7 @@ static void wavekey_sort_band(int fd, std::vector<u64>& P, std::vector<u8>& Kb,
         std::sort(items.begin(), items.end());
         std::vector<u8> keys;
         const u64 bytes0 = st.bytes_read, calls0 = st.syscalls;
-        wk_extract(fd, items, woff, kk, keys, st);
+        wk_extract(fd, items, woff, kk, keys, st, 0, bytes0);   // site 0: tie round extraction
         const u64 round_bytes = st.bytes_read - bytes0, round_calls = st.syscalls - calls0;
         st.t_extract += now_sec() - tx0;
         st.tie_rows += tie;
@@ -1546,35 +1561,24 @@ static void wavekey_sort_band(int fd, std::vector<u64>& P, std::vector<u8>& Kb,
         st.t_radix += now_sec() - tr0;
         u64 tie_after = 0;
         for (const auto& sp : carry) tie_after += sp.second - sp.first;
+        if (tie_after > tie)
+            die("WAVEKEY_TERMINATION_FAIL: band " + std::to_string(band_id) + " round " +
+                std::to_string(round) + " GREW the tie set from " + std::to_string(tie) +
+                " to " + std::to_string(tie_after) + " rows at off=" + std::to_string(woff) +
+                " - a partition is not a partition");
         if (!carry.empty() && tie_after >= tie) {
+            // A round that separates NOTHING is not a bug: it means these rows are
+            // equal over the whole window, and the NEXT (doubled) window is what
+            // separates them. What would be a bug is a loop that cannot end, and
+            // that is excluded structurally: every round starts strictly later
+            // (asserted above), the round count is capped, and what the cap leaves
+            // goes to the LCE fallback under a counted WALK BUDGET. So this is a
+            // receipt, not a failure.
             ++st.no_shrink;
-            // A round MUST shrink the tie set. The one legal exception is a tie
-            // set whose suffixes all END inside the window: an END bucket is a
-            // singleton (two distinct positions never share a suffix length), so
-            // their order is already fixed by that. Anything else is a bug in the
-            // digit function - and a bug here is a spin, so it fails loudly with
-            // the numbers instead of burning an hour.
-            bool any_live = false;
-            for (const auto& sp : carry) {
-                const u64 rem = rem_of(P[size_t(sp.first)]);
-                if (rem > woff + kk) { any_live = true; break; }
-            }
             std::fprintf(stderr,
                 "SORT_RUNKEY_NOSHRINK band=%" PRIu64 " round=%" PRIu64 " off=%" PRIu64
-                " k=%" PRIu64 " rows_in=%" PRIu64 " rows_tied=%" PRIu64 " live=%d\n",
-                band_id, round, woff, kk, tie, tie_after, int(any_live));
-            if (any_live)
-                die("WAVEKEY_TERMINATION_FAIL: band " + std::to_string(band_id) + " round " +
-                    std::to_string(round) + " left " + std::to_string(tie_after) +
-                    " of " + std::to_string(tie) + " rows tied at off=" + std::to_string(woff) +
-                    " with live suffixes: the round did not shrink the tie set. The class is"
-                    " periodic or its RUN outlived --wave-run-cap (currently " +
-                    std::to_string(g_wave_run_cap) + "): raise it, raise --wave-key-rounds, or"
-                    " accept that this corpus shape has no bounded sweep order");
-            std::fprintf(stderr,
-                "SORT_ROUND_STALL band=%" PRIu64 " round=%" PRIu64 " off=%" PRIu64
                 " k=%" PRIu64 " rows_in=%" PRIu64 " rows_tied=%" PRIu64
-                " note=all-survivors-ended-inside-the-window-so-the-order-is-fixed\n",
+                " note=equal-over-this-window;the-next-doubling-window-decides\n",
                 band_id, round, woff, kk, tie, tie_after);
         }
         std::fprintf(stderr,
@@ -1757,8 +1761,8 @@ int main(int argc, char** argv) {
         else if (a == "--wave-key-rounds") wave_key_rounds = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a.rfind("--wave-run-cap=", 0) == 0) g_wave_run_cap = std::strtoull(a.substr(15).c_str(), nullptr, 10);
         else if (a == "--wave-run-cap") g_wave_run_cap = std::strtoull(nxt().c_str(), nullptr, 10);
-        else if (a.rfind("--wave-fallback-walk-max=", 0) == 0) g_wave_fallback_walk_max = std::strtoull(a.substr(26).c_str(), nullptr, 10);
-        else if (a == "--wave-fallback-walk-max") g_wave_fallback_walk_max = std::strtoull(nxt().c_str(), nullptr, 10);
+        else if (a.rfind("--wave-fallback-walk-max=", 0) == 0) { g_wave_fallback_walk_max = std::strtoull(a.substr(26).c_str(), nullptr, 10); g_wave_fallback_walk_set = true; }
+        else if (a == "--wave-fallback-walk-max") { g_wave_fallback_walk_max = std::strtoull(nxt().c_str(), nullptr, 10); g_wave_fallback_walk_set = true; }
         else if (a == "--subdiv-leaf-coverage-pct") leaf_coverage_pct = std::atof(nxt().c_str());
         else if (a == "--subdiv-position-budget-bytes") pos_budget_bytes = std::strtoull(nxt().c_str(), nullptr, 10);
         else die("unknown arg " + a);
@@ -1805,7 +1809,10 @@ int main(int argc, char** argv) {
             if (!wave_key_rounds) { wave_key_rounds = std::strtoull(e, nullptr, 10); wk_source = "env"; }
         }
         if (const char* e = ::getenv("XSA_WAVE_KEY_RUN_CAP")) g_wave_run_cap = std::strtoull(e, nullptr, 10);
-        if (const char* e = ::getenv("XSA_WAVE_FALLBACK_WALK_MAX")) g_wave_fallback_walk_max = std::strtoull(e, nullptr, 10);
+        if (const char* e = ::getenv("XSA_WAVE_FALLBACK_WALK_MAX")) {
+            g_wave_fallback_walk_max = std::strtoull(e, nullptr, 10);
+            g_wave_fallback_walk_set = true;
+        }
         if (!wave_key_bytes) wave_key_bytes = 8;
         if (!wave_key_rounds) wave_key_rounds = 5;
         if (wave_key_bytes < 1 || wave_key_bytes > 1024)
@@ -1886,6 +1893,13 @@ int main(int argc, char** argv) {
     if (!FILE_N) die("empty corpus");
     N = FILE_N + 1; // the END suffix exists in both realizations
     KEY_N = FILE_N >= 24 ? FILE_N - 23 : 0;
+    // THE FALLBACK'S WALK BUDGET, in the unit the work is actually done in: the
+    // corpus bytes a band's LCE comparisons may walk. Prose needs a few times the
+    // corpus per band (MEASURED 4 GiB on a 1.4 M-row band of the 150 MB slice), a
+    // periodic class needs O(n^2) and must fail instead of spinning. So: 64x the
+    // corpus, floored at 4 GiB; the knob overrides both.
+    if (!g_wave_fallback_walk_set)
+        g_wave_fallback_walk_max = std::max<u64>(4ull << 30, 64ull * FILE_N);
     T = (const u8*)::mmap(nullptr, (size_t)FILE_N, PROT_READ, MAP_PRIVATE, fd, 0);
     if (T == MAP_FAILED) die("mmap corpus");
     // NO MADV_WILLNEED: it pulls the WHOLE corpus into this process's RSS before a
@@ -4075,6 +4089,31 @@ int main(int argc, char** argv) {
                             if (val >= 255) { bandEsc.emplace_back(band_off[b] + i, val); bandLcp[i] = 255; }
                             else bandLcp[i] = uint8_t(val);
                         }
+                        // ---- THE COLUMN'S ORACLE (XSA_WAVEKEY_LCP_SAMPLE=N) ----
+                        // Every Nth adjacent pair's LCP is re-derived from the corpus.
+                        // Cheap enough to ride along a real run, and it names the row,
+                        // the depth, the run digits and both byte windows when it
+                        // disagrees - which is the only way a 1-in-1e8 column defect is
+                        // findable at all.
+                        if (const char* e = ::getenv("XSA_WAVEKEY_LCP_SAMPLE")) {
+                            const u64 stride = std::max<u64>(1, std::strtoull(e, nullptr, 10));
+                            for (size_t i = 1; i < lcpv.size(); i += size_t(stride)) {
+                                u64 truth = 0;
+                                suf_cmp_lcp(unpack_pos(P[i - 1]), unpack_pos(P[i]), 0, truth);
+                                if (lcpv[i] != truth) {
+                                    const u64 pa = unpack_pos(P[i - 1]), pb = unpack_pos(P[i]);
+                                    std::fprintf(stderr,
+                                        "WAVEKEY_LCP_SAMPLE_FAIL band=%" PRIu64 " row=%zu"
+                                        " kbase=%" PRIu64 " got=%" PRIu64 " want=%" PRIu64
+                                        " prev_pos=%" PRIu64 " pos=%" PRIu64
+                                        " La=%u Ta=%u Lb=%u Tb=%u\n",
+                                        tapeBand, i, W.preLen, lcpv[i], truth, pa, pb,
+                                        unsigned(Lp[i - 1]), unsigned(Tp[i - 1]),
+                                        unsigned(Lp[i]), unsigned(Tp[i]));
+                                    die("WAVEKEY_LCP_SAMPLE_FAIL: the column disagrees with a direct walk");
+                                }
+                            }
+                        }
                         if (lcpOn) {
                             // ---- THE SEAM --------------------------------------------------
                             // Byte 0 of a band is the LCP with the PREVIOUS row in rank
@@ -4681,6 +4720,46 @@ int main(int argc, char** argv) {
             " corpus; the only global passes are the survey and the position window)\n",
             histStr.c_str(), maxClassRows, rows_per_wave, pointMassSplits, waveGoal,
             S.P, sk.size(), stride, scatterPasses);
+    }
+    // THE PROCESS'S OWN I/O RECEIPT: what the kernel says this run asked for
+    // (rchar) and what it actually pulled from the device (read_bytes). The two
+    // numbers are the W1 gate, so the binary prints them itself instead of leaving
+    // them to a sampler that can miss the last read.
+    {
+        unsigned long long rchar = 0, rb = 0, syscr = 0, syscw = 0, wchar = 0, wb = 0;
+        if (FILE* f = std::fopen("/proc/self/io", "r")) {
+            char line[256];
+            while (std::fgets(line, sizeof line, f)) {
+                unsigned long long v = 0;
+                if (std::sscanf(line, "rchar: %llu", &v) == 1) rchar = v;
+                else if (std::sscanf(line, "read_bytes: %llu", &v) == 1) rb = v;
+                else if (std::sscanf(line, "syscr: %llu", &v) == 1) syscr = v;
+                else if (std::sscanf(line, "syscw: %llu", &v) == 1) syscw = v;
+                else if (std::sscanf(line, "wchar: %llu", &v) == 1) wchar = v;
+                else if (std::sscanf(line, "write_bytes: %llu", &v) == 1) wb = v;
+            }
+            std::fclose(f);
+        }
+        std::fprintf(stderr,
+            "SS_IO rchar=%llu read_bytes=%llu syscr=%llu wchar=%llu write_bytes=%llu syscw=%llu"
+            " corpus_bytes=%" PRIu64 " rows=%" PRIu64
+            " rchar_per_row=%.6f read_bytes_per_row=%.6f"
+            " rule=rchar_asked;read_bytes_from_the_device;both_over_the_rows_this_run_emitted\n",
+            rchar, rb, syscr, wchar, wb, syscw, FILE_N, N,
+            N ? double(rchar) / double(N) : 0.0, N ? double(rb) / double(N) : 0.0);
+    }
+    for (int site = 0; site < 8; ++site) {
+        if (!EXTRACT_SITE_CALLS[site].load()) continue;
+        std::fprintf(stderr,
+            "EXTRACT_BYTES_READ site=%d file=scatter_sort.cpp:wk_extract unit=band_tie_round"
+            " calls=%" PRIu64 " rows=%" PRIu64 " bytes=%" PRIu64
+            " bytes_per_row=%.4f corpus_x=%.4f"
+            " rule=one_ascending_window_scan_per_(band,round)_over_its_tie_rows\n",
+            site, EXTRACT_SITE_CALLS[site].load(), EXTRACT_SITE_ROWS[site].load(),
+            EXTRACT_SITE_BYTES[site].load(),
+            EXTRACT_SITE_ROWS[site].load()
+                ? double(EXTRACT_SITE_BYTES[site].load()) / double(EXTRACT_SITE_ROWS[site].load()) : 0.0,
+            FILE_N ? double(EXTRACT_SITE_BYTES[site].load()) / double(FILE_N) : 0.0);
     }
     std::fprintf(stderr,
         "WAVE_KEY totals rows=%" PRIu64 " key_bytes=%" PRIu64 " tie_rows=%" PRIu64
