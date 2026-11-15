@@ -512,7 +512,18 @@ static constexpr u64 SS_SORT_KEY_BYTES_DEFAULT = 32;   // K: bytes extracted per
 static void read_window(int fd, u64 from, u64 want, std::vector<u8>& buf);
 static constexpr u64 SS_SORT_KEY_ROW_BYTES = 32;        // the key plane's cap, B/band-row
 static constexpr u64 SS_SORT_ROUNDS_MAX_DEFAULT = 4;    // 24 + K(1+2+4+8) = 504 B covered
-static constexpr u64 SS_SORT_EXTRACT_WINDOW = 2u << 20; // one pread serves every row inside it
+// THE EXTRACTION'S CLUSTER RULE. Two knobs, and the second is the one that
+// matters: WIN_MAX bounds ONE pread, but the reason to merge two rows into one
+// read is that the bytes between them would be read anyway. A window is only
+// extended across a GAP of at most one page - the kernel reads whole pages, so
+// coalescing rows a few bytes apart is free and coalescing rows a megabyte apart
+// is not. (The first version merged on span alone and read a 2 MiB window to
+// collect 278 keys: 7.5 KB of I/O per row where one page would do.)
+static constexpr u64 SS_SORT_EXTRACT_WINDOW = 2u << 20; // the largest single pread
+static constexpr u64 SS_SORT_EXTRACT_GAP = 4096;        // the largest gap we merge across
+// A tie span at or below this size is ordered by direct comparison, never by a
+// 257-bucket radix: the counters cost 2 KB per call, which is more than the span.
+static constexpr u64 SS_SORT_SMALL_ROWS = 64;
 static constexpr unsigned SS_SORT_BUCKETS_KEY = 256;    // one byte of a 24-byte in-row key
 static constexpr unsigned SS_SORT_BUCKETS_TEXT = 257;   // + bucket 0 = the virtual END
 static u64 g_sort_key_bytes = SS_SORT_KEY_BYTES_DEFAULT;
@@ -528,6 +539,8 @@ struct SortStats {
     u64 rounds = 0, tie_rows = 0, tie_bytes = 0;
     u64 bytes = 0, syscalls = 0, clusters = 0;
     u64 fallback_spans = 0, fallback_rows = 0, tie_rounds_no_shrink = 0;
+    // THE COST SHAPE, so a wall regression names its own phase.
+    double t_phase1 = 0, t_extract = 0, t_radix = 0, t_fallback = 0, t_order = 0;
 };
 
 // One MSD level over rows[lo,hi): STABLE counting sort on `dig(i)` in [0,nbuckets),
@@ -562,8 +575,10 @@ static void msd_level(const std::vector<Row>& cur, std::vector<Row>& alt, u64 lo
 // Sum and xor of the packed positions identify the multiset well enough to catch
 // it AT THE LEVEL THAT DID IT, which is the difference between a five-minute bug
 // and a five-hour one. Cost: one linear pass per level over the rows that moved.
+static bool g_sort_verify = false;   // XSA_SORT_VERIFY=1: the whole-array checks
 static inline void perm_guard(const std::vector<Row>& v, u64 lo, u64 hi, u64 sum0, u64 xor0,
                               const char* where, u64 a, u64 b) {
+    if (!g_sort_verify) return;
     u64 s = 0, x = 0;
     for (u64 i = lo; i < hi; ++i) { s += v[size_t(i)].pos; x ^= v[size_t(i)].pos; }
     if (s != sum0 || x != xor0)
@@ -593,6 +608,7 @@ static void extract_key_windows(int fd, const std::vector<std::pair<u64, u64>>& 
         while (j + 1 < items.size()) {
             const u64 q = items[j + 1].first + off;
             if (q >= FILE_N) break;
+            if (q > hi + SS_SORT_EXTRACT_GAP) break;         // the gap would be wasted
             const u64 qhi = std::min<u64>(FILE_N, q + k);
             if (qhi - lo > SS_SORT_EXTRACT_WINDOW) break;
             if (qhi > hi) hi = qhi;
@@ -620,7 +636,7 @@ static void extract_key_windows(int fd, const std::vector<std::pair<u64, u64>>& 
 // prefix, so bytes [0,d_known) are equal for all of them and are never read.
 static void radix_sort_band(int fd, std::vector<Row>& rows, std::vector<uint8_t>& out_lcp,
                             std::vector<std::pair<u64, u64>>& esc, u64 rank_base,
-                            u64 d_known, SortStats& st) {
+                            u64 d_known, u64 band_id, SortStats& st) {
     const u64 n = rows.size();
     out_lcp.assign(n, 0);
     esc.clear();
@@ -629,7 +645,7 @@ static void radix_sort_band(int fd, std::vector<Row>& rows, std::vector<uint8_t>
     // A FULL permutation check (opt-in): the sum/xor level guard catches a broken
     // scatter, this catches anything else that could lose or duplicate a row.
     std::vector<u64> verify;
-    if (::getenv("XSA_SORT_VERIFY")) {
+    if (g_sort_verify) {
         verify.resize(n);
         for (u64 i = 0; i < n; ++i) verify[size_t(i)] = rows[size_t(i)].pos;
         std::sort(verify.begin(), verify.end());
@@ -651,11 +667,47 @@ static void radix_sort_band(int fd, std::vector<Row>& rows, std::vector<uint8_t>
     std::vector<u64> lcpv(n, 0);
     std::vector<u64> starts, cursor;
 
-    // ---- PHASE 1: the 24-byte in-row key. MSD radix, ZERO corpus reads. ----
-    // Starting at min(d_known,24) skips the levels the descent already proved
-    // equal: for a deep band that is all 24 of them and this phase is a no-op.
+    // ---- PHASE 1: order by the 24-byte IN-ROW key. ZERO corpus reads. ----
+    // No radix here on purpose. The keys are already in the row, so the cost is
+    // ALU only and a 3-word comparison sort is the cheap tool; a radix would pay a
+    // count+scatter per byte (and the ping-pong memcpy) for work that never leaves
+    // L2. The tie groups fall out as runs of equal key, and the LCP of a pair that
+    // DIFFERS inside the key is clz of the xor - exact, free.
+    const double tp0 = now_sec();
+    auto eqkey = [](const Row& a, const Row& b) {
+        return a.klo == b.klo && a.khi == b.khi && a.kq == b.kq;
+    };
+    bool all_equal = true;
+    for (u64 i = 1; i < n; ++i)
+        if (!eqkey(rows[size_t(i)], rows[size_t(i - 1)])) { all_equal = false; break; }
+    if (!all_equal)
+        std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+            if (a.klo != b.klo) return a.klo < b.klo;
+            if (a.khi != b.khi) return a.khi < b.khi;
+            if (a.kq != b.kq) return a.kq < b.kq;
+            return false;   // equal keys: the deep rounds decide, so any order will do
+        });
     std::vector<std::pair<u64, u64>> spans;
-    spans.emplace_back(0, n);
+    {
+        u64 i = 0;
+        while (i < n) {
+            u64 j = i + 1;
+            while (j < n && eqkey(rows[size_t(j)], rows[size_t(i)])) ++j;
+            if (j - i > 1) spans.emplace_back(i, j);
+            i = j;
+        }
+    }
+    for (u64 i = 1; i < n; ++i) {
+        const Row& a = rows[size_t(i - 1)];
+        const Row& b = rows[size_t(i)];
+        if (a.klo != b.klo)      lcpv[size_t(i)] = u64(__builtin_clzll(a.klo ^ b.klo)) >> 3;
+        else if (a.khi != b.khi) lcpv[size_t(i)] = 8 + (u64(__builtin_clzll(a.khi ^ b.khi)) >> 3);
+        else if (a.kq != b.kq)   lcpv[size_t(i)] = 16 + (u64(__builtin_clzll(a.kq ^ b.kq)) >> 3);
+        // else: equal 24-byte keys - a lower bound only; PHASE 2 settles it, and a
+        // tie pair a round cannot separate is settled exactly by the fallback.
+    }
+    st.t_phase1 = now_sec() - tp0;
+    verify_stage("phase1");
     // THE PING-PONG INVARIANT. `alt` is only written inside the spans a level
     // scatters, so outside them it still holds the PREVIOUS level's rows. The rows
     // that must be carried forward outside this level's spans are therefore the
@@ -663,45 +715,30 @@ static void radix_sort_band(int fd, std::vector<Row>& rows, std::vector<uint8_t>
     // (Copying the CURRENT spans instead was the bug: after the first level wrote
     // all of [0,n), every later level left the singleton rows of the previous
     // level stale in `alt`, i.e. it lost and duplicated rows. The per-span
-    // permutation guard could not see it because every span's own scatter WAS a
-    // permutation; only the whole-array check could.)
+    // permutation guard could not see it, because every span's own scatter WAS a
+    // permutation; only a whole-array check can.)
     std::vector<std::pair<u64, u64>> prev;
     prev.emplace_back(0, n);
-    for (u64 g = std::min<u64>(d_known, 24); g < 24 && !spans.empty(); ++g) {
-        const unsigned sh = unsigned(8 * (7 - (g % 8)));
-        const int wd = int(g / 8);
-        auto dig = [&rows, wd, sh](u64 i) -> unsigned {
-            const Row& r = rows[i];
-            const u64 w = wd == 0 ? r.klo : (wd == 1 ? r.khi : r.kq);
-            return unsigned((w >> sh) & 0xffu);
-        };
-        for (const auto& sp : prev)
-            std::memcpy(&alt[size_t(sp.first)], &rows[size_t(sp.first)],
-                        size_t(sp.second - sp.first) * sizeof(Row));
-        std::vector<std::pair<u64, u64>> nxt;
-        for (const auto& sp : spans) {
-            u64 s0 = 0, x0 = 0;
-            for (u64 i = sp.first; i < sp.second; ++i) { s0 += rows[size_t(i)].pos; x0 ^= rows[size_t(i)].pos; }
-            msd_level(rows, alt, sp.first, sp.second, SS_SORT_BUCKETS_KEY, dig, starts, cursor);
-            for (unsigned b = 0; b < SS_SORT_BUCKETS_KEY; ++b) {
-                const u64 s = starts[b], e = starts[b + 1];
-                if (e - s > 1) nxt.emplace_back(s, e);
-                // bucket 0 starts at sp.first: that row's LCP is with the row
-                // BEFORE the span and was stamped when the span was created.
-                if (s > sp.first && e > s) lcpv[s] = g;
-            }
-            perm_guard(alt, sp.first, sp.second, s0, x0, "phase1", g, sp.first);
-        }
-        rows.swap(alt);
-        prev = spans;
-        spans.swap(nxt);
-    }
-
-    verify_stage("phase1");
     // ---- PHASE 2: the tie groups. Streaming extraction, doubling windows. ----
+    //
+    // ONE ROUND = one extraction of kk bytes for every row still tied, then the
+    // byte-by-byte MSD partitions of that window. The window is CONTIGUOUS with
+    // the next and doubles, so nothing a window ends on falls between two windows.
+    //
+    // SMALL SPANS DO NOT GET A RADIX. A 257-bucket count+scatter over two rows
+    // costs two 2 KB counter arrays to order 64 bytes; MEASURED as 87% of the
+    // whole leaf's time at 150 MB, because the tail of every level sequence is
+    // thousands of two-row spans. A span of at most SS_SORT_SMALL_ROWS is ordered
+    // by direct comparison of its key windows instead - the same order, and the
+    // divergence index of each adjacent pair IS its LCP.
     u64 off = std::max<u64>(24, d_known);
     u64 k = g_sort_key_bytes ? g_sort_key_bytes : SS_SORT_KEY_BYTES_DEFAULT;
     std::vector<std::pair<u64, u64>> residual;
+    std::vector<std::pair<u64, u64>> small, big, carry, nxt;
+    std::vector<u32> sidx, tmp_slot, out_slot;
+    std::vector<u64> out_lcpv;
+    std::vector<Row> out_row;
+    std::vector<Row> tmp_row;
     for (unsigned round = 0; !spans.empty(); ++round) {
         if (round >= g_sort_rounds_max) { residual.swap(spans); break; }
         u64 tie = 0;
@@ -714,6 +751,7 @@ static void radix_sort_band(int fd, std::vector<Row>& rows, std::vector<uint8_t>
         if (kk < 4) { residual.swap(spans); break; }   // the plane cannot hold it: LCE arm
         // Every row of the tie set, ordered by POSITION: this is what makes the
         // extraction one forward pass instead of one random read per row.
+        const double tx0 = now_sec();
         std::vector<std::pair<u64, u64>> items;
         items.reserve(size_t(tie));
         for (const auto& sp : spans)
@@ -721,7 +759,10 @@ static void radix_sort_band(int fd, std::vector<Row>& rows, std::vector<uint8_t>
                 items.emplace_back(unpack_pos(rows[size_t(i)].pos), i);
         std::sort(items.begin(), items.end());
         std::vector<u8> keys;
+        const u64 bytes0 = st.bytes, syscalls0 = st.syscalls;
         extract_key_windows(fd, items, off, kk, keys, st);
+        const u64 round_bytes = st.bytes - bytes0, round_calls = st.syscalls - syscalls0;
+        st.t_extract += now_sec() - tx0;
         st.tie_rows += tie;
         st.tie_bytes += tie * kk;
         // THE KEY-PLANE SLOT IS A ROW PROPERTY. `slotv` is a u32 payload scattered
@@ -731,10 +772,18 @@ static void radix_sort_band(int fd, std::vector<Row>& rows, std::vector<uint8_t>
         std::vector<u32> slotv(n, 0xffffffffu), slotal(n, 0xffffffffu);
         for (size_t t = 0; t < items.size(); ++t) slotv[size_t(items[t].second)] = u32(t);
         const u64 tie_before = tie;
-        std::vector<std::pair<u64, u64>> nxt;
-        for (unsigned lvl = 0; lvl < kk; ++lvl) {
-            if (spans.empty()) break;
+        // ---- the byte-by-byte MSD partitions of this window, LARGE spans only ----
+        const double tr0 = now_sec();
+        small.clear();
+        prev.assign(1, std::make_pair(u64(0), n));   // one full resync per round
+        for (unsigned lvl = 0; lvl < kk && !spans.empty(); ++lvl) {
             const u64 g = off + lvl;
+            big.clear();
+            for (const auto& sp : spans) {
+                if (sp.second - sp.first > SS_SORT_SMALL_ROWS) big.push_back(sp);
+                else small.push_back(sp);
+            }
+            if (big.empty()) { spans.clear(); break; }
             auto dig = [&rows, &keys, &slotv, kk, lvl, g](u64 i) -> unsigned {
                 const u64 rem = FILE_N - unpack_pos(rows[size_t(i)].pos);
                 if (rem <= g) return 0u;   // the virtual END: below every symbol
@@ -747,7 +796,7 @@ static void radix_sort_band(int fd, std::vector<Row>& rows, std::vector<uint8_t>
                             size_t(sp.second - sp.first) * sizeof(u32));
             }
             nxt.clear();
-            for (const auto& sp : spans) {
+            for (const auto& sp : big) {
                 u64 s0 = 0, x0 = 0;
                 for (u64 i = sp.first; i < sp.second; ++i) { s0 += rows[size_t(i)].pos; x0 ^= rows[size_t(i)].pos; }
                 msd_level(rows, alt, sp.first, sp.second, SS_SORT_BUCKETS_TEXT, dig, starts, cursor,
@@ -761,21 +810,90 @@ static void radix_sort_band(int fd, std::vector<Row>& rows, std::vector<uint8_t>
             }
             rows.swap(alt);
             slotv.swap(slotal);
-            prev = spans;
+            prev = big;
             spans.swap(nxt);
         }
+        for (const auto& sp : spans) small.push_back(sp);
+        st.t_radix += now_sec() - tr0;
+        // ---- the SMALL spans: direct comparison of the key window ----
+        const double ts0 = now_sec();
+        auto wdiv = [&](const Row& ra, const u8* ka, const Row& rb, const u8* kb) -> u64 {
+            const u64 la = FILE_N - unpack_pos(ra.pos), lb = FILE_N - unpack_pos(rb.pos);
+            for (u64 j = 0; j < kk; ++j) {
+                const u64 g = off + j;
+                const bool ea = la <= g, eb = lb <= g;
+                if (ea || eb) {
+                    if (ea && eb) return la == lb ? kk : j;   // equal length == same row
+                    return j;
+                }
+                if (ka[j] != kb[j]) return j;
+            }
+            return kk;
+        };
+        auto wless = [&](const Row& ra, const u8* ka, const Row& rb, const u8* kb) -> bool {
+            const u64 la = FILE_N - unpack_pos(ra.pos), lb = FILE_N - unpack_pos(rb.pos);
+            for (u64 j = 0; j < kk; ++j) {
+                const u64 g = off + j;
+                const bool ea = la <= g, eb = lb <= g;
+                if (ea || eb) {
+                    if (ea && eb) return la < lb;
+                    return ea;
+                }
+                if (ka[j] != kb[j]) return ka[j] < kb[j];
+            }
+            return false;
+        };
+        carry.clear();
+        for (const auto& sp : small) {
+            const u64 m = sp.second - sp.first;
+            if (m < 2) continue;
+            tmp_row.assign(rows.begin() + ptrdiff_t(sp.first), rows.begin() + ptrdiff_t(sp.second));
+            tmp_slot.assign(slotv.begin() + ptrdiff_t(sp.first), slotv.begin() + ptrdiff_t(sp.second));
+            sidx.resize(size_t(m));
+            for (u64 i = 0; i < m; ++i) sidx[size_t(i)] = u32(i);
+            std::sort(sidx.begin(), sidx.end(), [&](u32 x, u32 y) {
+                return wless(tmp_row[x], &keys[size_t(tmp_slot[x]) * size_t(kk)],
+                             tmp_row[y], &keys[size_t(tmp_slot[y]) * size_t(kk)]);
+            });
+            out_row.resize(size_t(m));
+            out_slot.resize(size_t(m));
+            out_lcpv.assign(size_t(m), 0);
+            for (u64 i = 0; i < m; ++i) {
+                out_row[size_t(i)] = tmp_row[sidx[size_t(i)]];
+                out_slot[size_t(i)] = tmp_slot[sidx[size_t(i)]];
+            }
+            for (u64 i = 1; i < m; ++i) {
+                const u64 d = wdiv(out_row[size_t(i - 1)], &keys[size_t(out_slot[size_t(i - 1)]) * size_t(kk)],
+                                   out_row[size_t(i)], &keys[size_t(out_slot[size_t(i)]) * size_t(kk)]);
+                out_lcpv[size_t(i)] = off + d;
+            }
+            for (u64 i = 0; i < m; ++i) {
+                rows[size_t(sp.first + i)] = out_row[size_t(i)];
+                slotv[size_t(sp.first + i)] = out_slot[size_t(i)];
+                if (i) lcpv[size_t(sp.first + i)] = out_lcpv[size_t(i)];
+            }
+            // the runs that still match the WHOLE window go to the next round
+            u64 i = 0;
+            while (i < m) {
+                u64 j = i + 1;
+                while (j < m && out_lcpv[size_t(j)] >= off + kk) ++j;
+                if (j - i > 1) carry.emplace_back(sp.first + i, sp.first + j);
+                i = j;
+            }
+        }
+        st.t_radix += now_sec() - ts0;
         verify_stage("round");
         st.rounds = round + 1;
-        if (!spans.empty()) {
-            u64 tie_after = 0;
-            for (const auto& sp : spans) tie_after += sp.second - sp.first;
+        u64 tie_after = 0;
+        for (const auto& sp : carry) tie_after += sp.second - sp.first;
+        if (!carry.empty()) {
             // THE TERMINATION CONTRACT: a round either shrinks the tie set or the
             // survivors are rows whose suffix ENDED inside the window - and an END
-            // bucket is a singleton, so "not exhausted" is a bug, not slowness.
+            // bucket is a singleton, so "no shrink and not exhausted" is a bug.
             if (tie_after >= tie_before) {
                 ++st.tie_rounds_no_shrink;
                 bool any_live = false;
-                for (const auto& sp : spans) {
+                for (const auto& sp : carry) {
                     const u64 rem = FILE_N - unpack_pos(rows[size_t(sp.first)].pos);
                     if (rem > off + kk) any_live = true;
                 }
@@ -786,17 +904,23 @@ static void radix_sort_band(int fd, std::vector<Row>& rows, std::vector<uint8_t>
                         " note=all-survivors-ended-at-a-distinct-length-so-the-order-is-fixed\n",
                         round + 1, off, kk, tie_before, tie_after);
             }
-            // The window is CONTIGUOUS with the next one and doubles: nothing a
-            // window ends on can fall between two windows.
-            off += kk;
-            k = kk * 2;
         }
+        std::fprintf(stderr,
+            "SORT_ROUND band=%" PRIu64 " round=%u off=%" PRIu64 " k=%" PRIu64
+            " rows_in=%" PRIu64 " rows_tied=%" PRIu64 " bytes_read=%" PRIu64
+            " syscalls=%" PRIu64 " shrink=%d\n",
+            band_id, round + 1, off, kk, tie_before, tie_after, round_bytes, round_calls,
+            int(tie_after < tie_before));
+        spans.swap(carry);
+        off += kk;
+        k = kk * 2;
     }
 
     // ---- THE FALLBACK: tie sets the round cap left behind, and the oracle arm. ----
     // This is the ONLY place a band still compares suffixes through the corpus, and
     // it is bounded by the cap (SS_SORT_ROUNDS_MAX x doubling windows), never by n.
     if (!residual.empty()) {
+        const double tf0 = now_sec();
         for (const auto& sp : residual) {
             ++st.fallback_spans;
             st.fallback_rows += sp.second - sp.first;
@@ -817,15 +941,18 @@ static void radix_sort_band(int fd, std::vector<Row>& rows, std::vector<uint8_t>
                 lcpv[size_t(sp.first)] = lcp;
             }
         }
+        st.t_fallback += now_sec() - tf0;
     }
 
     verify_stage("fallback");
     // ---- THE COLUMN ----
+    const double tc0 = now_sec();
     for (u64 i = 1; i < n; ++i) {
         const u64 val = lcpv[size_t(i)];
         if (val >= 255) { esc.emplace_back(rank_base + i, val); out_lcp[size_t(i)] = 255; }
         else out_lcp[size_t(i)] = uint8_t(val);
     }
+    st.t_order += now_sec() - tc0;
 }
 
 // ===========================================================================
@@ -1368,6 +1495,7 @@ int main(int argc, char** argv) {
     if (sort_key_bytes < 4 || sort_key_bytes > (1u << 20))
         die("--sort-key-bytes must be in [4,1048576]");
     if (sort_rounds < 1 || sort_rounds > 8) die("--sort-rounds must be in [1,8]");
+    g_sort_verify = ::getenv("XSA_SORT_VERIFY") != nullptr;
     g_sort_key_bytes = sort_key_bytes;
     g_sort_rounds_max = sort_rounds;
     g_leaf_sort_radix = (leaf_sort == "radix");
@@ -3437,7 +3565,7 @@ int main(int argc, char** argv) {
                                 SortStats st;
                                 const double rs0 = now_sec();
                                 radix_sort_band(fd, rows, bandLcp, bandEsc, band_off[b],
-                                                W.preLen, st);
+                                                W.preLen, tapeBand, st);
                                 const double rs1 = now_sec();
                                 sortIoBytes.fetch_add(st.bytes, std::memory_order_relaxed);
                                 sortIoSyscalls.fetch_add(st.syscalls, std::memory_order_relaxed);
@@ -3451,11 +3579,12 @@ int main(int argc, char** argv) {
                                     " tie_bytes=%" PRIu64 " ext_bytes=%" PRIu64
                                     " ext_syscalls=%" PRIu64 " ext_clusters=%" PRIu64
                                     " fallback_spans=%" PRIu64 " fallback_rows=%" PRIu64
-                                    " sort_s=%.4f\n",
+                                    " sort_s=%.4f p1_s=%.4f ext_s=%.4f radix_s=%.4f fb_s=%.4f col_s=%.4f\n",
                                     tapeBand, rows.size(), W.preLen,
                                     g_sort_key_bytes, st.rounds, st.tie_rows, st.tie_bytes,
                                     st.bytes, st.syscalls, st.clusters,
-                                    st.fallback_spans, st.fallback_rows, rs1 - rs0);
+                                    st.fallback_spans, st.fallback_rows, rs1 - rs0,
+                                    st.t_phase1, st.t_extract, st.t_radix, st.t_fallback, st.t_order);
                             }
                             else merge_sort_lcp(rows, bandLcp, bandEsc, band_off[b]);
                         } else {
