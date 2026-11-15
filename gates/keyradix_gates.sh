@@ -8,8 +8,13 @@
 #   BASE_BIN   pre-change sorter       default /tmp/pre-keyradix/scatter_sort
 #   FIXBYTES   fixture size            default 6291456
 #
-# Every product run is wrapped in `setsid timeout --kill-after=10 N` and the script
-# asserts that no stage process survives it.
+# NO TIMEOUT ON ANY RUN. Every run below ends when the binary exits; a run that is
+# stopped deliberately has its numbers discarded, and the log says so. A timeout
+# on a measurement is how a gate reports a rate with no denominator: the earlier
+# version of K3 was wrapped in `timeout 1200` and produced "signal 9 at 1210 s,
+# 0 bands completed, read_bytes/row unknowable". The policy line is printed so a
+# reader can tell whether a number came from a completed run or a truncated one.
+# `no_survivors` is kept as the post-run assertion that nothing outlived its run.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 WORK=${WORK:-/mnt/nvme2n1/erikg/KEYRADIX}
@@ -27,6 +32,7 @@ P100=/mnt/nvme2n1/erikg/pile-head100.txt
 mkdir -p "$FX" "$LOG"
 
 fail() { echo "KEYRADIX_GATE_FAIL: $*" >&2; exit 3; }
+echo "KEYRADIX_GATE_POLICY timeout=none runs_end_by_their_own_exit=1 deliberate_stop=recorded_as_void"
 RUN_TAGFILE=$WORK/.kr_run_tags
 : > "$RUN_TAGFILE"
 no_survivors() {
@@ -38,7 +44,7 @@ no_survivors() {
     [ -z "$hits" ] || bad="$bad
 $hits"
   done < "$RUN_TAGFILE"
-  [ -z "$bad" ] || { echo "KEYRADIX_SURVIVORS:$bad" >&2; fail "a stage process survived its timeout"; }
+  [ -z "$bad" ] || { echo "KEYRADIX_SURVIVORS:$bad" >&2; fail "a stage process outlived its run"; }
   echo "KEYRADIX_NO_SURVIVORS checked=$(wc -l < "$RUN_TAGFILE") tags='$(tr '\n' ' ' < "$RUN_TAGFILE")'"
 }
 
@@ -48,7 +54,7 @@ run_sorter() {
   local d=$WORK/runs/$tag
   echo "$tag" >> "$RUN_TAGFILE"
   rm -rf "$d"; mkdir -p "$d/scratch"
-  setsid timeout --kill-after=10 "${RUN_TIMEOUT:-28800}" "$bin" \
+  setsid "$bin" \
       --corpus "$corpus" --out "$d/out.sa" --lcp-out "$d/out.lcp" --scratch "$d/scratch" \
       --threads "${THREADS:-24}" --budget-bytes "$budget" --scratch-budget-bytes "$scratchb" \
       --memory-gb "${MEMGB:-48}" --scratch-cap-gb "$cap" "$@" \
@@ -184,7 +190,7 @@ k1_100g() {
     if [ ! -s "$d/out.sa" ]; then
       rm -rf "$d"; mkdir -p "$d/scratch"
       /usr/bin/time -f "KEYRADIX_K1_WALL %e s RSS %M kB INBLOCK %I" \
-        setsid timeout --kill-after=10 28800 "$bin" --corpus "$P100" \
+        setsid "$bin" --corpus "$P100" \
         --out "$d/out.sa" --lcp-out "$d/out.lcp" --scratch "$d/scratch" \
         --threads "${THREADS:-24}" --budget-bytes 48000000000 --scratch-budget-bytes 60000000000 \
         --memory-gb 48 --scratch-cap-gb 60 > "$d/run.log" 2>&1 || fail "K1: $d failed"
@@ -209,12 +215,34 @@ k1_100g() {
   echo "KEYRADIX_K1_100G_PASS"
 }
 
+# ------------------------------------------------------------------------- K3
+k3() {
+  echo "== K3 bytes of read per row, sized to FINISH, no timeout, both arms cold"
+  bash "$HERE/gates/keyradix_k3.sh" || fail "K3 script failed"
+  cat "$WORK/k3sized.receipt"
+  # every receipt must carry its own denominator, and a VOID one is a failure
+  local void_n; void_n=$(grep -c ' VOID ' "$WORK/k3sized.receipt" || true)
+  local ok_n; ok_n=$(grep -c 'completed=1' "$WORK/k3sized.receipt" || true)
+  echo "KEYRADIX_K3_RECEIPTS completed=$ok_n void=$void_n"
+  [ "$void_n" = 0 ] || fail "K3: a receipt is VOID (its run did not complete)"
+  for tag in base new; do
+    grep -q "K3 tag=$tag corpus=" "$WORK/k3sized.receipt" || fail "K3: no completed receipt for $tag"
+  done
+  local rb rn
+  rb=$(grep "K3 tag=base corpus=" "$WORK/k3sized.receipt" | sed -n 's/.*read_bytes=\([0-9]*\).*/\1/p')
+  rn=$(grep "K3 tag=new corpus=" "$WORK/k3sized.receipt" | sed -n 's/.*read_bytes=\([0-9]*\).*/\1/p')
+  echo "KEYRADIX_K3_RATIO base_read_bytes=$rb new_read_bytes=$rn ratio=$(awk -v b="$rb" -v n="$rn" 'BEGIN{if(n>0)printf "%.3f",b/n; else print "NA"}')"
+  echo "KEYRADIX_K3_PASS"
+}
+
 case "${1:-all}" in
+  k3) k3 ;;
+  k3*) k3 ;;
   k2) k2 ;;
   k4) k4 ;;
   k5-150m) k5_150m ;;
   k5-10g) k5_10g ;;
   k1-100g) k1_100g ;;
-  all) k2; k4; k5_150m; k5_10g ;;
-  *) fail "usage: $0 k2|k4|k5-150m|k5-10g|k1-100g|all" ;;
+  all) k2; k4; k3; k5_150m; k5_10g ;;
+  *) fail "usage: $0 k2|k4|k3|k5-150m|k5-10g|k1-100g|all" ;;
 esac

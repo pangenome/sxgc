@@ -137,35 +137,73 @@ What stands in its place, and what it does and does not cover:
 iterate. It resumes from an existing `out.sa`, so the base arm can be built in
 the background and the gate re-run later without redoing the arm that finished.
 
-### K3 — bytes of disc read per row
+### K3 — bytes per row, with the denominator every time
 
-Two measurements, both on corpora and flags held identical between arms.
+**Protocol (corrected).** A measurement run has **no timeout**. It ends when the
+binary exits, and it is only a measurement if `SS_DONE` is present in its log and
+the band receipts cover `n`. Each receipt therefore carries `bands_completed`,
+`rows_completed`, `read_bytes`, `rchar`, the per-row rates, the wall and the sha
+of what it emitted. An earlier version of this gate wrapped K3 in `timeout 1200`
+and produced exactly the failure that protocol exists to prevent: a rate with no
+denominator. That run's numbers are discarded.
 
-**(a) 10 GB, both arms, whole run, the kernel's own ru_inblock** (`/usr/bin/time %I`,
-512-byte blocks; `Cached` ≈ 998 GB of 1 TB at start, so the 10 GB corpus is largely
-resident and this is the *charitable* case for the pre-change arm):
+`read_bytes` is the kernel's count of bytes actually fetched from the block
+device; `rchar` is what the process ASKED for (`pread` sizes). `--leaf-sort=lce`
+vs the radix arm differ in *which* of the two carries the work — the pre-change
+arm's suffix walks go through the corpus **mmap** and so appear in neither
+`rchar` nor (when the page is resident) `read_bytes`.
 
-| arm | wall | disc blocks read | bytes/row (n = 1.0e10) |
-|---|---|---|---|
-| pre-change (LCE comparisons) | 1006.47 s | 14,022,048 | **0.718** |
-| keyradix (streaming extract) | 1539.89 s | 936 | **4.8e-5** |
+**3 GB slice (`c3g.txt`), cold (`posix_fadvise(POSIX_FADV_DONTNEED)`), no timeout,
+both arms complete:**
+```
+K3 tag=base corpus=c3g.txt corpus_bytes=3000000000 rc=0 completed=1 wall=327s
+   bands_completed=210 rows_completed=3000000001 read_bytes=3000217600 rchar=114001184014
+   read_bytes_per_row=1.0001 rchar_per_row=38.0 sa=bb28b228… SS_DONE n=3000000001 waves=5 total_s=319.80
+K3 tag=new  corpus=c3g.txt corpus_bytes=3000000000 rc=0 completed=1 wall=494s
+   bands_completed=210 rows_completed=3000000001 read_bytes=3000492032 rchar=554064464132
+   read_bytes_per_row=1.0002 rchar_per_row=184.7 sa=bb28b228… SS_DONE n=3000000001 waves=5 total_s=487.05
+```
+Same 210 bands, same 3,000,000,001 rows, same emitted bytes (sa `bb28b228…`, both
+arms). **Disc bytes per row are identical to 4 significant figures (1.0001 vs
+1.0002) — one corpus pass each.** The discriminating number at this size is
+`rchar`: the new arm requests **184.7 B/row against the pre-change arm's 38.0**,
+because its whole read path is `pread` while the pre-change arm's suffix walks are
+page-cache hits inside the mapping and cost it nothing.
 
-ratio: **≈ 15,000x fewer bytes pulled back off disc per row**. The mechanism is
-visible in one number: the comparison sort's random walks keep evicting the
-corpus it is comparing through, and the ascending extraction does not.
+**10 GB, cold, no timeout, both arms complete (same corpus, same flags):**
+```
+K3 tag=base10g corpus=pf-10gb.txt rc=0 completed=1 wall=1174s bands_completed=701
+   rows_completed=10000000001 read_bytes=10000224256 read_bytes_per_row=1.0000
+   rchar_per_row=53.0 sa=a37dbe2a… SS_DONE n=10000000001 waves=20 total_s=1162.65
+K3 tag=new     corpus=pf-10gb.txt rc=0 completed=1 wall=2046s bands_completed=1002
+   rows_completed=10000000001 read_bytes=24324632576 read_bytes_per_row=2.4323
+   sa=a37dbe2a… (INBLOCK 47,509,048 x 512 B) SS_DONE n=10000000001 waves=20
+```
+**This pair is contaminated and I am not quoting a ratio from it.** The two arms
+ran ~30 min apart on a box where another lane was streaming 1.31 TB through the
+same page cache; the new arm's window had heavier co-tenant pressure and re-read
+the corpus 2.4x while the pre-change arm's window did not. The direction of the
+conclusion is honest either way: **on this box, at every size I could complete, the
+new arm reads at least as many disc bytes per row as the pre-change arm.**
 
-**(b) the leaf sort's own corpus traffic at 10 GB** (`SS_SORT_IO`):
-`tie_rows=4,294,356,835 tie_bytes=280,396,322,453 ext_bytes=2,294,078,365,545
-ext_syscalls=1,062,780,043 fallback_rows=237,761,301 tie_bytes_per_tie_row=65.29
-ext_bytes_per_row=229.41`. 229 bytes of *requested* corpus read per row of a
-10 GB build, against the mechanism it replaces: log2(m) ≈ 22 comparisons per row
-of tie set, ~2 page touches each, i.e. ~44 page touches/row — the operator's
-measured 1,400x-per-row cliff at 1.31 TB.
+Why: the extraction touches each page once per BAND that has a row in it, and a
+band's rows are spread over the whole corpus. Ascending order makes those touches
+sequential in address, not free: a 10 GB corpus in 701–1002 bands is a 10 GB
+corpus read several hundred times, and only the fact that it fits in RAM keeps
+that off the device. The pre-change arm touches ~44 pages per row of tie set, but
+those pages are a small subset of the corpus and they stay hot once touched.
 
-**(c) pages/row is the floor, and the first version was 60x worse.** The
-extraction's cluster rule is the whole difference, and it was measured: at 10 GB
-the span-based rule read **32.5 GB** for one 4.8 M-row band (278 keys per 2 MiB
-window); the gap-based rule reads **2.3 GB** for the same band.
+**So the lane's premise does not survive the measurement on this box.** The
+mechanism is delivered and the order is unchanged, but
+* the disc-bytes-per-row win is **not demonstrated at any size that completes**;
+* the requested-bytes win is not there either (184.7 vs 38.0 at 3 GB);
+* and the wall clock is **worse** at every size measured (below).
+
+What would be needed to test the premise honestly: a corpus that does not fit the
+page cache and enough uninterrupted time for BOTH arms to complete on it. The
+pre-change arm needs ≈ 34 h for one 100 GB pass alone (measured below), so that
+experiment is out of this lane's reach, and I am not going to present a truncated
+run as evidence for it.
 
 ## Wall clock, labelled
 
@@ -173,26 +211,32 @@ window); the gap-based rule reads **2.3 GB** for the same band.
 FastGA aligner on ~22 cores and an `xsa_finish` at 11 GB RSS; the same box also
 runs the operator's full-PILE build).
 
-| corpus | pre-change | keyradix | note |
-|---|---|---|---|
-| 150 MB sorter pass | 18.73 s | 27.66 s | corpus fully resident; the comparison arm's walks are cache hits |
-| 10 GB sorter pass | 1006.47 s | 1539.89 s | both `--threads 24 --budget-bytes 48e9`, run back to back on the same box |
+| corpus | pre-change | keyradix | ratio | note |
+|---|---|---|---|---|
+| 150 MB sorter pass | 18.73 s | 27.66 s | 1.48x | `--threads 24 --budget-bytes 12e9`, corpus fully resident |
+| 3 GB, cold, no timeout | 319.80 s (`total_s`) | 487.05 s (`total_s`) | 1.52x | both arms complete, same flags, same fadvise |
+| 10 GB, cold, no timeout | 1162.65 s (`total_s`) | 2046 s (outer wall) | 1.74x | both arms complete, same flags, same fadvise |
 
-**This is a wall regression in the cache-resident regime, and it is reported as
-one.** The leaf's win is in *bytes pulled off disc per row*, which is what the
-non-resident regime is made of; when the whole corpus is in RAM the comparison
-sort's walks cost nothing and this arm's fixed costs (a u32 slot plane per round,
-a key plane, ~0.25 preads per tie row) are pure overhead. Phase breakdown at
-150 MB (`SORT_ARM`, summed over band workers): phase1 14.0 s, extract 41.9 s,
-radix 11.7 s, fallback 15.5 s, column 0.4 s. Before the small-span fix the radix
-phase alone was 459 s and the pass was 54 s.
+**This is a wall regression, and it is reported as one, at every size that
+completes.** It is not cache-specific: the 3 GB and 10 GB arms were cold. Phase
+breakdown at 150 MB (`SORT_ARM`, summed over band workers): phase1 14.0 s,
+extract 41.9 s, radix 11.7 s, fallback 15.5 s, column 0.4 s. Before the
+small-span fix the radix phase alone was 459 s and the pass was 54 s; the
+remaining cost is the extraction (41.9 s), which reads each page once per band.
 
 ## Residual risks
 
-1. **100 GB container identity is unmeasured** (see K1). The identity evidence
-   stops at 1.0e10 rows.
-2. **Wall regression when the corpus is cache-resident** (1.5x at 10 GB and 150 MB).
-   The 10 GB banked case would get slower. Judgement call, not a measurement gap.
+1. **The throughput blocker is NOT fixed by this lane.** Byte-per-row is identical
+   or worse and the wall clock is 1.5–1.7x worse at every size that completes.
+   What the lane did achieve: the leaf's read pattern is now ascending and
+   pread-only (no random mmap walks), the order is provably unchanged, and the
+   LCP column falls out of the radix. If the pile's blocker is the leaf's random
+   page touches, the fix has to make the extraction touch each page ONCE per wave
+   rather than once per band — i.e. one corpus sweep serving every band of a wave,
+   which is a different design from this one.
+2. **100 GB container identity is unmeasured** (see K1); launched, no timeout,
+   receipts to follow. The identity evidence so far stops at 1.0e10 rows and
+   1.0e11 rows for the pass in flight.
 3. `bytes_per_row` 90 → 126 shrinks `rows_per_band` ~28% wherever the ARENA binds
    instead of the scratch window. Measured safe for the emitted bytes (plan
    invariance) but it changes the band cut points, hence any per-band accounting.
