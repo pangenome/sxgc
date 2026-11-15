@@ -497,6 +497,19 @@ static constexpr u64 SS_SCRATCH_MARGIN_BYTES = 50ull << 30;   // 50 GB
 static constexpr u64 SS_ROWS_FLOOR = 65536;       // one fold band: below this the budget is broken
 static constexpr u64 SS_BUDGET_RATIO_MAX = 90;    // the exit assertion: owned RSS <= 90% of the envelope
 
+static u64 g_wave_key_bytes = 8;        // K: key bytes captured per row (knob)
+static u64 g_wave_key_rounds = 5;       // tie rounds before the LCE fallback
+// The key plane of ONE tie round is priced per ROW of the band, so the leaf's
+// footprint can never depend on how deeply the DATA ties (a fully tied band gets
+// a smaller window and more rounds, never a bigger arena).
+static constexpr u64 SS_WAVE_KEY_PLANE_BYTES = 32;
+static constexpr u64 SS_WAVE_EXTRACT_GAP = 4096;      // merge reads across <= one page
+static constexpr u64 SS_WAVE_EXTRACT_WINDOW = 2u << 20;
+static u64 SS_WAVE_SMALL_ROWS = 64;                   // direct compare below this (XSA_WAVEKEY_SMALL)
+static constexpr unsigned SS_WAVE_BUCKETS = 257;      // 256 symbols + the virtual END
+static void read_window(int fd, u64 from, u64 want, std::vector<u8>& buf);
+
+
 struct TapeBudget {
     u64 envelope = 0;        // the arena envelope this process may commit
     u64 scratch_budget = 0;  // THE DISK BUDGET the work unit is sized from
@@ -512,6 +525,9 @@ struct TapeBudget {
     u64 arena_planned = 0;   // K bands of the unit: the rows the gate admits at most
     u64 arena_needed = 0;    // rows_per_band x bpr x P: what the unit needs of the arena
     u64 rows_per_wave = 0;   // an OUTPUT
+    u64 rows_per_wave_arena = 0; // THE ARENA'S OWN WAVE SIZE (8+K+overhead) - a bound
+    u64 rows_per_wave_disk = 0;  // the disk window's wave size (the other bound)
+    const char* rows_per_wave_binding = "arena";
     u64 bands_per_wave = 0;  // an OUTPUT
     u64 waves = 0;           // an OUTPUT (n / rows_per_wave)
     u64 band_window = 0;     // bands_per_wave x rows_per_band x 41 B (the disk term)
@@ -525,9 +541,19 @@ static TapeBudget tape_budget_plan(u64 envelope, u64 threads, u64 k_in_flight, b
     TapeBudget b;
     b.envelope = envelope;
     b.scratch_budget = scratch_budget;
-    // EVERYTHING the sorter holds per row. The wire row is 32 B and the sort alone
-    // is 81 B; the arena has to carry both plus the write staging.
-    b.bytes_per_row = lcp_on ? (2 * row_bytes + 2 * 8 + 1 + 8 + 1) : (row_bytes + 8 + 1);
+    // EVERYTHING the sorter holds per row. row_bytes IS THE WAVE RECORD,
+    // 8 + K: the packed position/symbol plus the K key bytes the sweep captured
+    // for it. THE KEY IS NOT A SECOND READ - it is carried by the row.
+    //
+    // The sort alone is 2 row planes (ping-pong) + one u64 LCP plane + the u8
+    // column + the escape list + ONE priced key plane (a tie round's extraction)
+    // + two u32 slot planes (the window a row is carrying travels with the row).
+    // The merge arm's two u64 LCP planes are gone: a radix permutes every row's
+    // index, so ONE plane stamped at the bucket boundaries is what carries the
+    // column. 2 x (8+K) + 8+1+8+1 + 32 + 8 = 2 x (8+K) + 58 B/row.
+    b.bytes_per_row = lcp_on
+        ? (2 * row_bytes + 2 * 8 + 1 + 8 + 1 + SS_WAVE_KEY_PLANE_BYTES + 2 * 4)
+        : (row_bytes + 8 + 1);
     b.bands_in_flight = std::max<u64>(1, k_in_flight);
     // The sample array can never be longer than the corpus, and the control
     // reserve is a function of the envelope (a 50 MB envelope cannot carry a
@@ -560,7 +586,18 @@ static TapeBudget tape_budget_plan(u64 envelope, u64 threads, u64 k_in_flight, b
     // THE ARENA AS PLANNED: K bands of the unit (what the gate admits at most).
     const u64 nbands_target = std::max<u64>(1, std::min(disc_rows / b.rows_per_band, wave_bands_target));
     b.arena_planned = std::min(b.bands_in_flight, nbands_target) * b.rows_per_band;
-    b.rows_per_wave = std::max<u64>(1, std::min(disc_rows, nbands_target * b.rows_per_band));
+    // ============ THE WAVE IS SIZED FROM THE ARENA, NOT FROM DISK ============
+    // A wave's rows AND their captured keys have to fit in memory AT ONCE: the
+    // sweep writes them and the leaf then sorts them without touching the corpus.
+    // So the wave's row count is arena_bytes / (8 + K + working overhead) - which
+    // is exactly cap_rows, the rows the arena holds at the priced bytes_per_row.
+    // The disk's own rule (bands_per_wave x rows_per_band inside the scratch
+    // share) is kept as the OTHER bound; the wave is the SMALLER of the two, and
+    // which one bound it is journaled.
+    b.rows_per_wave_arena = std::max<u64>(1, b.arena / std::max<u64>(1, b.bytes_per_row));
+    b.rows_per_wave_disk = std::max<u64>(1, std::min(disc_rows, nbands_target * b.rows_per_band));
+    b.rows_per_wave = std::max<u64>(1, std::min(b.rows_per_wave_arena, b.rows_per_wave_disk));
+    b.rows_per_wave_binding = b.rows_per_wave_arena <= b.rows_per_wave_disk ? "arena" : "disk";
     b.bands_per_wave = std::max<u64>(1, (b.rows_per_wave + b.rows_per_band - 1) / b.rows_per_band);
     b.waves = std::max<u64>(1, (n + b.rows_per_wave - 1) / b.rows_per_wave);
     b.band_window = b.bands_per_wave * b.rows_per_band * SS_DISK_ROW_BYTES;
@@ -848,6 +885,555 @@ static void sort_tape_keys(std::vector<Row>& rows, u64) {
     });
 }
 
+// ===========================================================================
+// THE WAVE KEY: the leaf's keys are captured during the wave's OWN sweep.
+//
+// THE DEFECT THIS REPLACES. Ordering a band meant READING the corpus for keys
+// the sweep had already had in its hands: the local arm walked its class's
+// positions through a sliding window (one page touch per row) to rebuild the
+// 24-byte key, and the radix leaf then read a second window per tie round. A
+// band's rows are spread over the WHOLE corpus (a band is a key range, not a
+// position range), so those per-band reads re-read the corpus once PER BAND -
+// MEASURED at 3 GB as rchar/row 38.0 -> 184.7 while disc bytes/row stayed at
+// 1.0001 -> 1.0002 because the re-reads were page-cache hits. Past the page
+// cache that same shape is the 139 k rows/s wall.
+//
+// THE FIX, AND IT IS THE ONLY HONEST ONE: extract ONCE, during the sweep that
+// already visits every position. The record the sweep writes is
+//
+//     (position | carried symbol, key[K])     = 8 + K bytes
+//
+// with key[i] = corpus byte at absolute offset kbase+i, kbase = W.preLen (the
+// wave's own common prefix: every row of the wave is EQUAL there, so those bytes
+// are worthless as digits and are never captured). Zero extra passes, zero
+// extra seeks: the bytes are memcpy'd out of the read buffer the predicate just
+// matched. The band's sort then needs NO corpus access for the captured window.
+//
+// THE LEAF IS AN IN-MEMORY MSD RADIX over those K bytes: 8-bit digits, 257
+// buckets with bucket 0 = the virtual END (below every symbol, i.e. dollar mode
+// exactly), ping-pong row planes. A split at digit g PROVES the LCP of the row
+// that opens the new bucket (it is equal to its predecessor on [0,g) by the
+// bucket invariant and differs at g), so the column falls out of the sort.
+//
+// TIES ARE THE ONLY THING THAT MAY COST ANOTHER READ. Rows equal on all K
+// captured bytes go to a deeper pass that extracts the next window (K, 2K, 4K,
+// CAPPED) for THOSE ROWS ONLY, in ascending position order so consecutive keys
+// share a read. Whatever the cap leaves goes to the LCE fallback, walking from
+// the depth the windows have already proved (never from byte 0). Both are
+// journaled: extra passes and bytes are proportional to TIE ROWS, never to n.
+// ===========================================================================
+
+// THE WAVE KEY'S LEDGER. Summed over band workers by main and journaled as
+// WAVE_KEY: rounds are bounded by the knob, extra_passes is how many tie rounds
+// actually touched the corpus, and bytes_read is what those passes asked for.
+struct WaveKeyStats {
+    u64 rows = 0, key_bytes = 0, tie_rows = 0, rounds = 0, extra_passes = 0;
+    u64 bytes_read = 0, syscalls = 0, fallback_rows = 0, no_shrink = 0;
+    double t_radix = 0, t_extract = 0, t_fallback = 0;
+};
+struct WaveKeyTotals {
+    std::atomic<u64> rows{0}, key_bytes{0}, tie_rows{0}, rounds{0}, rounds_max{0},
+        extra_passes{0}, bytes_read{0}, syscalls{0}, fallback_rows{0}, no_shrink{0}, bands{0};
+    void add(const WaveKeyStats& s) {
+        rows += s.rows; key_bytes += s.key_bytes; tie_rows += s.tie_rows;
+        rounds += s.rounds; extra_passes += s.extra_passes; bytes_read += s.bytes_read;
+        syscalls += s.syscalls; fallback_rows += s.fallback_rows; no_shrink += s.no_shrink;
+        bands += 1;
+        u64 cur = rounds_max.load();
+        while (s.rounds > cur && !rounds_max.compare_exchange_weak(cur, s.rounds)) {}
+    }
+};
+static WaveKeyTotals WAVE_KEY;
+
+// One MSD level over [lo,hi): STABLE counting sort on `dig(i)` in [0,nbuckets),
+// written to the ping-pong plane. The row payload (8+K bytes) travels with the
+// row: after one scatter the index means something else.
+static void wk_msd_level(const std::vector<u64>& cur, std::vector<u64>& alt,
+                         const std::vector<u8>& curb, std::vector<u8>& altb,
+                         u64 k, u64 lo, u64 hi,
+                         const std::function<unsigned(u64)>& dig,
+                         std::vector<u64>& starts) {
+    starts.assign(SS_WAVE_BUCKETS + 1, 0);
+    for (u64 i = lo; i < hi; ++i) ++starts[size_t(dig(i)) + 1];
+    for (unsigned b = 0; b < SS_WAVE_BUCKETS; ++b) starts[b + 1] += starts[b];
+    std::vector<u64> cursor(starts.begin(), starts.end() - 1);
+    for (u64 i = lo; i < hi; ++i) {
+        const unsigned b = dig(i);
+        const u64 at = lo + cursor[b]++;
+        alt[size_t(at)] = cur[size_t(i)];
+        std::memcpy(&altb[size_t(at) * k], &curb[size_t(i) * k], size_t(k));
+    }
+    for (unsigned b = 0; b <= SS_WAVE_BUCKETS; ++b) starts[b] += lo;
+}
+
+// Extract bytes [off, off+kk) of every row named by `items` (ASCENDING position)
+// into `keys`, in ITEM order. ONE forward pass in position space: consecutive
+// rows whose windows fit inside one window share one pread (a dense bucket costs
+// one sequential read for all of them; a sparse one costs one page per row).
+// Rows already past the end get zeros - their digit is the END bucket, decided
+// from the position, never from these bytes.
+static void wk_extract(int fd, const std::vector<std::pair<u64, u64>>& items, u64 off, u64 kk,
+                       std::vector<u8>& keys, WaveKeyStats& st) {
+    keys.assign(items.size() * size_t(kk), 0);
+    std::vector<u8> win;
+    size_t i = 0;
+    while (i < items.size()) {
+        const u64 lo = items[i].first + off;
+        if (lo >= FILE_N) { ++i; continue; }
+        u64 hi = std::min<u64>(FILE_N, lo + kk);
+        size_t j = i;
+        while (j + 1 < items.size()) {
+            const u64 q = items[j + 1].first + off;
+            if (q >= FILE_N) break;
+            if (q > hi + SS_WAVE_EXTRACT_GAP) break;
+            const u64 qhi = std::min<u64>(FILE_N, q + kk);
+            if (qhi - lo > SS_WAVE_EXTRACT_WINDOW) break;
+            if (qhi > hi) hi = qhi;
+            ++j;
+        }
+        read_window(fd, lo, hi - lo, win);   // REMAP applied here, once
+        ++st.syscalls;
+        st.bytes_read += hi - lo;
+        for (size_t t = i; t <= j; ++t) {
+            const u64 p = items[t].first + off;
+            if (p >= FILE_N) continue;
+            const u64 want = std::min<u64>(kk, FILE_N - p);
+            std::memcpy(&keys[t * size_t(kk)], win.data() + (p - lo), size_t(want));
+        }
+        i = j + 1;
+    }
+    ++st.extra_passes;
+}
+
+// THE LEAF SORT. rows[] (P = packed position/symbol, Kb = the captured key plane)
+// come back in exact suffix order; lcpv[k] = LCP(rows[k-1],rows[k]) (lcpv[0] = 0).
+// `kbase` is the wave's common prefix: digit 0 of round 0 is byte kbase.
+static void wavekey_sort_band(int fd, std::vector<u64>& P, std::vector<u8>& Kb, u64 kbase,
+                              u64 band_id, std::vector<u64>& lcpv, WaveKeyStats& st) {
+    const u64 n = P.size();
+    const u64 K = g_wave_key_bytes;
+    std::vector<u64> origP;                     // XSA_WAVEKEY_VERIFY: the pre-sort multiset
+    const bool wk_verify = ::getenv("XSA_WAVEKEY_VERIFY") != nullptr;
+    if (wk_verify) origP = P;
+    u64 perm_s = 0, perm_x = 0;
+    if (wk_verify) for (const u64 pk : origP) { perm_s += pk; perm_x ^= pk; }
+    auto check_perm = [&](const char* where, u64 a, u64 b) {
+        if (!wk_verify) return;
+        u64 s1 = 0, x1 = 0;
+        for (const u64 pk : P) { s1 += pk; x1 ^= pk; }
+        if (s1 != perm_s || x1 != perm_x)
+            die(std::string("WAVEKEY_PERM_FAIL ") + where + " a=" + std::to_string(a) +
+                " b=" + std::to_string(b) + " (rows lost or duplicated)");
+    };
+    lcpv.assign(size_t(n), 0);
+    st.rows += n;
+    st.key_bytes += n * K;
+    if (n < 2) return;
+    std::vector<u64> P2(n, 0);
+    std::vector<u8> Kb2(n * size_t(K), 0);
+    std::vector<u32> slot(n, 0xffffffffu), slot2(n, 0xffffffffu);   // the tie windows
+    std::vector<u64> starts;
+    std::vector<std::pair<u64, u64>> spans, nxt, small, residual;
+    auto rem_of = [](u64 pk) { return FILE_N - unpack_pos(pk); };
+    // the digit of ROUND 0: the in-row key plane, bucket 0 = END
+    auto dig0 = [&](u64 lvl, u64 g, u64 i) -> unsigned {
+        if (rem_of(P[size_t(i)]) <= g) return 0u;
+        return unsigned(Kb[size_t(i) * size_t(K) + size_t(lvl)]) + 1u;
+    };
+
+    // ---- ROUND 0: the captured window. ZERO corpus access. ----
+    const double t0 = now_sec();
+    spans.assign(1, std::make_pair(u64(0), n));
+    u64 covered = K;                       // bytes proved by the captured window
+    u64 kbase_off = kbase;                 // the CURRENT window's absolute offset
+    st.rounds = 1;
+    // THE PING-PONG INVARIANT, AND THE REGION THAT HAS TO TRAVEL WITH IT. A level
+    // scatters its big spans and leaves everything else where it is - but the
+    // WRITE buffer is one level older than the read buffer, so every region the
+    // previous level touched must be carried across: the previous level's PARENT
+    // spans, not just its big ones (a level's scatter also lays out the singleton
+    // and small buckets among its children, and carrying only `big` lost exactly
+    // those rows - measured as a multiset mismatch at level 2).
+    std::vector<std::pair<u64, u64>> prev_parent(1, std::make_pair(u64(0), n));
+    for (u64 lvl = 0; lvl < K && !spans.empty(); ++lvl) {
+        const u64 g = kbase + lvl;
+        std::vector<std::pair<u64, u64>> big, parent(spans);
+        for (const auto& sp : spans) {
+            if (sp.second - sp.first > SS_WAVE_SMALL_ROWS) big.push_back(sp);
+            else small.push_back(sp);
+        }
+        if (big.empty()) { spans.clear(); break; }
+        for (const auto& sp : prev_parent) {
+            std::memcpy(&P2[size_t(sp.first)], &P[size_t(sp.first)],
+                        size_t(sp.second - sp.first) * sizeof(u64));
+            std::memcpy(&Kb2[size_t(sp.first) * size_t(K)], &Kb[size_t(sp.first) * size_t(K)],
+                        size_t(sp.second - sp.first) * size_t(K));
+        }
+        nxt.clear();
+        for (const auto& sp : big) {
+            const u64 lvlc = lvl, gc = g;
+            wk_msd_level(P, P2, Kb, Kb2, K, sp.first, sp.second,
+                         [&](u64 i) { return dig0(lvlc, gc, i); }, starts);
+            for (unsigned b = 0; b < SS_WAVE_BUCKETS; ++b) {
+                const u64 s = starts[b], e = starts[b + 1];
+                if (e - s > 1) nxt.emplace_back(s, e);
+                if (s > sp.first && e > s) lcpv[size_t(s)] = g;
+            }
+        }
+        P.swap(P2); Kb.swap(Kb2);
+        check_perm("round0-level", lvl, big.size());
+        prev_parent = parent;
+        spans.swap(nxt);
+    }
+    for (const auto& sp : spans) small.push_back(sp);
+    spans.clear();
+    st.t_radix += now_sec() - t0;
+
+    // THE CURRENT WINDOW, as the direct-comparison helpers see it. Round 0 reads
+    // the captured plane (Kb, one row = K contiguous bytes); an extraction round
+    // reads the plane its own pass filled, indexed through the u32 SLOT that
+    // travelled with the row (a row's window is a row property, not an index).
+    std::vector<u8>* wk_keys = nullptr;      // the window being sorted (null = Kb)
+    std::vector<u32>* wk_slot = nullptr;     // row -> its slot in that window
+    u64 wk_kk = K;
+    auto byte_at = [&](u64 i, u64 j) -> u8 {
+        if (!wk_keys) return Kb[size_t(i) * size_t(K) + size_t(j)];
+        return (*wk_keys)[size_t((*wk_slot)[size_t(i)]) * size_t(wk_kk) + size_t(j)];
+    };
+    // The first index at which two rows differ INSIDE the current window.
+    auto diverge = [&](u64 ia, u64 ib) -> u64 {
+        const u64 la = rem_of(P[size_t(ia)]), lb = rem_of(P[size_t(ib)]);
+        for (u64 j = 0; j < wk_kk; ++j) {
+            const u64 g = kbase_off + j;
+            const bool ea = la <= g, eb = lb <= g;
+            if (ea || eb) {
+                if (ea && eb) return la == lb ? wk_kk : j;   // equal length == same row
+                return j;
+            }
+            if (byte_at(ia, j) != byte_at(ib, j)) return j;
+        }
+        return wk_kk;
+    };
+    auto less_at = [&](u64 ia, u64 ib) -> bool {
+        const u64 la = rem_of(P[size_t(ia)]), lb = rem_of(P[size_t(ib)]);
+        for (u64 j = 0; j < wk_kk; ++j) {
+            const u64 g = kbase_off + j;
+            const bool ea = la <= g, eb = lb <= g;
+            if (ea || eb) return ea && eb ? la < lb : ea;
+            const u8 xa = byte_at(ia, j), xb = byte_at(ib, j);
+            if (xa != xb) return xa < xb;
+        }
+        return false;
+    };
+
+    // ---- the SMALL spans: direct comparison of the current window ----
+    auto settle_small = [&](std::vector<std::pair<u64, u64>>& todo,
+                            std::vector<std::pair<u64, u64>>& carry) {
+        std::vector<u64> idx, prow;
+        std::vector<u8> kv;
+        std::vector<u32> ks;
+        for (const auto& sp : todo) {
+            const u64 m = sp.second - sp.first;
+            if (m < 2) continue;
+            prow.assign(P.begin() + ptrdiff_t(sp.first), P.begin() + ptrdiff_t(sp.second));
+            idx.resize(size_t(m));
+            for (u64 i = 0; i < m; ++i) idx[size_t(i)] = i;
+            std::sort(idx.begin(), idx.end(), [&](u64 x, u64 y) {
+                return less_at(sp.first + x, sp.first + y);
+            });
+            std::vector<u64> sorted(m, 0), slcp(m, 0);
+            for (u64 i = 0; i < m; ++i) sorted[size_t(i)] = prow[size_t(idx[size_t(i)])];
+            for (u64 i = 1; i < m; ++i)
+                slcp[size_t(i)] = kbase_off + diverge(sp.first + idx[size_t(i - 1)],
+                                                      sp.first + idx[size_t(i)]);
+            // THE PAYLOAD TRAVELS WITH THE ROW. Round 0 owns its keys (they are IN
+            // the plane, so they are permuted with the rows); an extraction round
+            // owns a slot NUMBER per row, and the key stays where it is - the slot
+            // moves. Getting this backwards corrupted a tie group's windows.
+            if (!wk_keys) {
+                kv.resize(size_t(m) * size_t(K));
+                for (u64 i = 0; i < m; ++i)
+                    std::memcpy(&kv[size_t(i) * size_t(K)],
+                                &Kb[size_t(sp.first + idx[size_t(i)]) * size_t(K)], size_t(K));
+            } else {
+                ks.resize(size_t(m));
+                for (u64 i = 0; i < m; ++i) ks[size_t(i)] = (*wk_slot)[size_t(sp.first + idx[size_t(i)])];
+            }
+            for (u64 i = 0; i < m; ++i) {
+                P[size_t(sp.first + i)] = sorted[size_t(i)];
+                if (!wk_keys)
+                    std::memcpy(&Kb[size_t(sp.first + i) * size_t(K)],
+                                &kv[size_t(i) * size_t(K)], size_t(K));
+                else
+                    (*wk_slot)[size_t(sp.first + i)] = ks[size_t(i)];
+                if (i) lcpv[size_t(sp.first + i)] = slcp[size_t(i)];
+            }
+            // runs still equal over the WHOLE window go to the next round
+            u64 i = 0;
+            while (i < m) {
+                u64 j = i + 1;
+                while (j < m && slcp[size_t(j)] >= kbase_off + wk_kk) ++j;
+                if (j - i > 1) carry.emplace_back(sp.first + i, sp.first + j);
+                i = j;
+            }
+        }
+    };
+
+    if (::getenv("XSA_WAVEKEY_VERIFY")) {
+        u64 s0 = 0, x0 = 0;
+        for (const u64 pk : origP) { s0 += pk; x0 ^= pk; }
+        u64 s1 = 0, x1 = 0;
+        for (const u64 pk : P) { s1 += pk; x1 ^= pk; }
+        if (s0 != s1 || x0 != x1)
+            die("WAVEKEY_PERM_FAIL after round 0: sums " + std::to_string(s0) + "/" +
+                std::to_string(s1) + " xors " + std::to_string(x0) + "/" + std::to_string(x1));
+    }
+    // THE ROUND INVARIANT (XSA_WAVEKEY_VERIFY): after every window, the band must
+    // be ordered by the prefix the windows have covered so far. This localizes a
+    // broken scatter to the round that did it.
+    auto verify_round = [&](const char* where) {
+        if (!::getenv("XSA_WAVEKEY_VERIFY")) return;
+        const u64 L = kbase_off + (where && *where == '0' ? 0 : 0);   // unused, kept explicit
+        (void)L;
+        const u64 covered_hi = kbase_off + wk_kk;
+        for (u64 i = 1; i < n; ++i) {
+            if (less_at(i, i - 1)) {
+                std::fprintf(stderr,
+                    "WAVEKEY_ROUND_FAIL where=%s row=%" PRIu64 " prev_pos=%" PRIu64
+                    " pos=%" PRIu64 " covered=[0,%" PRIu64 ")\n",
+                    where, i, unpack_pos(P[size_t(i - 1)]), unpack_pos(P[size_t(i)]), covered_hi);
+                for (int k2 = 0; k2 < 2; ++k2) {
+                    const u64 row = i - u64(1 - k2);
+                    const u64 pp = unpack_pos(P[size_t(row)]);
+                    std::string got, want;
+                    char t[8];
+                    for (u64 j = 0; j < K; ++j) {
+                        const unsigned g2 = unsigned(!wk_keys ? Kb[size_t(row) * size_t(K) + size_t(j)]
+                                                             : (*wk_keys)[size_t((*wk_slot)[size_t(row)]) * size_t(wk_kk) + size_t(j)]);
+                        const unsigned w2 = (g2, pp + kbase + j < FILE_N ? unsigned(REMAP ? REMAP[T[pp + kbase + j]] : T[pp + kbase + j]) : 999u);
+                        std::snprintf(t, sizeof t, "%02x ", g2); got += t;
+                        std::snprintf(t, sizeof t, "%02x ", w2); want += t;
+                    }
+                    std::fprintf(stderr, "  row=%" PRIu64 " pos=%" PRIu64 " plane=[%s] corpus=[%s]\n",
+                                 row, pp, got.c_str(), want.c_str());
+                }
+                die("WAVEKEY_ROUND_FAIL: a round left the band out of prefix order");
+            }
+        }
+    };
+    std::vector<std::pair<u64, u64>> carry;
+    if (!small.empty()) {
+        settle_small(small, carry);
+        check_perm("round0-settle", 0, small.size());
+        small.clear();
+    }
+    spans.swap(carry);
+    carry.clear();
+
+    // ---- the EXTRACTION ROUNDS: tie rows only, rising windows (K, 2K, 4K, ...) ----
+    u64 woff = kbase + K;      // the absolute offset the next window starts at
+    u64 kk = K;
+    for (u64 round = 1; !spans.empty(); ++round) {
+        if (round > g_wave_key_rounds) { residual.swap(spans); break; }
+        u64 tie = 0;
+        for (const auto& sp : spans) tie += sp.second - sp.first;
+        if (tie < 2) { spans.clear(); break; }
+        // the key plane is PRICED per row of the band, never per tie row of the data
+        if (kk > (SS_WAVE_KEY_PLANE_BYTES * n) / tie) kk = (SS_WAVE_KEY_PLANE_BYTES * n) / tie;
+        if (kk < 4) { residual.swap(spans); break; }
+        const double tx0 = now_sec();
+        std::vector<std::pair<u64, u64>> items;
+        items.reserve(size_t(tie));
+        for (const auto& sp : spans)
+            for (u64 i = sp.first; i < sp.second; ++i)
+                items.emplace_back(unpack_pos(P[size_t(i)]), i);
+        std::sort(items.begin(), items.end());
+        std::vector<u8> keys;
+        const u64 bytes0 = st.bytes_read, calls0 = st.syscalls;
+        wk_extract(fd, items, woff, kk, keys, st);
+        const u64 round_bytes = st.bytes_read - bytes0, round_calls = st.syscalls - calls0;
+        st.t_extract += now_sec() - tx0;
+        st.tie_rows += tie;
+        // THE WINDOW IS A ROW PROPERTY (keyradix's lesson): a u32 slot travels with
+        // the row through every level, because an index-keyed table is stale after
+        // the first scatter.
+        // THE SLOT PLANE PING-PONGS EXACTLY LIKE THE ROW PLANES. It travels with
+        // the row, so it has to survive the same swaps: a fresh all-0xff plane per
+        // level loses the window of every region the level did not write, and the
+        // small spans carrying those rows then index 0xffffffff (measured: SEGV).
+        std::fill(slot.begin(), slot.end(), 0xffffffffu);
+        std::fill(slot2.begin(), slot2.end(), 0xffffffffu);
+        for (size_t t = 0; t < items.size(); ++t) slot[size_t(items[t].second)] = u32(t);
+        wk_keys = &keys; wk_slot = &slot; wk_kk = kk; kbase_off = woff;
+        if (::getenv("XSA_WAVEKEY_VERIFY")) {
+            // THE EXTRACTION'S OWN ORACLE: every tie row's window must be the
+            // corpus bytes at [woff, woff+kk), reached through its SLOT.
+            for (const auto& sp : spans)
+                for (u64 i = sp.first; i < sp.second; ++i) {
+                    const u64 pp = unpack_pos(P[size_t(i)]);
+                    const u8* kb = &keys[size_t(slot[size_t(i)]) * size_t(kk)];
+                    const u64 have = FILE_N > pp + woff ? std::min<u64>(kk, FILE_N - pp - woff) : 0;
+                    for (u64 j = 0; j < have; ++j) {
+                        const unsigned want = REMAP ? REMAP[T[pp + woff + j]] : T[pp + woff + j];
+                        if (kb[j] != want) {
+                            std::fprintf(stderr,
+                                "WAVEKEY_EXTRACT_FAIL band=%" PRIu64 " round=%" PRIu64
+                                " pos=%" PRIu64 " off=%" PRIu64 " j=%" PRIu64
+                                " got=%u want=%u slot=%u tie=%" PRIu64 "\n",
+                                band_id, round, pp, woff, j, unsigned(kb[j]), want,
+                                slot[size_t(i)], tie);
+                            die("WAVEKEY_EXTRACT_FAIL: the extracted window is not the corpus");
+                        }
+                    }
+                }
+        }
+        const double tr0 = now_sec();
+        std::vector<std::pair<u64, u64>> bigspan;
+        prev_parent.assign(1, std::make_pair(u64(0), n));   // full resync per round
+        small.clear();   // the round's small spans accumulate across its levels
+        for (u64 lvl = 0; lvl < kk && !spans.empty(); ++lvl) {
+            const u64 g = woff + lvl;
+            bigspan.clear();
+            std::vector<std::pair<u64, u64>> parent(spans);
+            for (const auto& sp : spans) {
+                if (sp.second - sp.first > SS_WAVE_SMALL_ROWS) bigspan.push_back(sp);
+                else small.push_back(sp);
+            }
+            if (bigspan.empty()) { spans.clear(); break; }
+            const u64 lvlc = lvl, gc = g;
+            auto digk = [&](u64 i) -> unsigned {
+                if (rem_of(P[size_t(i)]) <= gc) return 0u;
+                return unsigned(keys[size_t(slot[size_t(i)]) * size_t(kk) + size_t(lvlc)]) + 1u;
+            };
+            for (const auto& sp : prev_parent) {
+                std::memcpy(&P2[size_t(sp.first)], &P[size_t(sp.first)],
+                            size_t(sp.second - sp.first) * sizeof(u64));
+                std::memcpy(&Kb2[size_t(sp.first) * size_t(K)], &Kb[size_t(sp.first) * size_t(K)],
+                            size_t(sp.second - sp.first) * size_t(K));
+            }
+            for (const auto& sp : prev_parent)
+                std::memcpy(&slot2[size_t(sp.first)], &slot[size_t(sp.first)],
+                            size_t(sp.second - sp.first) * sizeof(u32));
+            nxt.clear();
+            for (const auto& sp : bigspan) {
+                // scatter rows + key plane + slot plane together
+                starts.assign(SS_WAVE_BUCKETS + 1, 0);
+                for (u64 i = sp.first; i < sp.second; ++i) ++starts[size_t(digk(i)) + 1];
+                for (unsigned b = 0; b < SS_WAVE_BUCKETS; ++b) starts[b + 1] += starts[b];
+                std::vector<u64> cur(starts.begin(), starts.end() - 1);
+                for (u64 i = sp.first; i < sp.second; ++i) {
+                    const unsigned b = digk(i);
+                    const u64 at = sp.first + cur[b]++;
+                    P2[size_t(at)] = P[size_t(i)];
+                    std::memcpy(&Kb2[size_t(at) * size_t(K)], &Kb[size_t(i) * size_t(K)], size_t(K));
+                    slot2[size_t(at)] = slot[size_t(i)];
+                }
+                for (unsigned b = 0; b <= SS_WAVE_BUCKETS; ++b) starts[b] += sp.first;
+                for (unsigned b = 0; b < SS_WAVE_BUCKETS; ++b) {
+                    const u64 s = starts[b], e = starts[b + 1];
+                    if (e - s > 1) nxt.emplace_back(s, e);
+                    if (s > sp.first && e > s) lcpv[size_t(s)] = g;
+                }
+            }
+            P.swap(P2); Kb.swap(Kb2); slot.swap(slot2);
+            check_perm("extract-level", lvl, bigspan.size());
+            prev_parent = parent;
+            spans.swap(nxt);
+        }
+        for (const auto& sp : spans) small.push_back(sp);
+        spans.clear();
+        if (!small.empty()) { settle_small(small, carry); small.clear(); }
+        st.t_radix += now_sec() - tr0;
+        u64 tie_after = 0;
+        for (const auto& sp : carry) tie_after += sp.second - sp.first;
+        if (!carry.empty() && tie_after >= tie) {
+            ++st.no_shrink;
+            std::fprintf(stderr,
+                "SORT_ROUND_STALL band=%" PRIu64 " round=%" PRIu64 " off=%" PRIu64
+                " k=%" PRIu64 " rows_in=%" PRIu64 " rows_tied=%" PRIu64
+                " note=no-shrink (the survivors' suffixes end inside the window)\n",
+                band_id, round, woff, kk, tie, tie_after);
+        }
+        std::fprintf(stderr,
+            "SORT_ROUND band=%" PRIu64 " round=%" PRIu64 " off=%" PRIu64 " k=%" PRIu64
+            " rows_in=%" PRIu64 " rows_tied=%" PRIu64 " bytes_read=%" PRIu64
+            " syscalls=%" PRIu64 " shrink=%d\n",
+            band_id, round, woff, kk, tie, tie_after, round_bytes, round_calls,
+            int(tie_after < tie));
+        st.rounds = round + 1;
+        spans.swap(carry);
+        carry.clear();
+        woff += kk;
+        kk *= 2;
+    }
+
+    // ---- THE FALLBACK: the cap's leftovers. Walks from the PROVED depth. ----
+    if (!residual.empty()) {
+        const double tf0 = now_sec();
+        const u64 walk_from = woff;
+        for (const auto& sp : residual) {
+            st.fallback_rows += sp.second - sp.first;
+            std::sort(P.begin() + ptrdiff_t(sp.first), P.begin() + ptrdiff_t(sp.second),
+                      [walk_from](u64 a, u64 b) {
+                          return suf_cmp_from(unpack_pos(a), unpack_pos(b), walk_from) < 0;
+                      });
+            for (u64 i = sp.first + 1; i < sp.second; ++i) {
+                u64 lcp = 0;
+                suf_cmp_lcp(unpack_pos(P[size_t(i - 1)]), unpack_pos(P[size_t(i)]), walk_from, lcp);
+                lcpv[size_t(i)] = lcp;
+            }
+            if (sp.first) {
+                u64 lcp = 0;
+                suf_cmp_lcp(unpack_pos(P[size_t(sp.first - 1)]), unpack_pos(P[size_t(sp.first)]),
+                            std::min<u64>(lcpv[size_t(sp.first)], walk_from), lcp);
+                lcpv[size_t(sp.first)] = lcp;
+            }
+        }
+        st.t_fallback += now_sec() - tf0;
+    }
+    (void)covered;
+    // ---- THE ORACLE GUARD (XSA_WAVEKEY_VERIFY=1) ----
+    // A brute-force comparison sort of the SAME rows, through the corpus, on the
+    // band that was just ordered. It exists for the tiny-scale pyramid: a
+    // mechanism that is wrong says so at the band that is wrong, with the two
+    // suffixes and the depth they diverge at, instead of a rank error later.
+    if (::getenv("XSA_WAVEKEY_VERIFY")) {
+        std::vector<u64> ref = P;
+        std::sort(ref.begin(), ref.end(), [](u64 a, u64 b) {
+            return suf_cmp_from(unpack_pos(a), unpack_pos(b), 0) < 0;
+        });
+        for (u64 i = 0; i < n; ++i) {
+            if (ref[size_t(i)] != P[size_t(i)]) {
+                const u64 a = unpack_pos(P[size_t(i)]), b = unpack_pos(ref[size_t(i)]);
+                u64 lcp = 0;
+                suf_cmp_lcp(a, b, 0, lcp);
+                std::fprintf(stderr,
+                    "WAVEKEY_VERIFY_FAIL band=%" PRIu64 " row=%" PRIu64 " kbase=%" PRIu64
+                    " k=%" PRIu64 " got_pos=%" PRIu64 " want_pos=%" PRIu64 " lcp=%" PRIu64
+                    " got_suffix=%.40s want_suffix=%.40s\n",
+                    band_id, i, kbase, K, a, b, lcp,
+                    (const char*)(T + a), (const char*)(T + b));
+                die("WAVEKEY_VERIFY_FAIL: the band order disagrees with the brute-force suffix order");
+            }
+        }
+        // and the column: every adjacent pair's LCP, brute force
+        for (u64 i = 1; i < n; ++i) {
+            u64 lcp = 0;
+            suf_cmp_lcp(unpack_pos(P[size_t(i - 1)]), unpack_pos(P[size_t(i)]), 0, lcp);
+            if (lcpv[size_t(i)] != lcp) {
+                std::fprintf(stderr,
+                    "WAVEKEY_VERIFY_LCP_FAIL band=%" PRIu64 " row=%" PRIu64
+                    " got=%" PRIu64 " want=%" PRIu64 " pos=%" PRIu64 " prev=%" PRIu64 "\n",
+                    band_id, i, lcpv[size_t(i)], lcp,
+                    unpack_pos(P[size_t(i)]), unpack_pos(P[size_t(i - 1)]));
+                die("WAVEKEY_VERIFY_LCP_FAIL: the LCP plane disagrees with a direct walk");
+            }
+        }
+        std::fprintf(stderr, "WAVEKEY_VERIFY_OK band=%" PRIu64 " rows=%" PRIu64 " kbase=%" PRIu64
+                     " k=%" PRIu64 "\n", band_id, n, kbase, K);
+    }
+}
+
 #include "subdiv_survey.h"
 #include "subdiv_descent.h"
 
@@ -881,6 +1467,12 @@ int main(int argc, char** argv) {
     // is the same wave the full run would have executed.
     std::string subdiv_class;
     bool subdiv_class_given = false;
+    // THE WAVE KEY: K bytes captured per row DURING the sweep (see the leaf sort's
+    // note). K is a KNOB because it trades three things at once: the row record
+    // (8+K B), the wave's arena (a wave's rows AND keys fit at once) and how many
+    // rows a radix round can still tie. 0 = the default.
+    u64 wave_key_bytes = 0;
+    u64 wave_key_rounds = 0;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -915,6 +1507,10 @@ int main(int argc, char** argv) {
         else if (a.rfind("--subdiv-position-budget-bytes=", 0) == 0) pos_budget_bytes = std::strtoull(a.substr(31).c_str(), nullptr, 10);
         else if (a.rfind("--subdiv-leaf-coverage-pct=", 0) == 0) leaf_coverage_pct = std::atof(a.substr(27).c_str());
         else if (a.rfind("--subdiv-class=", 0) == 0) { subdiv_class = a.substr(15); subdiv_class_given = true; }
+        else if (a.rfind("--wave-key-bytes=", 0) == 0) wave_key_bytes = std::strtoull(a.substr(17).c_str(), nullptr, 10);
+        else if (a == "--wave-key-bytes") wave_key_bytes = std::strtoull(nxt().c_str(), nullptr, 10);
+        else if (a.rfind("--wave-key-rounds=", 0) == 0) wave_key_rounds = std::strtoull(a.substr(18).c_str(), nullptr, 10);
+        else if (a == "--wave-key-rounds") wave_key_rounds = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--subdiv-leaf-coverage-pct") leaf_coverage_pct = std::atof(nxt().c_str());
         else if (a == "--subdiv-position-budget-bytes") pos_budget_bytes = std::strtoull(nxt().c_str(), nullptr, 10);
         else die("unknown arg " + a);
@@ -949,6 +1545,34 @@ int main(int argc, char** argv) {
         die("--subdiv-strategy must be auto|local|global (got " + subdiv_strategy + ")");
     if (!(leaf_coverage_pct > 0.0 && leaf_coverage_pct <= 100.0))
         die("--subdiv-leaf-coverage-pct must be in (0,100]");
+    // THE WAVE KEY'S KNOBS. The env names exist because `xsa build` builds the
+    // producer's argv from a fixed list, so a flag-only knob would be unreachable
+    // from the one command the pile run uses. FLAGS WIN over the environment.
+    {
+        std::string wk_source = "default";
+        if (const char* e = ::getenv("XSA_WAVE_KEY_BYTES")) {
+            if (!wave_key_bytes) { wave_key_bytes = std::strtoull(e, nullptr, 10); wk_source = "env"; }
+        }
+        if (const char* e = ::getenv("XSA_WAVE_KEY_ROUNDS")) {
+            if (!wave_key_rounds) { wave_key_rounds = std::strtoull(e, nullptr, 10); wk_source = "env"; }
+        }
+        if (!wave_key_bytes) wave_key_bytes = 8;
+        if (!wave_key_rounds) wave_key_rounds = 5;
+        if (wave_key_bytes < 1 || wave_key_bytes > 1024)
+            die("--wave-key-bytes must be in [1,1024] (got " + std::to_string(wave_key_bytes) + ")");
+        if (wave_key_rounds < 1 || wave_key_rounds > 8)
+            die("--wave-key-rounds must be in [1,8] (got " + std::to_string(wave_key_rounds) + ")");
+        g_wave_key_bytes = wave_key_bytes;
+        g_wave_key_rounds = wave_key_rounds;
+        if (const char* e = ::getenv("XSA_WAVEKEY_SMALL")) SS_WAVE_SMALL_ROWS = std::strtoull(e, nullptr, 10);
+        std::fprintf(stderr,
+            "SS_WAVE_KEY_KNOB key_bytes=%" PRIu64 " rounds=%" PRIu64
+            " covered_bytes=%" PRIu64 " record_bytes=%" PRIu64 " source=%s"
+            " rule=keys-captured-during-the-wave-sweep;ties-get-doubling-windows;residual-to-LCE\n",
+            g_wave_key_bytes, g_wave_key_rounds,
+            g_wave_key_bytes * ((u64(1) << g_wave_key_rounds) - 1),
+            8 + g_wave_key_bytes, wk_source.c_str());
+    }
     if (corpus.empty() || (out.empty() && tapeBands.empty())) die("--corpus and --out required");
 
     if (!selftestOracle.empty() && !tapeBands.empty()) die("--selftest requires --out");
@@ -1068,7 +1692,10 @@ int main(int argc, char** argv) {
         return REMAP ? REMAP[T[p]] : T[p];
     };
 
-    const u64 row_bytes = sizeof(Row);            // the WIRE row (band part files)
+    // THE WIRE ROW: (position|carried symbol, key[K]). The 24-byte in-row key that
+    // a comparison sort needed is GONE - the radix leaf never compares 24-byte
+    // keys, and the K bytes it does order are the ones the sweep captured.
+    const u64 row_bytes = 8 + g_wave_key_bytes;
     // THE SCRATCH LAW: default cap is 2n bytes.
     const u64 cap_bytes = scratch_cap_gb > 0.0 ? (u64)(scratch_cap_gb * 1e9) : 2 * N;
     if (!tapeBands.empty() && (cap_bytes > 2 * N || N >= (1ull << 48)))
@@ -1857,6 +2484,9 @@ int main(int argc, char** argv) {
     std::function<size_t(size_t)> posOpenWindow;
     u64 posWindowEnd = 0;
     bool posWindowOpen = false;
+    // THE CLASS'S EXACT CENSUS, collected BY THE SWEEP (it is the pass that sees
+    // every one of the class's positions in ascending order, so pages are exact).
+    std::vector<u64> wExactRows(size_t(waves), 0), wExactPages(size_t(waves), 0);
     // EXACT, and cheap: one stat per part file (a window holds at most
     // waves x scan-threads of them). Used for the accounting so no counter can
     // drift away from the disc it claims to describe.
@@ -1903,6 +2533,151 @@ int main(int argc, char** argv) {
             " raise it so the window has room, or lower --budget-bytes so the wave goal shrinks"
             " and the plan cuts smaller waves. Nothing is written past the cap");
     };
+    // ============ THE WAVE'S BAND PLAN, COMPUTED BEFORE ITS SWEEP =============
+    // THE ONE STRUCTURAL CONSEQUENCE OF EXTRACTING AT SWEEP TIME. A wave's band
+    // FENCES have to exist before the sweep that carries the wave's rows, because
+    // the sweep now ROUTES each position into the band it belongs to (it has the
+    // corpus window in its hands, so routing costs no corpus access and has no
+    // look-ahead limit - a fence may be 24, 48, ... 192 bytes deep).
+    //
+    // The plan itself costs the corpus NOTHING for every depth the survey's
+    // prefix cache covers (SS_PLAN's corpus_reads); computing a whole window's
+    // plans up front is therefore the same work the wave loop used to do one wave
+    // at a time, moved ahead of the sweep that needs it. Each plan is computed
+    // ONCE and reused by the wave loop (that is where the band plan's receipts are
+    // printed, so a wave is priced exactly once).
+    struct WavePlan {
+        std::vector<TapeLeaf> plan;
+        std::vector<TapeFence> bounds;
+        std::vector<FencePfx> fences;
+        u64 maxFenceDepth = 24;
+        u64 nbands = 0;
+    };
+    std::vector<std::unique_ptr<WavePlan>> wplans;
+    wplans.resize(size_t(waves));
+    auto planWave = [&](size_t wi) -> WavePlan& {
+        if (wplans[wi]) return *wplans[wi];
+        std::unique_ptr<WavePlan> wp(new WavePlan());
+        const Wave& W = wl[wi];
+        const u8* Wpre = W.preLen ? preArena.data() + W.preOff : nullptr;
+        // THE WAVE PREDICATE, on bytes the caller already holds (`q`). One
+        // definition, three callers: this census, the sweep and the tail loop.
+        auto wave_match_q = [&](const u8* q, u64 p) -> bool {
+            for (u64 i = 0; i + 1 < W.depth; ++i) if (q[i] != Wpre[i]) return false;
+            const unsigned cE = q[W.depth - 1];
+            if (cE < W.bLo || cE >= W.bHi) return false;
+            return !W.sliced || (p >= W.posLo && p < W.posHi);
+        };
+        u8 qpad[SS_SURVEY_P + 8];
+        auto wave_match = [&](u64 p) -> bool {
+            if (p + W.depth <= FILE_N) return wave_match_q(T + p, p);
+            if (W.depth > sizeof qpad) die("wave prefix longer than the survey cache in a tail test");
+            const u64 avail = p < FILE_N ? FILE_N - p : 0;
+            for (u64 i = 0; i < avail && i < W.depth; ++i) qpad[i] = u8(REMAP ? REMAP[T[p + i]] : T[p + i]);
+            for (u64 i = avail; i < W.depth; ++i) qpad[i] = SENTINEL_SYMBOL;
+            return wave_match_q(qpad, p);
+        };
+        // THE CENSUS IS FREE: the wave's sampled positions are answered from the
+        // survey's prefix cache, never from a fresh 4 KB page per sample (the
+        // measured defect: ~4 M scattered reads per level).
+        std::vector<u64> waveSample;
+        {
+            bool censused = false;
+            if (W.depth <= S.P) {
+                censused = true;
+                for (u64 i = 0; i < S.samples; ++i) {
+                    const u64 p = S.pos(i);
+                    if (p >= KEY_N) continue;
+                    if (wave_match_q(&S.pre[size_t(i) * S.P], p)) waveSample.push_back(p);
+                }
+            }
+            if (!censused) {  // deeper than the cache: the text, journaled
+                PLAN_CORPUS_CALLS.fetch_add(1, std::memory_order_relaxed);
+                PLAN_CORPUS_BYTES.fetch_add(u64(sk.size()) * W.depth, std::memory_order_relaxed);
+                for (u64 p : sk) if (wave_match(p)) waveSample.push_back(p);
+            }
+        }
+        // The band plan compares SAMPLED positions: from the cache when it covers
+        // the depth, from the text only if it does not.
+        auto keycmp = [&](u64 a, u64 b, u64 depth) -> int {
+            const u64 ia = a / stride, ib = b / stride;
+            if (depth <= S.P && a % stride == 0 && b % stride == 0 &&
+                ia < S.samples && ib < S.samples) {
+                const u8* pa = &S.pre[size_t(ia) * S.P];
+                const u8* pb = &S.pre[size_t(ib) * S.P];
+                const u64 cap = std::min<u64>(depth, std::min(FILE_N - a, FILE_N - b));
+                for (u64 i = 0; i < cap; ++i)
+                    if (pa[i] != pb[i]) return pa[i] < pb[i] ? -1 : 1;
+                if (cap == depth || a == b) return 0;
+                return FILE_N - a < FILE_N - b ? -1 : 1;
+            }
+            const u64 bytes = std::min<u64>(depth, 2 * 24);
+            g_tape_fence_bytes += bytes;
+            PLAN_CORPUS_CALLS.fetch_add(1, std::memory_order_relaxed);
+            PLAN_CORPUS_BYTES.fetch_add(bytes, std::memory_order_relaxed);
+            return prefix_cmp(a, b, depth);
+        };
+        auto pageof = [&](u64 p) -> u32 {
+            const u64 i = p / stride;
+            if (p % stride == 0 && i < S.samples) return S.page[size_t(i)];
+            return u32(p / SS_SURVEY_PAGE);
+        };
+        // THE PLAN IS CUT AT THE CURRENT WORK UNIT. A band that cannot be
+        // allocated halves rows_per_band; a wave already SWEPT cannot be re-cut
+        // (its rows are already in band parts), so the shrink applies from the
+        // next WINDOW. Journaled where it happens.
+        wp->plan = plan_tape(std::move(waveSample), stride, rows_per_band, wi, trailing,
+                             keycmp, pageof, SS_SURVEY_PAGE, FILE_N);
+        const u64 nbands = wp->plan.size();
+        for (size_t i = 1; i < wp->plan.size(); ++i) wp->bounds.push_back(wp->plan[i].first);
+        // THE FENCES, RESOLVED ONCE. Routing a position against a fence needs the
+        // fence's PREFIX BYTES; reading them per position would put a corpus read
+        // back in the descent. They are resolved here, from the prefix cache when
+        // the fence position is a sample (zero corpus reads), from the text
+        // otherwise, and every routing arm compares against the SAME bytes.
+        wp->fences.reserve(wp->bounds.size());
+        for (const TapeFence& f : wp->bounds) {
+            FencePfx fp;
+            fp.pos = f.pos; fp.depth = f.depth; fp.after = f.after;
+            fp.flen = f.pos >= FILE_N ? 0 : std::min<u64>(f.depth, FILE_N - f.pos);
+            fp.pfx.resize(size_t(fp.flen));
+            const u64 i = f.pos / stride;
+            if (f.pos % stride == 0 && i < S.samples && fp.flen <= S.P) {
+                std::memcpy(fp.pfx.data(), &S.pre[size_t(i) * S.P], size_t(fp.flen));
+            } else {
+                for (u64 k = 0; k < fp.flen; ++k) fp.pfx[size_t(k)] = u8(sym_at(f.pos + k));
+                g_tape_fence_bytes += fp.flen;
+                PLAN_CORPUS_CALLS.fetch_add(1, std::memory_order_relaxed);
+                PLAN_CORPUS_BYTES.fetch_add(fp.flen, std::memory_order_relaxed);
+            }
+            wp->maxFenceDepth = std::max(wp->maxFenceDepth, fp.flen);
+            wp->fences.push_back(std::move(fp));
+        }
+        // ---- THE LEAF RECEIPT: rows are a proxy, pages are what the leaf sort
+        // pays. Every band here IS a leaf of the plan (rows <= rows_per_band from
+        // plan_tape's own x0.8 goal), so its expected page footprint is journaled
+        // and the second leaf term (coverage <= small_fraction) is checked against
+        // it with the number that failed, if it fails.
+        for (size_t i = 0; i < wp->plan.size(); ++i) {
+            const double bandCov = double(wp->plan[i].pages) * double(stride) / double(FILE_N);
+            const double bandPageFrac = double(wp->plan[i].pages) * double(SS_SURVEY_PAGE) /
+                                        double(FILE_N);
+            const bool covOk = bandPageFrac <= leafCovCap;
+            std::fprintf(stderr,
+                "SS_SUBDIV_LEAF wave=%zu band=%zu rows_est=%" PRIu64 " samples=%" PRIu64
+                " pages=%" PRIu64 " page_footprint_bytes=%" PRIu64 " coverage=%.6f"
+                " page_fraction=%.4f cap=%.4f ok=%d depth=%" PRIu64 "\n",
+                wi, i, wp->plan[i].samples * stride, wp->plan[i].samples, wp->plan[i].pages,
+                wp->plan[i].pages * SS_SURVEY_PAGE, bandCov, bandPageFrac, leafCovCap, int(covOk),
+                wp->plan[i].first.depth);
+            if (covOk) ++subdivLeaves;
+        }
+        wp->nbands = nbands;
+        WavePlan& out = *wp;
+        wplans[wi] = std::move(wp);
+        return out;
+    };
+
     // THE SCATTER LAMBDAS ARE MAIN-SCOPE ON PURPOSE (see the note at their end).
     std::fprintf(stderr,
         "SS_SUBDIV_POSBUDGET position_budget_bytes=%" PRIu64 " window_rows=%" PRIu64
@@ -1915,27 +2690,44 @@ int main(int argc, char** argv) {
             posBudget * SS_POS_SAFETY_PCT / 100, posMarginBytes,
             subdivLocal, subdivGlobal, subdivLocalRows,
             (subdivLocalRows + windowRows - 1) / std::max<u64>(1, windowRows));
+        // ============ THE SWEEP THAT EXTRACTS AND ROUTES ====================
+        // One sequential pass over the corpus serves EVERY wave of the window:
+        // each position that matches a wave's predicate is ROUTED against that
+        // wave's fences (in full depth - the buffer is here) and its K key bytes
+        // are captured out of the SAME buffer, into the record the sweep writes:
+        //
+        //     (position | carried symbol, key[K])     = 8 + K bytes
+        //
+        // That is the whole point of this shape: the leaf sort never reads the
+        // corpus for a key it could have been handed here. The record IS the band
+        // row - the descent has nothing left to rebuild.
         auto scatter_window = [&](size_t wa, size_t wb) {
             posWinWa = wa; posWinWb = wb; posWinWritten = 0;
-            // ---- GUARD 1: THE FILESYSTEM, BEFORE A SINGLE BYTE IS WRITTEN ----
-            // A full disc corrupts unrelated work on this shared box; refusing is
-            // the only acceptable failure mode.
+            const u64 K = g_wave_key_bytes;
+            const u64 rec = row_bytes;              // 8 + K
+            // ---- THE PLANS, THEN GUARD 1: THE FILESYSTEM ----
+            const u64 nw = wb - wa;
+            std::vector<WavePlan*> wps(nw, nullptr);
+            for (u64 i = 0; i < nw; ++i) wps[size_t(i)] = &planWave(wa + size_t(i));
+            u64 maxBands = 1;
+            for (u64 i = 0; i < nw; ++i) maxBands = std::max(maxBands, wps[size_t(i)]->nbands);
             {
                 u64 need = 0;
-                for (size_t i = wa; i < wb; ++i) need += std::max<u64>(1, wl[i].rowsEst) * sizeof(u64);
+                for (size_t i = wa; i < wb; ++i) need += std::max<u64>(1, wl[i].rowsEst) * rec;
                 struct statvfs vfs{};
                 if (::statvfs(posDir.c_str(), &vfs) != 0) die("statvfs " + posDir);
                 const u64 freeb = u64(vfs.f_bavail) * u64(vfs.f_frsize);
                 std::fprintf(stderr,
                     "SS_SUBDIV_POSSPACE window=[%zu,%zu) free_bytes=%" PRIu64
-                    " needed_bytes=%" PRIu64 " margin_bytes=%" PRIu64 " budget_bytes=%" PRIu64
-                    " ok=%d\n", wa, wb, freeb, need, posMarginBytes, posBudget,
+                    " needed_bytes=%" PRIu64 " row_bytes=%" PRIu64
+                    " margin_bytes=%" PRIu64 " budget_bytes=%" PRIu64
+                    " ok=%d\n", wa, wb, freeb, need, rec, posMarginBytes, posBudget,
                     int(freeb >= need + posMarginBytes));
                 if (freeb < need + posMarginBytes)
-                    die("subdiv position window does not fit the scratch filesystem: free_bytes=" +
+                    die("subdiv wave window does not fit the scratch filesystem: free_bytes=" +
                         std::to_string(freeb) + " needed_bytes=" + std::to_string(need) +
-                        " (the window's rowsEst x " + std::to_string(sizeof(u64)) +
-                        ") margin_bytes=" + std::to_string(posMarginBytes) +
+                        " (the window's rowsEst x " + std::to_string(rec) +
+                        " B = position+symbol+key) margin_bytes=" + std::to_string(posMarginBytes) +
                         " window=[" + std::to_string(wa) + "," + std::to_string(wb) +
                         ") scratch_dir=" + posDir +
                         ". THE KNOBS: free space, or lower --subdiv-position-budget-bytes"
@@ -1944,7 +2736,6 @@ int main(int argc, char** argv) {
                         " Refusing to fill the disc");
             }
             const double ts = now_sec();
-            const u64 nw = wb - wa;
             // THE FAST FILTER: the union of the window's waves, reduced to the
             // FIRST bytes they can match. A position whose first byte is not in
             // the window costs one table lookup and one branch.
@@ -1958,39 +2749,57 @@ int main(int argc, char** argv) {
                 }
             }
             const u64 nt = std::max<u64>(1, std::min<u64>(threads, std::max<u64>(1, FILE_N / (1u << 20) + 1)));
+            // ONE STAGING BUFFER PER (thread, wave, band). The stage term is the
+            // planner's, so the buffer size is DERIVED from it, never a constant:
+            // a window of 30 waves x 30 bands must still fit the price the plan paid.
+            const u64 nb = nw * maxBands;
             u64 bufsz = 1u << 20;
-            while (nw * nt * bufsz > std::max<u64>(1u << 22, budget.stage) && bufsz > (1u << 12))
+            while (nb * nt * bufsz > std::max<u64>(1u << 22, budget.stage) && bufsz > (1u << 12))
                 bufsz >>= 1;
-            std::vector<std::vector<std::vector<u64>>> pb(nt, std::vector<std::vector<u64>>(nw));
+            std::vector<std::vector<std::vector<u8>>> pb(nt, std::vector<std::vector<u8>>(size_t(nb)));
             for (u64 t = 0; t < nt; ++t)
-                for (u64 i = 0; i < nw; ++i) pb[t][i].reserve(bufsz / sizeof(u64));
-            std::vector<std::vector<u8>> made(nt, std::vector<u8>(nw, 0));
+                for (u64 i = 0; i < nb; ++i) pb[size_t(t)][size_t(i)].reserve(bufsz);
+            std::vector<std::vector<u8>> made(nt, std::vector<u8>(size_t(nb), 0));
             std::vector<int> curFd(nt, -1);
-            std::vector<u64> curW(nt, ~0ull);
+            std::vector<u64> curKey(nt, ~0ull);
             std::vector<std::string> err(nt);
+            std::mutex exact_mu;
             std::atomic<u64> rowsOut{0};
             // THE BYTES THIS WINDOW HAS WRITTEN, counted at the write itself so the
             // budget check below cannot be fooled by a stat() that has not caught up.
             std::atomic<u64> bytesOut{0};
-            auto flushp = [&](u64 t, u64 i) {
-                auto& v = pb[t][i];
+            auto flushp = [&](u64 t, u64 key) {
+                auto& v = pb[size_t(t)][size_t(key)];
                 if (v.empty()) return;
-                if (curFd[t] < 0 || curW[t] != i) {
-                    if (curFd[t] >= 0) { if (::close(curFd[t])) die("close position part"); curFd[t] = -1; }
+                if (curFd[size_t(t)] < 0 || curKey[size_t(t)] != key) {
+                    if (curFd[size_t(t)] >= 0) {
+                        if (::close(curFd[size_t(t)])) die("close band part");
+                        curFd[size_t(t)] = -1;
+                    }
+                    const u64 i = key / maxBands, b = key % maxBands;
                     char name[512];
-                    std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".p%05" PRIu64,
-                                  posDir.c_str(), u64(wa + i), t);
-                    const int f = ::open(name, O_WRONLY | O_CREAT | (made[t][i] ? O_APPEND : O_TRUNC), 0666);
-                    if (f < 0) die(std::string("create position part ") + name);
-                    curFd[t] = f; curW[t] = i; made[t][i] = 1;
+                    std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".b%05" PRIu64 ".p%05" PRIu64,
+                                  scratch.c_str(), u64(wa + i), b, t);
+                    const int f = ::open(name, O_WRONLY | O_CREAT |
+                                         (made[size_t(t)][size_t(key)] ? O_APPEND : O_TRUNC), 0666);
+                    if (f < 0) die(std::string("create band part ") + name);
+                    curFd[size_t(t)] = f; curKey[size_t(t)] = key;
+                    made[size_t(t)][size_t(key)] = 1;
                     noteFdPeak();
                 }
-                // GUARD 2: THE POSITION BUDGET, on the bytes actually written. A
+                // GUARD 2: THE WINDOW BUDGET, on the bytes actually written. A
                 // budget that is only a planning target is not a budget.
-                const u64 after = bytesOut.fetch_add(u64(v.size()) * sizeof(u64)) +
-                                  u64(v.size()) * sizeof(u64);
+                const u64 after = bytesOut.fetch_add(u64(v.size())) + u64(v.size());
                 if (after > posBudget) pos_budget_die("at write", after);
-                posfile_write(curFd[t], v.data(), v.size());
+                {
+                    size_t off = 0;
+                    while (off < v.size()) {
+                        ssize_t wr = ::write(curFd[size_t(t)], v.data() + off, v.size() - off);
+                        if (wr <= 0) die("write band part");
+                        off += size_t(wr);
+                    }
+                }
+                rowsOut.fetch_add(u64(v.size()) / rec);
                 v.clear();
             };
             std::vector<std::thread> ts_;
@@ -1998,14 +2807,24 @@ int main(int argc, char** argv) {
                 ts_.emplace_back([&, t]() {
                     const u64 fileN = FILE_N;
                     const u64 lo = fileN * t / nt, hi = fileN * (t + 1) / nt;
+                    // THE LOOK-AHEAD IS DATA: the predicate's depth, the fences'
+                    // depth and the key window's end, whichever is deepest.
                     u64 need = 1;
-                    for (size_t i = wa; i < wb; ++i) need = std::max<u64>(need, wl[i].depth);
+                    for (u64 i = 0; i < nw; ++i) {
+                        const Wave& W = wl[wa + size_t(i)];
+                        need = std::max<u64>(need, W.depth);
+                        need = std::max<u64>(need, wps[size_t(i)]->maxFenceDepth);
+                        need = std::max<u64>(need, W.preLen + K);
+                    }
                     std::vector<u8> buf(SS_SCAN_CHUNK + need + 128);
+                    std::vector<u8> pad;
+                    // THE CLASS'S EXACT CENSUS, per scan thread: the exact row
+                    // count and the exact number of 1 MiB pages it occupies (one
+                    // page change per ascending position; the scan ranges are
+                    // disjoint across threads, so the sums are the corpus's own).
+                    std::vector<u64> exRows(nw, 0), exPages(nw, 0), lastPage(nw, ~0ull);
                     for (u64 base = lo; base < hi;) {
                         const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, hi - base);
-                        // The look-ahead a window's waves can ask for is their own
-                        // predicate depth; every wave in the window is tested on
-                        // the same buffer, so the window carries the maximum.
                         const u64 real = std::min<u64>(chunk + need, FILE_N - base);
                         if (real) read_window(fd, base, real, buf);   // remapped in place
                         for (u64 j = 0; j < chunk && base + j < KEY_N; ++j) {
@@ -2013,9 +2832,22 @@ int main(int argc, char** argv) {
                             if (j >= real) break;       // past the text
                             const u8* q = buf.data() + j;
                             if (!firstOk[q[0]]) continue;
-                            if (j + need > real) break; // the tail of this window: next window
-                            for (size_t i = wa; i < wb; ++i) {
-                                const Wave& W = wl[i];
+                            const u64 avail = FILE_N - p;
+                            if (j + need > real) {
+                                if (p + need <= FILE_N) break;   // the run-up: next chunk
+                                // THE FILE'S END: pad with the virtual END symbol, which
+                                // is what the predicate and the leaf read past the text
+                                // anyway (the leaf's END bucket is decided from rem).
+                                if (pad.size() < size_t(need)) pad.assign(size_t(need), SENTINEL_SYMBOL);
+                                if (avail > need) die("sweep pad overflow");
+                                std::memcpy(pad.data(), q, size_t(avail));
+                                q = pad.data();
+                            }
+                            // ---- THE WAVE: a position belongs to exactly one, and
+                            // the fast filter has already matched byte 0.
+                            u64 hitW = ~0ull;
+                            for (u64 i = 0; i < nw; ++i) {
+                                const Wave& W = wl[wa + size_t(i)];
                                 const u8* Wpre = W.preLen ? preArena.data() + W.preOff : nullptr;
                                 bool hit = true;
                                 for (u64 k = 0; k + 1 < W.depth; ++k)
@@ -2023,38 +2855,69 @@ int main(int argc, char** argv) {
                                 if (!hit) continue;
                                 const unsigned cE = q[W.depth - 1];
                                 if (cE < W.bLo || cE >= W.bHi) continue;
-                                auto& v = pb[t][i - wa];
-                                v.push_back(p);
-                                if (v.size() >= pb[t][i - wa].capacity()) flushp(t, i - wa);
-                                break;   // a position belongs to exactly one wave
+                                if (W.sliced && (p < W.posLo || p >= W.posHi)) continue;
+                                hitW = i;
+                                break;
                             }
+                            if (hitW == ~0ull) continue;
+                            const Wave& W = wl[wa + size_t(hitW)];
+                            WavePlan& WP = *wps[size_t(hitW)];
+                            // ---- THE BAND: the same fence bytes the descent's
+                            // local and global arms compare against.
+                            const u64 b = WP.fences.empty() ? 0 : route_fences(q, p, avail, WP.fences);
+                            const u64 bnd = std::min<u64>(b, WP.nbands ? WP.nbands - 1 : 0);
+                            // ---- THE RECORD: position|symbol, then key[K] out of
+                            // THIS buffer (no second read, no second seek).
+                            const u64 pk = pack_sym(p, p == 0 ? SENTINEL_SYMBOL : q[-1]);
+                            auto& v = pb[size_t(t)][size_t(hitW * maxBands + bnd)];
+                            v.resize(v.size() + size_t(rec));
+                            u8* dst = v.data() + v.size() - size_t(rec);
+                            std::memcpy(dst, &pk, 8);
+                            std::memcpy(dst + 8, q + W.preLen, size_t(K));
+                            ++exRows[size_t(hitW)];
+                            if (p / SS_SURVEY_PAGE != lastPage[size_t(hitW)]) {
+                                lastPage[size_t(hitW)] = p / SS_SURVEY_PAGE;
+                                ++exPages[size_t(hitW)];
+                            }
+                            if (v.size() >= bufsz) flushp(t, hitW * maxBands + bnd);
                         }
                         base += chunk;
                     }
-                    for (u64 i = 0; i < nw; ++i) flushp(t, i);
-                    if (curFd[t] >= 0) { if (::close(curFd[t])) die("close position part"); curFd[t] = -1; }
+                    for (u64 i = 0; i < nb; ++i) flushp(t, i);
+                    if (curFd[size_t(t)] >= 0) { if (::close(curFd[size_t(t)])) die("close band part"); curFd[size_t(t)] = -1; }
+                    {
+                        std::lock_guard<std::mutex> lk(exact_mu);
+                        for (u64 i = 0; i < nw; ++i) {
+                            wExactRows[size_t(wa + i)] += exRows[size_t(i)];
+                            wExactPages[size_t(wa + i)] += exPages[size_t(i)];
+                        }
+                    }
+                    noteFdPeak();
                 });
             for (auto& th : ts_) th.join();
-            for (u64 t = 0; t < nt; ++t) if (!err[t].empty()) die(err[t]);
+            for (u64 t = 0; t < nt; ++t) if (!err[size_t(t)].empty()) die(err[size_t(t)]);
             u64 bytes = 0;
-            for (u64 t = 0; t < nt; ++t) {
-                std::vector<u64> v;   // the row count of every wave's parts
-                for (u64 i = 0; i < nw; ++i) {
-                    char name[512];
-                    std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".p%05" PRIu64,
-                                  posDir.c_str(), u64(wa + i), t);
-                    struct stat st{};
-                    if (::stat(name, &st) == 0) bytes += u64(st.st_size);
+            for (u64 i = 0; i < nw; ++i) {
+                for (u64 bb = 0; bb < wps[size_t(i)]->nbands; ++bb) {
+                    for (u64 t = 0; t < nt; ++t) {
+                        char name[512];
+                        std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".b%05" PRIu64 ".p%05" PRIu64,
+                                      scratch.c_str(), u64(wa + i), bb, t);
+                        struct stat st{};
+                        if (::stat(name, &st) == 0) bytes += u64(st.st_size);
+                    }
                 }
             }
             ++scatterPasses;
             scatterBytes += FILE_N;
-            scatterRows += bytes / sizeof(u64);
+            scatterRows += bytes / rec;
             std::fprintf(stderr,
                 "SS_SCATTER pass=%" PRIu64 " waves=[%zu,%zu) waves_n=%" PRIu64
-                " bytes_read=%" PRIu64 " positions=%" PRIu64 " position_bytes=%" PRIu64
-                " rows_est=%" PRIu64 " wall=%.2f rule=one_sweep_per_position_window\n",
-                scatterPasses, wa, wb, nw, FILE_N, bytes / sizeof(u64), bytes,
+                " bytes_read=%" PRIu64 " rows=%" PRIu64 " row_bytes=%" PRIu64
+                " window_bytes=%" PRIu64 " max_bands=%" PRIu64
+                " rows_est=%" PRIu64 " wall=%.2f"
+                " rule=one_sweep_per_window,keys_extracted_during_it,routed_into_band_parts\n",
+                scatterPasses, wa, wb, nw, FILE_N, bytes / rec, rec, bytes, maxBands,
                 [&] { u64 r = 0; for (size_t i = wa; i < wb; ++i) r += wl[i].rowsEst; return r; }(),
                 now_sec() - ts);
         };
@@ -2499,102 +3362,16 @@ int main(int argc, char** argv) {
             for (u64 i = avail; i < W.depth; ++i) qpad[i] = SENTINEL_SYMBOL;
             return wave_match_q(qpad, p);
         };
-        // THE CENSUS IS FREE: the wave's sampled positions are answered from the
-        // survey's prefix cache, never from a fresh 4 KB page per sample (the
-        // measured defect: ~4 M scattered reads per level).
-        std::vector<u64> waveSample;
-        {
-            bool censused = false;
-            if (W.depth <= S.P) {
-                censused = true;
-                for (u64 i = 0; i < S.samples; ++i) {
-                    const u64 p = S.pos(i);
-                    if (p >= KEY_N) continue;
-                    if (wave_match_q(&S.pre[size_t(i) * S.P], p)) waveSample.push_back(p);
-                }
-            }
-            if (!censused) {  // deeper than the cache: the text, journaled
-                PLAN_CORPUS_CALLS.fetch_add(1, std::memory_order_relaxed);
-                PLAN_CORPUS_BYTES.fetch_add(u64(sk.size()) * W.depth, std::memory_order_relaxed);
-                for (u64 p : sk) if (wave_match(p)) waveSample.push_back(p);
-            }
-        }
-        // The band plan compares SAMPLED positions: from the cache when it covers
-        // the depth, from the text only if it does not.
-        auto keycmp = [&](u64 a, u64 b, u64 depth) -> int {
-            const u64 ia = a / stride, ib = b / stride;
-            if (depth <= S.P && a % stride == 0 && b % stride == 0 &&
-                ia < S.samples && ib < S.samples) {
-                const u8* pa = &S.pre[size_t(ia) * S.P];
-                const u8* pb = &S.pre[size_t(ib) * S.P];
-                const u64 cap = std::min<u64>(depth, std::min(FILE_N - a, FILE_N - b));
-                for (u64 i = 0; i < cap; ++i)
-                    if (pa[i] != pb[i]) return pa[i] < pb[i] ? -1 : 1;
-                if (cap == depth || a == b) return 0;
-                return FILE_N - a < FILE_N - b ? -1 : 1;
-            }
-            const u64 bytes = std::min<u64>(depth, 2 * 24);
-            g_tape_fence_bytes += bytes;
-            PLAN_CORPUS_CALLS.fetch_add(1, std::memory_order_relaxed);
-            PLAN_CORPUS_BYTES.fetch_add(bytes, std::memory_order_relaxed);
-            return prefix_cmp(a, b, depth);
-        };
-        auto pageof = [&](u64 p) -> u32 {
-            const u64 i = p / stride;
-            if (p % stride == 0 && i < S.samples) return S.page[size_t(i)];
-            return u32(p / SS_SURVEY_PAGE);
-        };
-        const auto plan=plan_tape(std::move(waveSample),stride,rows_per_band,w,trailing,
-                                  keycmp, pageof, SS_SURVEY_PAGE, FILE_N);
-        std::vector<TapeFence> bounds;
-        for (size_t i=1;i<plan.size();++i) bounds.push_back(plan[i].first);
-        const u64 nbands=plan.size();
-        // THE FENCES, RESOLVED ONCE. Routing a position against a fence needs the
-        // fence's PREFIX BYTES; reading them per position would put a corpus read
-        // back in the descent. They are resolved here, from the prefix cache when
-        // the fence position is a sample (zero corpus reads), from the text
-        // otherwise, and both strategies compare against the SAME bytes.
-        std::vector<FencePfx> fences;
-        fences.reserve(bounds.size());
-        u64 fenceCacheHits = 0;
-        u64 maxFenceDepth = 24;
-        for (const TapeFence& f : bounds) {
-            FencePfx fp;
-            fp.pos = f.pos; fp.depth = f.depth; fp.after = f.after;
-            fp.flen = f.pos >= FILE_N ? 0 : std::min<u64>(f.depth, FILE_N - f.pos);
-            fp.pfx.resize(size_t(fp.flen));
-            const u64 i = f.pos / stride;
-            if (f.pos % stride == 0 && i < S.samples && fp.flen <= S.P) {
-                std::memcpy(fp.pfx.data(), &S.pre[size_t(i) * S.P], size_t(fp.flen));
-                ++fenceCacheHits;
-            } else {
-                for (u64 k = 0; k < fp.flen; ++k) fp.pfx[size_t(k)] = u8(sym_at(f.pos + k));
-                g_tape_fence_bytes += fp.flen;
-                PLAN_CORPUS_CALLS.fetch_add(1, std::memory_order_relaxed);
-                PLAN_CORPUS_BYTES.fetch_add(fp.flen, std::memory_order_relaxed);
-            }
-            maxFenceDepth = std::max(maxFenceDepth, fp.flen);
-            fences.push_back(std::move(fp));
-        }
-        // ---- THE LEAF RECEIPT: rows are a proxy, pages are what the leaf sort
-        // pays. Every band here IS a leaf of the plan (rows <= rows_per_band from
-        // plan_tape's own x0.8 goal), so its expected page footprint is journaled
-        // and the second leaf term (coverage <= small_fraction) is checked against
-        // it with the number that failed, if it fails.
-        for (size_t i = 0; i < plan.size(); ++i) {
-            const double bandCov = double(plan[i].pages) * double(stride) / double(FILE_N);
-            const double bandPageFrac = double(plan[i].pages) * double(SS_SURVEY_PAGE) /
-                                        double(FILE_N);
-            const bool covOk = bandPageFrac <= leafCovCap;
-            std::fprintf(stderr,
-                "SS_SUBDIV_LEAF wave=%" PRIu64 " band=%zu rows_est=%" PRIu64 " samples=%" PRIu64
-                " pages=%" PRIu64 " page_footprint_bytes=%" PRIu64 " coverage=%.6f"
-                " page_fraction=%.4f cap=%.4f ok=%d depth=%" PRIu64 "\n",
-                w, i, plan[i].samples * stride, plan[i].samples, plan[i].pages,
-                plan[i].pages * SS_SURVEY_PAGE, bandCov, bandPageFrac, leafCovCap, int(covOk),
-                plan[i].first.depth);
-            if (covOk) ++subdivLeaves;
-        }
+        // ---- THE BAND PLAN FOR THIS WAVE, ALREADY COMPUTED -----------------
+        // The window's sweep had to have it BEFORE it routed a single row (see
+        // planWave), so this is a LOOKUP, not a computation: the census, the
+        // fences and the leaf receipts were priced once, when the sweep was sown.
+        WavePlan& WP = planWave(size_t(w));
+        const std::vector<TapeLeaf>& plan = WP.plan;
+        std::vector<TapeFence>& bounds = WP.bounds;
+        std::vector<FencePfx>& fences = WP.fences;
+        const u64 nbands = WP.nbands;
+        const u64 maxFenceDepth = WP.maxFenceDepth;
         auto route_q = [&](const u8* q, u64 p, u64 avail) -> u64 {
             const u64 b = route_fences(q, p, avail, fences);
             return b < nbands ? b : nbands - 1;
@@ -2688,30 +3465,23 @@ int main(int argc, char** argv) {
                     // THE WAVE PREDICATE, on the already-remapped window (one
                     // definition, shared with the census and the tail loop).
                     if (!wave_match_q(buf.data() + bj, p)) continue;
-                    // THE WHOLE 24-BYTE KEY. Leaving kq unset here was a real bug:
-                    // the comparator's third word then read uninitialised memory,
-                    // and it still passed sa_check once - the verifier catches order
-                    // errors, not undefined values that happen to agree.
-                    u64 a1, a2, a3;
-                    std::memcpy(&a1, buf.data() + bj, 8);
-                    std::memcpy(&a2, buf.data() + bj + 8, 8);
-                    std::memcpy(&a3, buf.data() + bj + 16, 8);
-                    a1 = bswap64(a1); a2 = bswap64(a2); a3 = bswap64(a3);
+                    // ---- THE RECORD: (position|symbol, key[K]) ----
                     // The carried BWT symbol. Position 0's predecessor is the
                     // appended end-of-text byte: symbol 0, exactly as the
                     // successor rule says (no marker, no rewrite downstream).
                     const u8 sy = p == 0 ? SENTINEL_SYMBOL : buf[bj - 1];
-                    Row r{};
-                    r.klo = a1;
-                    r.khi = a2;
-                    r.kq = a3;
-                    r.pos = pack_sym(p, sy);
+                    const u64 pk = pack_sym(p, sy);
                     // ROUTE FROM THE WINDOW, against the fences' stored prefixes:
-                    // no corpus access, and the same bytes the local arm uses.
+                    // no corpus access, and the SAME fence bytes the window sweep
+                    // compares. Full depth: the fence may be 192 bytes deep.
                     const u64 b = route_q(buf.data() + bj, p,
                                           std::min<u64>(FILE_N - p, got - bj));
                     auto& v = bufs[t][b];
-                    v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
+                    const size_t at = v.size();
+                    v.resize(at + size_t(row_bytes));
+                    std::memcpy(v.data() + at, &pk, 8);
+                    std::memcpy(v.data() + at + 8, buf.data() + bj + W.preLen,
+                                size_t(g_wave_key_bytes));
                     if (v.size() >= bufsz) flush_buf(t, b);
                 }
                 base += chunk;
@@ -2724,103 +3494,42 @@ int main(int argc, char** argv) {
         // fence prefixes into the same band part files, so the band stream is
         // byte-identical whichever one ran (G6): the strategy is a cost decision,
         // never a semantic one.
+        //
+        // WHAT CHANGED IN THIS LANE: the LOCAL arm no longer READS anything here.
+        // The window's sweep has already routed this wave's rows into its band
+        // parts AND captured each row's K key bytes out of the same read buffer.
+        // The descent's job is done before it starts - which is exactly the point:
+        // a band's rows are spread over the whole corpus, so a per-band read of
+        // them is a corpus read per band (MEASURED: rchar/row 38 -> 184.7).
         bool usedLocal = false;
         classLocalBytes = 0;
         classGlobalBytes = 0;
         if (W.strat == SS_STRAT_LOCAL && !W.sliced) {
-            // The wave's position parts must ALL exist (the scatter pass wrote one
-            // per scan thread). Their absence is not a fallback: it is a bug.
-            std::vector<u64> parts(nparts, 0);
-            bool any = false;
-            for (u64 t = 0; t < nparts; ++t) {
-                char name[512];
-                std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".p%05" PRIu64,
-                              posDir.c_str(), w, t);
-                struct stat st{};
-                if (::stat(name, &st) == 0) { parts[t] = u64(st.st_size) / sizeof(u64); any = true; }
-            }
-            if (any) {
-                usedLocal = true;
-                std::vector<u64> thrBytes(nparts, 0), thrRows(nparts, 0), thrPages(nparts, 0);
-                std::vector<std::string> err(nparts);
-                std::vector<std::thread> lts;
-                for (u64 t = 0; t < nparts; ++t)
-                    lts.emplace_back([&, t]() {
-                        LocalReader rd;
-                        rd.init(fd, FILE_N);
-                        PosFile pf;
-                        char name[512];
-                        std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".p%05" PRIu64,
-                                      posDir.c_str(), w, t);
-                        if (!pf.open_read(name)) {   // empty part is legal: no rows
-                            thrBytes[t] = 0; return;
-                        }
-                        u64 p, lastPage = ~0ull;
-                        while (pf.next(p)) {
-                            if (p >= KEY_N) continue;
-                            const u8* q = rd.fetch(p, 1, 1 + look);
-                            if (!q) continue;
-                            if (!wave_match_q(q, p)) { err[t] = "position file disagrees with the wave predicate"; return; }
-                            u64 a1, a2, a3;
-                            std::memcpy(&a1, q, 8);
-                            std::memcpy(&a2, q + 8, 8);
-                            std::memcpy(&a3, q + 16, 8);
-                            a1 = bswap64(a1); a2 = bswap64(a2); a3 = bswap64(a3);
-                            const u8 sy = p == 0 ? SENTINEL_SYMBOL : q[-1];
-                            Row r{};
-                            r.klo = a1; r.khi = a2; r.kq = a3;
-                            r.pos = pack_sym(p, sy);
-                            const u64 avail = std::min<u64>(FILE_N - p, rd.len - (p - rd.base));
-                            const u64 b = route_q(q, p, avail);
-                            auto& v = bufs[t][b];
-                            v.insert(v.end(), (const u8*)&r, (const u8*)&r + sizeof(Row));
-                            if (v.size() >= bufsz) flush_buf(t, b);
-                            ++thrRows[t];
-                            // THE CLASS'S FULL POSITION LIST is right here, ascending:
-                            // the exact row count and the exact number of 1 MiB pages
-                            // it occupies (one page change per ascending position; the
-                            // scan ranges are disjoint across threads, so the sums are
-                            // the corpus's own totals). This is G8's "exact".
-                            if (p / SS_SURVEY_PAGE != lastPage) {
-                                lastPage = p / SS_SURVEY_PAGE;
-                                ++thrPages[t];
-                            }
-                        }
-                        for (u64 b = 0; b < nbands; ++b) flush_buf(t, b);
-                        if (curFd[t] >= 0) { if (::close(curFd[t])) die("close band part"); curFd[t] = -1; }
-                        thrBytes[t] = rd.bytes_read;
-                        pf.close_();
-                    });
-                for (auto& th : lts) th.join();
-                for (u64 t = 0; t < nparts; ++t) if (!err[t].empty()) die(err[t]);
-                u64 exactRows = 0, exactPages = 0;
-                for (u64 t = 0; t < nparts; ++t) {
-                    classLocalBytes += thrBytes[t];
-                    exactRows += thrRows[t];
-                    exactPages += thrPages[t];
-                }
-                const double exactCov = double(exactPages) * double(stride) / double(FILE_N);
-                const double exactPageFrac = double(exactPages) * double(SS_SURVEY_PAGE) /
-                                             double(FILE_N);
-                std::fprintf(stderr,
-                    "SS_SUBDIV_EXACT wave=%" PRIu64 " class=%s depth=%" PRIu64
-                    " rows_exact=%" PRIu64 " rows_est=%" PRIu64 " rows_err=%.4f"
-                    " pages_exact=%" PRIu64 " coverage_exact=%.6f coverage_est=%.6f"
-                    " page_fraction_exact=%.4f page_fraction_est=%.4f"
-                    " bytes_read=%" PRIu64 " rule=exact_from_the_class_full_position_list\n",
-                    w, prefix_label(W.preLen ? preArena.data() + W.preOff : nullptr, W.preLen).c_str(),
-                    W.depth, exactRows, W.rowsEst,
-                    W.rowsEst ? double(exactRows) / double(W.rowsEst) - 1.0 : 0.0,
-                    exactPages, exactCov, W.cov, exactPageFrac, W.pageFrac, classLocalBytes);
-                // The parts are consumed: freeing them is what keeps the position
-                // column bounded (the next window reuses the disk).
-                for (u64 t = 0; t < nparts; ++t) {
-                    char name[512];
-                    std::snprintf(name, sizeof name, "%s/w%" PRIu64 ".p%05" PRIu64,
-                                  posDir.c_str(), w, t);
-                    ::unlink(name);
-                }
-            }
+            // The wave's rows must have been sown by the window's sweep. Their
+            // absence is not a fallback: it is a bug, and it names itself.
+            if (!posWindowOpen || w < posWinWa || w >= posWindowEnd)
+                die("subdiv: local wave " + std::to_string(w) +
+                    " was not covered by the window sweep (window=[" +
+                    std::to_string(posWinWa) + "," + std::to_string(posWindowEnd) +
+                    ") open=" + std::to_string(int(posWindowOpen)) +
+                    ") - the descent cannot sort rows nobody extracted");
+            usedLocal = true;
+            const u64 exactRows = wExactRows[size_t(w)];
+            const u64 exactPages = wExactPages[size_t(w)];
+            const double exactCov = double(exactPages) * double(stride) / double(FILE_N);
+            const double exactPageFrac = double(exactPages) * double(SS_SURVEY_PAGE) /
+                                         double(FILE_N);
+            std::fprintf(stderr,
+                "SS_SUBDIV_EXACT wave=%" PRIu64 " class=%s depth=%" PRIu64
+                " rows_exact=%" PRIu64 " rows_est=%" PRIu64 " rows_err=%.4f"
+                " pages_exact=%" PRIu64 " coverage_exact=%.6f coverage_est=%.6f"
+                " page_fraction_exact=%.4f page_fraction_est=%.4f"
+                " bytes_read=0 rule=exact_from_the_class_full_position_list;"
+                "the_sweep_counted_it_and_the_descent_read_nothing\n",
+                w, prefix_label(W.preLen ? preArena.data() + W.preOff : nullptr, W.preLen).c_str(),
+                W.depth, exactRows, W.rowsEst,
+                W.rowsEst ? double(exactRows) / double(W.rowsEst) - 1.0 : 0.0,
+                exactPages, exactCov, W.cov, exactPageFrac, W.pageFrac);
         }
         if (!usedLocal) {
             pool->run([&](unsigned t) { worker(t); });
@@ -2910,7 +3619,10 @@ int main(int argc, char** argv) {
         // gate deadlock-free (the head of the prefix always finishes).
         std::mutex claim_mu;
         auto band_worker = [&]() {
-            std::vector<Row> rows;
+            // THE BAND'S ROWS: P = packed (position|symbol), Kb = the K key bytes
+            // the sweep captured for each of them (de-interleaved from the record).
+            std::vector<u64> P;
+            std::vector<u8> Kb;
             std::vector<u64> ob;
             std::vector<u8> sb;
             std::vector<u8> bandLcp;
@@ -2940,20 +3652,15 @@ int main(int argc, char** argv) {
                 // ---- THE BAND BODY: EVERYTHING THAT ALLOCATES, AND THE SHRINK ----
                 // A std::bad_alloc inside a worker is std::terminate (rc=134, the
                 // exact 100 GB signature: "terminate called recursively"), so the
-                // allocation path is inside a try and the answer is a SMALLER ARM,
-                // not a dead process:
-                //   arm 0  the planned merge-with-LCP   (2 rows + 2 u64 LCP arrays = 90 B/row)
-                //   arm 1  in-place sort + LCP by direct adjacent comparison (33 B/row)
-                // Arm 1 needs no extra arena at all, so it cannot fail the way arm 0
-                // did, and it produces the SAME slice (the adjacent LCP it computes
-                // is the one the merge propagates - verified by byte-identity, see
-                // SS_TAPE_ARM in the selftest gate). A failure also halves the work
-                // unit for every LATER wave, journaled.
+                // allocation path is inside a try and the answer is a SMALLER unit,
+                // not a dead process. The leaf needs its own arena (2 row planes +
+                // the LCP plane + the priced key plane); a failure halves
+                // rows_per_band for every LATER WINDOW, journaled.
                 bool have_rows = false;
                 for (unsigned attempt = 0; !have_rows; ++attempt) {
-                    const bool inplace = attempt > 0 || prefer_inplace.load();
                     try {
-                        rows.clear();
+                        P.clear(); Kb.clear();
+                        std::vector<u8> raw;
                         const double br0 = now_sec();
                         for (u64 t = 0; t < nparts; ++t) {
                             char name[512];
@@ -2964,14 +3671,26 @@ int main(int argc, char** argv) {
                             struct stat fs{};
                             ::fstat(f, &fs);
                             const u64 bytes = (u64)fs.st_size;
+                            if (bytes % row_bytes) die("band part is not a whole number of records");
                             if (bytes) {
-                                const size_t at = rows.size();
-                                rows.resize(at + bytes / sizeof(Row));
+                                raw.resize(size_t(bytes));
                                 size_t off = 0;
                                 while (off < bytes) {
-                                    ssize_t r = ::read(f, ((u8*)rows.data()) + at * sizeof(Row) + off, bytes - off);
+                                    ssize_t r = ::read(f, raw.data() + off, bytes - off);
                                     if (r <= 0) die("read band part");
                                     off += size_t(r);
+                                }
+                                // DE-INTERLEAVE the record into the two planes the
+                                // radix scatters: (position|symbol) and key[K].
+                                const size_t add = size_t(bytes / row_bytes);
+                                const size_t at = P.size();
+                                P.resize(at + add);
+                                Kb.resize(P.size() * size_t(g_wave_key_bytes));
+                                for (size_t i = 0; i < add; ++i) {
+                                    const u8* src = raw.data() + i * size_t(row_bytes);
+                                    std::memcpy(&P[at + i], src, 8);
+                                    std::memcpy(&Kb[(at + i) * size_t(g_wave_key_bytes)], src + 8,
+                                                size_t(g_wave_key_bytes));
                                 }
                             }
                             ::close(f);
@@ -2984,61 +3703,68 @@ int main(int argc, char** argv) {
                         producerState(tapeBand, "sort");
                         bandLcp.clear();
                         bandEsc.clear();
+                        const u64 n = P.size();
+                        std::vector<u64> lcpv;
                         if (plan[b].analytic) {
-                            for (const Row& r:rows)
-                                if (unpack_pos(r.pos)<trailing) die("analytic candidate not proved from corpus");
-                            std::reverse(rows.begin(),rows.end());
-                            if (lcpOn) {
-                                bandLcp.assign(rows.size(),0);
-                                for (size_t i=1;i<rows.size();++i) {
-                                    const u64 lcp=FILE_N-unpack_pos(rows[i-1].pos);
-                                    bandLcp[i]=u8(std::min<u64>(255,lcp));
-                                    if (lcp>=255) bandEsc.emplace_back(band_off[b]+i,lcp);
-                                }
-                            }
-                            std::fprintf(stderr,"TAPE_LEAF band=%llu order=analytic rows=%zu\n",
-                                (unsigned long long)tapeBand,rows.size());
-                        } else if (lcpOn) {
-                            if (inplace) sort_band_inplace(rows, bandLcp, bandEsc, band_off[b]);
-                            else merge_sort_lcp(rows, bandLcp, bandEsc, band_off[b]);
+                            for (const u64 pk : P)
+                                if (unpack_pos(pk) < trailing) die("analytic candidate not proved from corpus");
+                            std::reverse(P.begin(), P.end());
+                            lcpv.assign(size_t(n), 0);
+                            for (size_t i = 1; i < n; ++i)
+                                lcpv[i] = FILE_N - unpack_pos(P[i - 1]);
+                            std::fprintf(stderr, "TAPE_LEAF band=%llu order=analytic rows=%llu\n",
+                                (unsigned long long)tapeBand, (unsigned long long)n);
+                        } else if (n >= 2) {
+                            // ---- THE LEAF: in-memory MSD radix over the keys the
+                            // sweep captured. It touches the corpus ONLY for the
+                            // rows its captured window could not separate.
+                            WaveKeyStats st;
+                            const double rs0 = now_sec();
+                            wavekey_sort_band(fd, P, Kb, W.preLen, tapeBand, lcpv, st);
+                            const double rs1 = now_sec();
+                            WAVE_KEY.add(st);
+                            std::fprintf(stderr,
+                                "WAVE_KEY band=%" PRIu64 " rows=%" PRIu64 " key_bytes=%" PRIu64
+                                " rounds=%" PRIu64 " tie_rows=%" PRIu64 " extra_passes=%" PRIu64
+                                " bytes_read=%" PRIu64 " syscalls=%" PRIu64
+                                " fallback_rows=%" PRIu64 " no_shrink=%" PRIu64
+                                " sort_s=%.4f radix_s=%.4f ext_s=%.4f fb_s=%.4f\n",
+                                tapeBand, st.rows, st.key_bytes, st.rounds, st.tie_rows,
+                                st.extra_passes, st.bytes_read, st.syscalls, st.fallback_rows,
+                                st.no_shrink, rs1 - rs0, st.t_radix, st.t_extract, st.t_fallback);
                         } else {
-                            // product path: the plain comparison sort. The merge-with-LCP
-                            // is opt-in until its propagation is verified exact.
-                            sort_tape_keys(rows, tapeBand);
+                            lcpv.assign(size_t(n), 0);
                         }
                         // Insert the <=24 separately sorted finite suffixes. Only this
                         // cold path uses a full comparison against keyed rows.
-                        // LCP values of unaffected adjacent rows remain unchanged.
                         if (!tailBands[b].empty()) {
-                            std::vector<u64> lcps(rows.size(), 0);
-                            if (lcpOn) {
-                                for (size_t i = 0; i < rows.size(); ++i) lcps[i] = bandLcp[i];
-                                for (const auto& e : bandEsc) lcps[e.first - band_off[b]] = e.second;
-                            }
                             for (const Row& tail : tailBands[b]) {
-                                auto it = std::lower_bound(rows.begin(), rows.end(), tail,
-                                    [](const Row& a, const Row& t) {
-                                        return suf_cmp_from(unpack_pos(a.pos), unpack_pos(t.pos), 0) < 0;
-                                    });
-                                const size_t i = size_t(it - rows.begin());
-                                rows.insert(it, tail);
-                                if (lcpOn) {
-                                    u64 lcp = 0;
-                                    if (i) suf_cmp_lcp(unpack_pos(rows[i-1].pos), unpack_pos(tail.pos), 0, lcp);
-                                    lcps.insert(lcps.begin() + i, lcp);
-                                    if (i + 1 < rows.size()) {
-                                        suf_cmp_lcp(unpack_pos(tail.pos), unpack_pos(rows[i+1].pos), 0, lcp);
-                                        lcps[i+1] = lcp;
-                                    }
+                                const u64 tp = unpack_pos(tail.pos);
+                                const size_t i = size_t(std::lower_bound(
+                                    P.begin(), P.end(), tp, [](u64 a, u64 t) {
+                                        return suf_cmp_from(unpack_pos(a), t, 0) < 0;
+                                    }) - P.begin());
+                                P.insert(P.begin() + ptrdiff_t(i), tail.pos);
+                                Kb.insert(Kb.begin() + ptrdiff_t(i) * ptrdiff_t(g_wave_key_bytes),
+                                          g_wave_key_bytes, 0);
+                                lcpv.insert(lcpv.begin() + ptrdiff_t(i), 0);
+                                u64 lcp = 0;
+                                if (i) suf_cmp_lcp(unpack_pos(P[i - 1]), tp, 0, lcp);
+                                lcpv[i] = lcp;
+                                if (i + 1 < P.size()) {
+                                    suf_cmp_lcp(tp, unpack_pos(P[i + 1]), 0, lcp);
+                                    lcpv[i + 1] = lcp;
                                 }
+                                if (i == 0) lcpv[0] = 0;
                             }
-                            if (lcpOn) {
-                                bandLcp.resize(rows.size()); bandEsc.clear();
-                                for (size_t i = 0; i < lcps.size(); ++i) {
-                                    bandLcp[i] = u8(std::min<u64>(lcps[i], 255));
-                                    if (lcps[i] >= 255) bandEsc.emplace_back(band_off[b] + i, lcps[i]);
-                                }
-                            }
+                        }
+                        // ---- THE COLUMN: the LCP plane becomes the band's slice ----
+                        bandLcp.assign(P.size(), 0);
+                        bandEsc.clear();
+                        for (size_t i = 1; i < lcpv.size(); ++i) {
+                            const u64 val = lcpv[i];
+                            if (val >= 255) { bandEsc.emplace_back(band_off[b] + i, val); bandLcp[i] = 255; }
+                            else bandLcp[i] = uint8_t(val);
                         }
                         if (lcpOn) {
                             // ---- THE SEAM --------------------------------------------------
@@ -3052,8 +3778,8 @@ int main(int argc, char** argv) {
                             // work queue), so the dependency graph is acyclic: with W workers
                             // band b only ever waits for bands < b, and every band's worker
                             // finishes without waiting on a band >= b.
-                            if (!rows.empty()) {
-                                const u64 firstPos = unpack_pos(rows.front().pos);
+                            if (!P.empty()) {
+                                const u64 firstPos = unpack_pos(P.front());
                                 u64 prevLast = ~0ull;
                                 for (u64 j = b; j-- > 0;) {
                                     u64 v = 0;
@@ -3081,20 +3807,14 @@ int main(int argc, char** argv) {
                         // THE WRITE STAGING IS ALLOCATED HERE, BEFORE ANYTHING IS
                         // PUBLISHED: the publish path below is then allocation-free, so
                         // a refusal can never leave a half-published band on disc.
-                        ob.resize(rows.size());
-                        sb.resize(rows.size());
+                        ob.resize(P.size());
+                        sb.resize(P.size());
                         tSort[b] += now_sec() - bs0;
                         have_rows = true;
-                        if (inplace && (attempt > 0 || (force_inplace && b < 4)))
-                            std::fprintf(stderr,
-                                "SS_TAPE_ARM arm=inplace band=%" PRIu64 " rows=%zu attempt=%u "
-                                "bytes_per_row=%" PRIu64 " (33 B/row: in-place sort + adjacent LCP by "
-                                "direct comparison)\n",
-                                b, rows.size(), attempt, u64(row_bytes + 1 + 8 + 1));
                     } catch (const std::bad_alloc&) {
                         // keep the work unit for the NEXT wave smaller, and redo THIS
                         // band on the low-memory arm (arm 1 needs no second row array)
-                        bswap_release(rows); bswap_release(ob); bswap_release(sb);
+                        bswap_release(P); bswap_release(Kb); bswap_release(ob); bswap_release(sb);
                         bswap_release(bandLcp); bswap_release(bandEsc);
                         {
                             std::lock_guard<std::mutex> lk(shrink_mu);
@@ -3201,28 +3921,31 @@ int main(int argc, char** argv) {
                             lcpPeakLiveSlices = std::max<u64>(lcpPeakLiveSlices, u64(lcpLive.size()));
                         }
                     }
-                    bandFirstPos[b] = rows.empty() ? ~0ull : unpack_pos(rows.front().pos);
-                    bandLastPos[b] = rows.empty() ? ~0ull : unpack_pos(rows.back().pos);
+                    bandFirstPos[b] = P.empty() ? ~0ull : unpack_pos(P.front());
+                    bandLastPos[b] = P.empty() ? ~0ull : unpack_pos(P.back());
                 }
                 // PUBLISH the band's last row for the next band's seam. 1 = empty
                 // band, else lastPos + 2 (0 stays "not published").
-                if (lcpOn) bandPub[b].store(rows.empty() ? 1ull : (unpack_pos(rows.back().pos) + 2),
+                if (lcpOn) bandPub[b].store(P.empty() ? 1ull : (unpack_pos(P.back()) + 2),
                                             std::memory_order_release);
                 tSort[b] += now_sec() - bs0;
                 const double bw0 = now_sec();
                 producerState(tapeBand, "publish");
+                // A "tie" here is a pair the CAPTURED WINDOW could not separate:
+                // the number that matters for the next lane (WAVE_KEY journals the
+                // tie stream the leaf actually had to work for).
                 u64 ties = 0;
-                for (size_t i = 1; i < rows.size(); ++i)
-                    if (rows[i].klo == rows[i-1].klo && rows[i].khi == rows[i-1].khi &&
-                        rows[i].kq == rows[i-1].kq) ++ties;
+                const size_t kw = size_t(g_wave_key_bytes);
+                for (size_t i = 1; i < P.size(); ++i)
+                    if (std::memcmp(&Kb[i * kw], &Kb[(i - 1) * kw], kw) == 0) ++ties;
                 ties_w.fetch_add(ties);
                 // ordered output: positions to the SA stream, symbols alongside.
                 // ob/sb were SIZED inside the band body (before any publish), so this
                 // fill only stores: the publish path cannot allocate.
-                for (size_t ri = 0; ri < rows.size(); ++ri) {
-                    const u64 pp = unpack_pos(rows[ri].pos);
+                for (size_t ri = 0; ri < P.size(); ++ri) {
+                    const u64 pp = unpack_pos(P[ri]);
                     ob[ri] = pp;
-                    sb[ri] = (u8)(rows[ri].pos >> 48);
+                    sb[ri] = (u8)(P[ri] >> 48);
                     if (ifd >= 0 && pp % isaK == 0) {
                         const u64 rk = band_off[b] + (u64)ri;   // this row's global rank
                         if (::pwrite(ifd, &rk, 8, off_t(32 + (pp / isaK) * 8)) != 8)
@@ -3280,7 +4003,7 @@ int main(int argc, char** argv) {
                 }
                 tWrite[b] = now_sec() - bw0;
                 std::fprintf(stderr, "SS_BAND band=%llu rows=%zu read_s=%.6f sort_s=%.6f write_s=%.6f\n",
-                    (unsigned long long)tapeBand, rows.size(), tRead[b], tSort[b], tWrite[b]);
+                    (unsigned long long)tapeBand, P.size(), tRead[b], tSort[b], tWrite[b]);
                 producerState(tapeBand, "published");
                 // The band is on disc and published: only NOW may its scatter parts
                 // go (a retry after a failed allocation re-reads them).
@@ -3292,7 +4015,8 @@ int main(int argc, char** argv) {
                         ::unlink(name);
                     }
                 }
-                bswap_release(rows);
+                bswap_release(P);
+                bswap_release(Kb);
                 bswap_release(bandLcp);
                 bswap_release(bandEsc);
                 bswap_release(ob);
