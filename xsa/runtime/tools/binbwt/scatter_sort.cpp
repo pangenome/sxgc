@@ -144,6 +144,11 @@ static u64 noteFdPeak() {
 // cache is deep enough is a measurement, not a printout.
 static std::atomic<u64> PLAN_CORPUS_BYTES{0};
 static std::atomic<u64> PLAN_CORPUS_CALLS{0};
+// THE LEAF SORT'S OWN LEDGER (the radix arm). Summed across band workers:
+// ext_bytes/ext_syscalls are what the streaming extraction ASKED the kernel for,
+// tie_* are the tie-set work, fallback_* is what the round cap handed to the LCE arm.
+static std::atomic<u64> sortIoBytes{0}, sortIoSyscalls{0}, sortTieRows{0}, sortTieBytes{0};
+static std::atomic<u64> sortFallbackRows{0}, sortNoShrink{0}, sortBandsRadix{0};
 
 static double now_sec() {
     struct timespec ts;
@@ -449,6 +454,381 @@ static void merge_sort_lcp(std::vector<Row>& v, std::vector<uint8_t>& out_lcp,
 }
 
 // ===========================================================================
+// THE STREAMING KEY SORT: THE LEAF, MADE SCALE-INVARIANT.
+//
+// THE DEFECT THIS REPLACES. A band's rows were ordered by COMPARING SUFFIXES
+// through the corpus (`suf_cmp_from(pos,pos,24)` inside the merge, and again
+// `suf_cmp_from(pos,pos,0)` for every adjacent LCP). A comparison is an LCE walk
+// and an LCE walk is a random read. INSIDE the page cache that is a load. PAST
+// it, every byte of the walk is a random NVMe page. MEASURED: 10 GB (fits the
+// page cache) ~200 M rows/s; 1.31 TB (does not fit) 139 k rows/s - 1,400x slower
+// PER ROW - for the same code, the same data shape, the same sort.
+//
+// And the walk is not rare. A band's rows come out of the descent with a common
+// prefix `d` (the wave's own prefix, W.preLen), and the descent GROWS d until a
+// bucket fits the band. At d >= 24 every row's 24-byte in-row key is EQUAL, so
+// EVERY comparison in that band falls through to the text and walks d+ bytes.
+// With m rows in the band that is log2(m) ~ 22 walks per row x ~2 pages per walk
+// ~ 44 page touches per row, all random. Nothing else in the pipeline has this
+// property: the descent walks ASCENDING positions (sequential), the finish is
+// sequential, the emission is sequential.
+//
+// THE MECHANISM. Order the rows by the SAME bytes, but read each byte ONCE, in
+// ASCENDING POSITION ORDER (sequential), into an arena KEY PLANE, and partition
+// with an 8-BIT-DIGIT MSD RADIX over ping-pong row planes. Ties a window cannot
+// separate extract the NEXT window (K, then 2K, 4K, ...) for those rows only.
+//
+// Why 8-bit digits and not one bit per pass: a bit-pass costs a full count+scatter
+// per bit, so 8 bits is 8 passes for the bytes one byte-digit pass resolves. The
+// digit range is 257, not 256: bucket 0 is the virtual END, which sorts below
+// every symbol - and that bucket is PROVABLY a singleton, because two distinct
+// positions never have the same suffix length, so at most one row can end at a
+// given byte index. (This is also why the loop always terminates: every round
+// either splits a tie set or hands its rows to END, and END is one row.)
+//
+// THE ORDER IS UNCHANGED - this lane changes the MECHANISM of ordering, never the
+// order. Dollar mode (shorter finite suffix is smaller) is exactly "the END
+// symbol is below every symbol"; REMAP is applied at read time by read_window, so
+// the digits live in product symbol space; document boundaries (0x1E) are ordinary
+// symbols and need nothing special. The gates check this by byte-identity against
+// the pre-change binary at fixture scale, at 10 GB and at the 100 GB head.
+//
+// THE LCP COLUMN IS STILL FREE, but by a different identity than the merge's: an
+// MSD split at digit g PROVES that the adjacent pair (last row of bucket b, first
+// row of bucket b+1) has LCP exactly g, since they are equal on [0,g) by the
+// bucket invariant and differ at g by construction. Bucket boundaries only get
+// finer, never reordered, so the value stamped at a split is the FINAL value of
+// the row that ends up first in that bucket. That is one stamp per boundary - no
+// re-derivation, no adjacent-LCE pass over the band.
+//
+// FUTURE (deliberately NOT attempted here): an IN-PLACE parallel MSD would drop
+// the ping-pong row plane (32 B/row). It is a separate lane because in-place
+// partitioning inside a span breaks the "alt = cur outside the span" invariant
+// that makes the multi-span level loop cheap, and it needs its own identity gate.
+// ===========================================================================
+static constexpr u64 SS_SORT_KEY_BYTES_DEFAULT = 32;   // K: bytes extracted per round
+// Defined further down (it owns the windowed read the descent also uses); the
+// extraction below is the only caller that needs it before its definition.
+static void read_window(int fd, u64 from, u64 want, std::vector<u8>& buf);
+static constexpr u64 SS_SORT_KEY_ROW_BYTES = 32;        // the key plane's cap, B/band-row
+static constexpr u64 SS_SORT_ROUNDS_MAX_DEFAULT = 4;    // 24 + K(1+2+4+8) = 504 B covered
+static constexpr u64 SS_SORT_EXTRACT_WINDOW = 2u << 20; // one pread serves every row inside it
+static constexpr unsigned SS_SORT_BUCKETS_KEY = 256;    // one byte of a 24-byte in-row key
+static constexpr unsigned SS_SORT_BUCKETS_TEXT = 257;   // + bucket 0 = the virtual END
+static u64 g_sort_key_bytes = SS_SORT_KEY_BYTES_DEFAULT;
+static u64 g_sort_rounds_max = SS_SORT_ROUNDS_MAX_DEFAULT;
+// "radix" is the product arm; "lce" is the pre-change comparison arm, kept as the
+// A/B lever and as the oracle the identity gates compare against.
+static bool g_leaf_sort_radix = true;
+
+// The counters a band journals. Bytes are what this pass ASKED the kernel for
+// (the honest unit for a sparse ascending walk: the kernel reads a page whatever
+// we ask). /proc/<pid>/io read_bytes is what K3 measures beside it.
+struct SortStats {
+    u64 rounds = 0, tie_rows = 0, tie_bytes = 0;
+    u64 bytes = 0, syscalls = 0, clusters = 0;
+    u64 fallback_spans = 0, fallback_rows = 0, tie_rounds_no_shrink = 0;
+};
+
+// One MSD level over rows[lo,hi): STABLE counting sort on `dig(i)` in [0,nbuckets),
+// written to alt[lo,hi). `starts` comes back ABSOLUTE (nbuckets+1 offsets) so the
+// caller can name the sub-spans that still hold >1 row and stamp their boundary.
+//
+// A signed 16-bit bucket index holds past 0xFFFF rows, so the counters are u64;
+// the per-row work is two passes (count, scatter) as in every counting sort.
+template <class DIG>
+static void msd_level(const std::vector<Row>& cur, std::vector<Row>& alt, u64 lo, u64 hi,
+                      unsigned nbuckets, DIG dig, std::vector<u64>& starts,
+                      std::vector<u64>& cursor,
+                      const std::vector<u32>* curp = nullptr,
+                      std::vector<u32>* altp = nullptr) {
+    starts.assign(nbuckets + 1, 0);
+    for (u64 i = lo; i < hi; ++i) ++starts[size_t(dig(i)) + 1];
+    for (unsigned b = 0; b < nbuckets; ++b) starts[b + 1] += starts[b];
+    cursor.assign(starts.begin(), starts.end() - 1);
+    for (u64 i = lo; i < hi; ++i) {
+        const unsigned b = dig(i);
+        const u64 at = lo + cursor[b]++;
+        alt[size_t(at)] = cur[size_t(i)];
+        // THE PAYLOAD TRAVELS WITH THE ROW. A key-plane slot is a property of the
+        // ROW, not of its index: after one scatter the index means something else.
+        if (curp) (*altp)[size_t(at)] = (*curp)[size_t(i)];
+    }
+    for (unsigned b = 0; b <= nbuckets; ++b) starts[b] += lo;
+}
+
+// THE PERMUTATION GUARD. A scatter that loses a row and duplicates another still
+// sorts "something", and the only symptom is a bad rank thousands of rows later.
+// Sum and xor of the packed positions identify the multiset well enough to catch
+// it AT THE LEVEL THAT DID IT, which is the difference between a five-minute bug
+// and a five-hour one. Cost: one linear pass per level over the rows that moved.
+static inline void perm_guard(const std::vector<Row>& v, u64 lo, u64 hi, u64 sum0, u64 xor0,
+                              const char* where, u64 a, u64 b) {
+    u64 s = 0, x = 0;
+    for (u64 i = lo; i < hi; ++i) { s += v[size_t(i)].pos; x ^= v[size_t(i)].pos; }
+    if (s != sum0 || x != xor0)
+        die(std::string("SORT_PERMUTATION_FAIL ") + where + " a=" + std::to_string(a) +
+            " b=" + std::to_string(b) + " sum " + std::to_string(sum0) + " -> " + std::to_string(s) +
+            " xor " + std::to_string(xor0) + " -> " + std::to_string(x));
+}
+
+// Extract bytes [off, off+k) of every row named by `items` (ASCENDING position)
+// into `keys` in ITEM order: keys[i*k + j] belongs to items[i]. ONE forward pass
+// in position space; consecutive rows whose windows fit inside one window share
+// one pread. So a dense bucket costs one sequential read for all of them, and a
+// sparse one costs one read per row - never log2(m) random reads per row.
+// Rows that have already ended (p+off >= FILE_N) get zeros: their digit is the
+// END bucket, which is decided from the position, never from these bytes.
+static void extract_key_windows(int fd, const std::vector<std::pair<u64, u64>>& items,
+                                u64 off, u64 k, std::vector<u8>& keys,
+                                SortStats& st) {
+    keys.assign(items.size() * size_t(k), 0);
+    std::vector<u8> win;
+    size_t i = 0;
+    while (i < items.size()) {
+        const u64 lo = items[i].first + off;
+        if (lo >= FILE_N) { ++i; continue; }
+        u64 hi = std::min<u64>(FILE_N, lo + k);
+        size_t j = i;
+        while (j + 1 < items.size()) {
+            const u64 q = items[j + 1].first + off;
+            if (q >= FILE_N) break;
+            const u64 qhi = std::min<u64>(FILE_N, q + k);
+            if (qhi - lo > SS_SORT_EXTRACT_WINDOW) break;
+            if (qhi > hi) hi = qhi;
+            ++j;
+        }
+        read_window(fd, lo, hi - lo, win);   // REMAP applied here, once
+        ++st.syscalls;
+        ++st.clusters;
+        st.bytes += hi - lo;
+        for (size_t t = i; t <= j; ++t) {
+            const u64 p = items[t].first + off;
+            if (p >= FILE_N) continue;
+            const u64 want = std::min<u64>(k, FILE_N - p);
+            std::memcpy(&keys[t * size_t(k)], win.data() + (p - lo), size_t(want));
+        }
+        i = j + 1;
+    }
+}
+
+// THE LEAF SORT. Same output as merge_sort_lcp (and as sort_band_inplace):
+// rows[] in exact suffix order, out_lcp[k] = LCP(rows[k-1],rows[k]) with values
+// >= 255 escaped into `esc` as (rank_base+k, value).
+//
+// `d_known` is the descent's own common prefix: every row here matches the wave's
+// prefix, so bytes [0,d_known) are equal for all of them and are never read.
+static void radix_sort_band(int fd, std::vector<Row>& rows, std::vector<uint8_t>& out_lcp,
+                            std::vector<std::pair<u64, u64>>& esc, u64 rank_base,
+                            u64 d_known, SortStats& st) {
+    const u64 n = rows.size();
+    out_lcp.assign(n, 0);
+    esc.clear();
+    if (n < 2) return;
+    std::vector<Row> alt(n);
+    // A FULL permutation check (opt-in): the sum/xor level guard catches a broken
+    // scatter, this catches anything else that could lose or duplicate a row.
+    std::vector<u64> verify;
+    if (::getenv("XSA_SORT_VERIFY")) {
+        verify.resize(n);
+        for (u64 i = 0; i < n; ++i) verify[size_t(i)] = rows[size_t(i)].pos;
+        std::sort(verify.begin(), verify.end());
+    }
+    auto verify_stage = [&](const char* where) {
+        if (verify.empty()) return;
+        std::vector<u64> got(n);
+        for (u64 i = 0; i < n; ++i) got[size_t(i)] = rows[size_t(i)].pos;
+        std::sort(got.begin(), got.end());
+        for (u64 i = 0; i < n; ++i)
+            if (got[size_t(i)] != verify[size_t(i)])
+                die(std::string("SORT_VERIFY_ROWS_FAIL after ") + where + " index=" + std::to_string(i) +
+                    " got=" + std::to_string(got[size_t(i)]) + " want=" + std::to_string(verify[size_t(i)]));
+    };
+    // lcpv[k] = the PROVEN LCP of rows[k-1] and rows[k]. Only bucket FIRST rows
+    // ever carry a value; interior rows carry whatever the scatter left there and
+    // nothing reads it (a bucket first is the only row whose predecessor is in a
+    // different bucket). rows[0] has no predecessor: out_lcp[0] is 0 by contract.
+    std::vector<u64> lcpv(n, 0);
+    std::vector<u64> starts, cursor;
+
+    // ---- PHASE 1: the 24-byte in-row key. MSD radix, ZERO corpus reads. ----
+    // Starting at min(d_known,24) skips the levels the descent already proved
+    // equal: for a deep band that is all 24 of them and this phase is a no-op.
+    std::vector<std::pair<u64, u64>> spans;
+    spans.emplace_back(0, n);
+    // THE PING-PONG INVARIANT. `alt` is only written inside the spans a level
+    // scatters, so outside them it still holds the PREVIOUS level's rows. The rows
+    // that must be carried forward outside this level's spans are therefore the
+    // rows of `prev` - the region the previous level wrote - and nothing else.
+    // (Copying the CURRENT spans instead was the bug: after the first level wrote
+    // all of [0,n), every later level left the singleton rows of the previous
+    // level stale in `alt`, i.e. it lost and duplicated rows. The per-span
+    // permutation guard could not see it because every span's own scatter WAS a
+    // permutation; only the whole-array check could.)
+    std::vector<std::pair<u64, u64>> prev;
+    prev.emplace_back(0, n);
+    for (u64 g = std::min<u64>(d_known, 24); g < 24 && !spans.empty(); ++g) {
+        const unsigned sh = unsigned(8 * (7 - (g % 8)));
+        const int wd = int(g / 8);
+        auto dig = [&rows, wd, sh](u64 i) -> unsigned {
+            const Row& r = rows[i];
+            const u64 w = wd == 0 ? r.klo : (wd == 1 ? r.khi : r.kq);
+            return unsigned((w >> sh) & 0xffu);
+        };
+        for (const auto& sp : prev)
+            std::memcpy(&alt[size_t(sp.first)], &rows[size_t(sp.first)],
+                        size_t(sp.second - sp.first) * sizeof(Row));
+        std::vector<std::pair<u64, u64>> nxt;
+        for (const auto& sp : spans) {
+            u64 s0 = 0, x0 = 0;
+            for (u64 i = sp.first; i < sp.second; ++i) { s0 += rows[size_t(i)].pos; x0 ^= rows[size_t(i)].pos; }
+            msd_level(rows, alt, sp.first, sp.second, SS_SORT_BUCKETS_KEY, dig, starts, cursor);
+            for (unsigned b = 0; b < SS_SORT_BUCKETS_KEY; ++b) {
+                const u64 s = starts[b], e = starts[b + 1];
+                if (e - s > 1) nxt.emplace_back(s, e);
+                // bucket 0 starts at sp.first: that row's LCP is with the row
+                // BEFORE the span and was stamped when the span was created.
+                if (s > sp.first && e > s) lcpv[s] = g;
+            }
+            perm_guard(alt, sp.first, sp.second, s0, x0, "phase1", g, sp.first);
+        }
+        rows.swap(alt);
+        prev = spans;
+        spans.swap(nxt);
+    }
+
+    verify_stage("phase1");
+    // ---- PHASE 2: the tie groups. Streaming extraction, doubling windows. ----
+    u64 off = std::max<u64>(24, d_known);
+    u64 k = g_sort_key_bytes ? g_sort_key_bytes : SS_SORT_KEY_BYTES_DEFAULT;
+    std::vector<std::pair<u64, u64>> residual;
+    for (unsigned round = 0; !spans.empty(); ++round) {
+        if (round >= g_sort_rounds_max) { residual.swap(spans); break; }
+        u64 tie = 0;
+        for (const auto& sp : spans) tie += sp.second - sp.first;
+        if (tie < 2) { spans.clear(); break; }
+        // THE KEY PLANE IS PRICED, NOT UNBOUNDED: tie rows x kk <= KEY_ROW_BYTES x n.
+        u64 kk = k;
+        const u64 cap = (SS_SORT_KEY_ROW_BYTES * n) / tie;
+        if (kk > cap) kk = cap;
+        if (kk < 4) { residual.swap(spans); break; }   // the plane cannot hold it: LCE arm
+        // Every row of the tie set, ordered by POSITION: this is what makes the
+        // extraction one forward pass instead of one random read per row.
+        std::vector<std::pair<u64, u64>> items;
+        items.reserve(size_t(tie));
+        for (const auto& sp : spans)
+            for (u64 i = sp.first; i < sp.second; ++i)
+                items.emplace_back(unpack_pos(rows[size_t(i)].pos), i);
+        std::sort(items.begin(), items.end());
+        std::vector<u8> keys;
+        extract_key_windows(fd, items, off, kk, keys, st);
+        st.tie_rows += tie;
+        st.tie_bytes += tie * kk;
+        // THE KEY-PLANE SLOT IS A ROW PROPERTY. `slotv` is a u32 payload scattered
+        // in the SAME ping-pong as the rows, so a row's key window follows it: an
+        // index-keyed table would be stale after the first level (and was: the
+        // first version of this arm ordered a whole tie group in reverse).
+        std::vector<u32> slotv(n, 0xffffffffu), slotal(n, 0xffffffffu);
+        for (size_t t = 0; t < items.size(); ++t) slotv[size_t(items[t].second)] = u32(t);
+        const u64 tie_before = tie;
+        std::vector<std::pair<u64, u64>> nxt;
+        for (unsigned lvl = 0; lvl < kk; ++lvl) {
+            if (spans.empty()) break;
+            const u64 g = off + lvl;
+            auto dig = [&rows, &keys, &slotv, kk, lvl, g](u64 i) -> unsigned {
+                const u64 rem = FILE_N - unpack_pos(rows[size_t(i)].pos);
+                if (rem <= g) return 0u;   // the virtual END: below every symbol
+                return unsigned(keys[size_t(slotv[size_t(i)]) * size_t(kk) + lvl]) + 1u;
+            };
+            for (const auto& sp : prev) {
+                std::memcpy(&alt[size_t(sp.first)], &rows[size_t(sp.first)],
+                            size_t(sp.second - sp.first) * sizeof(Row));
+                std::memcpy(&slotal[size_t(sp.first)], &slotv[size_t(sp.first)],
+                            size_t(sp.second - sp.first) * sizeof(u32));
+            }
+            nxt.clear();
+            for (const auto& sp : spans) {
+                u64 s0 = 0, x0 = 0;
+                for (u64 i = sp.first; i < sp.second; ++i) { s0 += rows[size_t(i)].pos; x0 ^= rows[size_t(i)].pos; }
+                msd_level(rows, alt, sp.first, sp.second, SS_SORT_BUCKETS_TEXT, dig, starts, cursor,
+                          &slotv, &slotal);
+                for (unsigned b = 0; b < SS_SORT_BUCKETS_TEXT; ++b) {
+                    const u64 s = starts[b], e = starts[b + 1];
+                    if (e - s > 1) nxt.emplace_back(s, e);
+                    if (s > sp.first && e > s) lcpv[s] = g;
+                }
+                perm_guard(alt, sp.first, sp.second, s0, x0, "phase2", g, sp.first);
+            }
+            rows.swap(alt);
+            slotv.swap(slotal);
+            prev = spans;
+            spans.swap(nxt);
+        }
+        verify_stage("round");
+        st.rounds = round + 1;
+        if (!spans.empty()) {
+            u64 tie_after = 0;
+            for (const auto& sp : spans) tie_after += sp.second - sp.first;
+            // THE TERMINATION CONTRACT: a round either shrinks the tie set or the
+            // survivors are rows whose suffix ENDED inside the window - and an END
+            // bucket is a singleton, so "not exhausted" is a bug, not slowness.
+            if (tie_after >= tie_before) {
+                ++st.tie_rounds_no_shrink;
+                bool any_live = false;
+                for (const auto& sp : spans) {
+                    const u64 rem = FILE_N - unpack_pos(rows[size_t(sp.first)].pos);
+                    if (rem > off + kk) any_live = true;
+                }
+                if (!any_live)
+                    std::fprintf(stderr,
+                        "SORT_ROUND_STALL round=%u off=%" PRIu64 " k=%" PRIu64
+                        " rows_in=%" PRIu64 " rows_tied=%" PRIu64
+                        " note=all-survivors-ended-at-a-distinct-length-so-the-order-is-fixed\n",
+                        round + 1, off, kk, tie_before, tie_after);
+            }
+            // The window is CONTIGUOUS with the next one and doubles: nothing a
+            // window ends on can fall between two windows.
+            off += kk;
+            k = kk * 2;
+        }
+    }
+
+    // ---- THE FALLBACK: tie sets the round cap left behind, and the oracle arm. ----
+    // This is the ONLY place a band still compares suffixes through the corpus, and
+    // it is bounded by the cap (SS_SORT_ROUNDS_MAX x doubling windows), never by n.
+    if (!residual.empty()) {
+        for (const auto& sp : residual) {
+            ++st.fallback_spans;
+            st.fallback_rows += sp.second - sp.first;
+            std::sort(rows.begin() + ptrdiff_t(sp.first), rows.begin() + ptrdiff_t(sp.second),
+                      [](const Row& a, const Row& b) {
+                          return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), 0) < 0;
+                      });
+            for (u64 i = sp.first + 1; i < sp.second; ++i) {
+                u64 lcp = 0;
+                suf_cmp_lcp(unpack_pos(rows[size_t(i - 1)].pos),
+                            unpack_pos(rows[size_t(i)].pos), 0, lcp);
+                lcpv[size_t(i)] = lcp;
+            }
+            if (sp.first) {   // the span's own fence row: a fresh full walk
+                u64 lcp = 0;
+                suf_cmp_lcp(unpack_pos(rows[size_t(sp.first - 1)].pos),
+                            unpack_pos(rows[size_t(sp.first)].pos), 0, lcp);
+                lcpv[size_t(sp.first)] = lcp;
+            }
+        }
+    }
+
+    verify_stage("fallback");
+    // ---- THE COLUMN ----
+    for (u64 i = 1; i < n; ++i) {
+        const u64 val = lcpv[size_t(i)];
+        if (val >= 255) { esc.emplace_back(rank_base + i, val); out_lcp[size_t(i)] = 255; }
+        else out_lcp[size_t(i)] = uint8_t(val);
+    }
+}
+
+// ===========================================================================
 // THE BAND BUDGET (see the call site in main for the reasoning). n appears in no
 // numerator: the envelope gives the work unit, and the band count and the wave
 // count are OUTPUTS.
@@ -527,7 +907,16 @@ static TapeBudget tape_budget_plan(u64 envelope, u64 threads, u64 k_in_flight, b
     b.scratch_budget = scratch_budget;
     // EVERYTHING the sorter holds per row. The wire row is 32 B and the sort alone
     // is 81 B; the arena has to carry both plus the write staging.
-    b.bytes_per_row = lcp_on ? (2 * row_bytes + 2 * 8 + 1 + 8 + 1) : (row_bytes + 8 + 1);
+    //
+    // THE RADIX LEAF'S OWN TERMS (this lane): two row planes (the ping-pong), ONE
+    // u64 LCP plane (the merge needed two - a radix permutes every row's index),
+    // the u8 column, the key plane capped at SS_SORT_KEY_ROW_BYTES, and a u32 slot
+    // indirection. The key plane cap is what keeps the price DATA-INDEPENDENT: a
+    // band whose whole row set ties gets a smaller window and more rounds, never a
+    // bigger arena. 64+8+1+8+1+32+4+4 = 122 B/row against the merge arm's 90.
+    b.bytes_per_row = lcp_on
+        ? (2 * row_bytes + 8 + 1 + 8 + 1 + SS_SORT_KEY_ROW_BYTES + 2 * 4)
+        : (row_bytes + 8 + 1);
     b.bands_in_flight = std::max<u64>(1, k_in_flight);
     // The sample array can never be longer than the corpus, and the control
     // reserve is a function of the envelope (a 50 MB envelope cannot carry a
@@ -880,6 +1269,9 @@ int main(int argc, char** argv) {
     // for the other 300-odd waves. It is not a semantic knob - the surviving wave
     // is the same wave the full run would have executed.
     std::string subdiv_class;
+    u64 sort_key_bytes = SS_SORT_KEY_BYTES_DEFAULT;   // K in the leaf sort's rounds
+    u64 sort_rounds = SS_SORT_ROUNDS_MAX_DEFAULT;     // the round cap before the LCE fallback
+    std::string leaf_sort = "radix";                  // radix (product) | lce (the oracle arm)
     bool subdiv_class_given = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -914,6 +1306,12 @@ int main(int argc, char** argv) {
         else if (a == "--subdiv-strategy") subdiv_strategy = nxt();
         else if (a.rfind("--subdiv-position-budget-bytes=", 0) == 0) pos_budget_bytes = std::strtoull(a.substr(31).c_str(), nullptr, 10);
         else if (a.rfind("--subdiv-leaf-coverage-pct=", 0) == 0) leaf_coverage_pct = std::atof(a.substr(27).c_str());
+        else if (a.rfind("--sort-key-bytes=", 0) == 0) sort_key_bytes = std::strtoull(a.substr(17).c_str(), nullptr, 10);
+        else if (a == "--sort-key-bytes") sort_key_bytes = std::strtoull(nxt().c_str(), nullptr, 10);
+        else if (a.rfind("--sort-rounds=", 0) == 0) sort_rounds = std::strtoull(a.substr(14).c_str(), nullptr, 10);
+        else if (a == "--sort-rounds") sort_rounds = std::strtoull(nxt().c_str(), nullptr, 10);
+        else if (a.rfind("--leaf-sort=", 0) == 0) leaf_sort = a.substr(12);
+        else if (a == "--leaf-sort") leaf_sort = nxt();
         else if (a.rfind("--subdiv-class=", 0) == 0) { subdiv_class = a.substr(15); subdiv_class_given = true; }
         else if (a == "--subdiv-leaf-coverage-pct") leaf_coverage_pct = std::atof(nxt().c_str());
         else if (a == "--subdiv-position-budget-bytes") pos_budget_bytes = std::strtoull(nxt().c_str(), nullptr, 10);
@@ -949,6 +1347,37 @@ int main(int argc, char** argv) {
         die("--subdiv-strategy must be auto|local|global (got " + subdiv_strategy + ")");
     if (!(leaf_coverage_pct > 0.0 && leaf_coverage_pct <= 100.0))
         die("--subdiv-leaf-coverage-pct must be in (0,100]");
+    // THE LEAF SORT'S KNOBS. The env names exist because `xsa build` builds the
+    // producer's argv from a fixed list, so a knob that is only a CLI flag is
+    // unreachable from the one command the pile run uses. Flags win.
+    std::string sort_knob_source = "default";
+    if (const char* e = ::getenv("XSA_SORT_KEY_BYTES")) {
+        sort_key_bytes = std::strtoull(e, nullptr, 10);
+        sort_knob_source = "env";
+    }
+    if (const char* e = ::getenv("XSA_SORT_ROUNDS")) {
+        sort_rounds = std::strtoull(e, nullptr, 10);
+        sort_knob_source = "env";
+    }
+    if (const char* e = ::getenv("XSA_LEAF_SORT")) {
+        leaf_sort = e;
+        sort_knob_source = "env";
+    }
+    if (leaf_sort != "radix" && leaf_sort != "lce")
+        die("--leaf-sort must be radix|lce (got " + leaf_sort + ")");
+    if (sort_key_bytes < 4 || sort_key_bytes > (1u << 20))
+        die("--sort-key-bytes must be in [4,1048576]");
+    if (sort_rounds < 1 || sort_rounds > 8) die("--sort-rounds must be in [1,8]");
+    g_sort_key_bytes = sort_key_bytes;
+    g_sort_rounds_max = sort_rounds;
+    g_leaf_sort_radix = (leaf_sort == "radix");
+    std::fprintf(stderr,
+        "SS_LEAF_SORT arm=%s key_bytes=%" PRIu64 " rounds_max=%" PRIu64
+        " key_row_bytes=%" PRIu64 " covered_bytes=%" PRIu64
+        " ext_window=%" PRIu64 " source=%s rule=MSD-radix-8bit-digits-bucket0-is-END\n",
+        leaf_sort.c_str(), g_sort_key_bytes, g_sort_rounds_max, SS_SORT_KEY_ROW_BYTES,
+        u64(24) + g_sort_key_bytes * ((u64(1) << g_sort_rounds_max) - 1),
+        SS_SORT_EXTRACT_WINDOW, sort_knob_source.c_str());
     if (corpus.empty() || (out.empty() && tapeBands.empty())) die("--corpus and --out required");
 
     if (!selftestOracle.empty() && !tapeBands.empty()) die("--selftest requires --out");
@@ -3000,6 +3429,34 @@ int main(int argc, char** argv) {
                                 (unsigned long long)tapeBand,rows.size());
                         } else if (lcpOn) {
                             if (inplace) sort_band_inplace(rows, bandLcp, bandEsc, band_off[b]);
+                            else if (g_leaf_sort_radix) {
+                                // THE PRODUCT ARM: streaming key extraction + MSD radix.
+                                // Same order, same column; the corpus is read once per
+                                // window in ASCENDING POSITION ORDER instead of being
+                                // compared through log2(m) times per row.
+                                SortStats st;
+                                const double rs0 = now_sec();
+                                radix_sort_band(fd, rows, bandLcp, bandEsc, band_off[b],
+                                                W.preLen, st);
+                                const double rs1 = now_sec();
+                                sortIoBytes.fetch_add(st.bytes, std::memory_order_relaxed);
+                                sortIoSyscalls.fetch_add(st.syscalls, std::memory_order_relaxed);
+                                sortTieRows.fetch_add(st.tie_rows, std::memory_order_relaxed);
+                                sortTieBytes.fetch_add(st.tie_bytes, std::memory_order_relaxed);
+                                sortFallbackRows.fetch_add(st.fallback_rows, std::memory_order_relaxed);
+                                sortNoShrink.fetch_add(st.tie_rounds_no_shrink, std::memory_order_relaxed);
+                                std::fprintf(stderr,
+                                    "SORT_ARM band=%" PRIu64 " arm=radix rows=%zu d_known=%" PRIu64
+                                    " k=%" PRIu64 " rounds=%" PRIu64 " tie_rows=%" PRIu64
+                                    " tie_bytes=%" PRIu64 " ext_bytes=%" PRIu64
+                                    " ext_syscalls=%" PRIu64 " ext_clusters=%" PRIu64
+                                    " fallback_spans=%" PRIu64 " fallback_rows=%" PRIu64
+                                    " sort_s=%.4f\n",
+                                    tapeBand, rows.size(), W.preLen,
+                                    g_sort_key_bytes, st.rounds, st.tie_rows, st.tie_bytes,
+                                    st.bytes, st.syscalls, st.clusters,
+                                    st.fallback_spans, st.fallback_rows, rs1 - rs0);
+                            }
                             else merge_sort_lcp(rows, bandLcp, bandEsc, band_off[b]);
                         } else {
                             // product path: the plain comparison sort. The merge-with-LCP
@@ -3653,6 +4110,22 @@ int main(int argc, char** argv) {
         "SS_DONE n=%" PRIu64 " waves=%" PRIu64 " ties=%" PRIu64
         " sample_s=%.2f waves_s=%.2f total_s=%.2f\n",
         N, waves, ties_total, t_sample, now_sec() - t1, now_sec() - t0);
+    {
+        const u64 tb = sortTieRows.load(), tby = sortTieBytes.load(),
+                  eb = sortIoBytes.load(), es = sortIoSyscalls.load(),
+                  fb = sortFallbackRows.load();
+        std::fprintf(stderr,
+            "SS_SORT_IO arm=%s key_bytes=%" PRIu64
+            " tie_rows=%" PRIu64 " tie_bytes=%" PRIu64
+            " ext_bytes=%" PRIu64 " ext_syscalls=%" PRIu64
+            " fallback_rows=%" PRIu64 " no_shrink_rounds=%" PRIu64
+            " tie_bytes_per_tie_row=%.3f ext_bytes_per_row=%.3f"
+            " rule=tie_bytes=tie_rows x K x rounds; ext_bytes=what the streaming"
+            " extraction asked the kernel for (ascending positions)\n",
+            leaf_sort.c_str(), g_sort_key_bytes, tb, tby, eb, es, fb,
+            sortNoShrink.load(), tb ? double(tby) / double(tb) : 0.0,
+            N ? double(eb) / double(N) : 0.0);
+    }
     if (!selftestOracle.empty()) {
         std::ifstream oracle(selftestOracle), sa(out, std::ios::binary), symbols(symPath, std::ios::binary);
         if (!oracle || !sa || !symbols) die("selftest open oracle/output");
