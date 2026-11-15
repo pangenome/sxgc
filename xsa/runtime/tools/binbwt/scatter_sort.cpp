@@ -511,7 +511,7 @@ static constexpr u64 SS_SORT_KEY_BYTES_DEFAULT = 32;   // K: bytes extracted per
 // extraction below is the only caller that needs it before its definition.
 static void read_window(int fd, u64 from, u64 want, std::vector<u8>& buf);
 static constexpr u64 SS_SORT_KEY_ROW_BYTES = 32;        // the key plane's cap, B/band-row
-static constexpr u64 SS_SORT_ROUNDS_MAX_DEFAULT = 4;    // 24 + K(1+2+4+8) = 504 B covered
+static constexpr u64 SS_SORT_ROUNDS_MAX_DEFAULT = 5;    // 24 + K(1+2+4+8+16) = 1016 B covered
 // THE EXTRACTION'S CLUSTER RULE. Two knobs, and the second is the one that
 // matters: WIN_MAX bounds ONE pread, but the reason to merge two rows into one
 // read is that the bytes between them would be read anyway. A window is only
@@ -919,25 +919,36 @@ static void radix_sort_band(int fd, std::vector<Row>& rows, std::vector<uint8_t>
     // ---- THE FALLBACK: tie sets the round cap left behind, and the oracle arm. ----
     // This is the ONLY place a band still compares suffixes through the corpus, and
     // it is bounded by the cap (SS_SORT_ROUNDS_MAX x doubling windows), never by n.
+    //
+    // IT WALKS FROM `off`, NOT FROM 0. Every row here matched the WHOLE extracted
+    // window, so its first `off` bytes are equal by construction - and at a deep
+    // band `off` is d_known + 24 + K(2^R - 1), i.e. the walk the old arm would
+    // have done is exactly the prefix we have already proved. Starting at 0 made
+    // this fallback the second-largest term in the 10 GB run (238 M rows x a
+    // full-length random walk) for no reason at all.
     if (!residual.empty()) {
         const double tf0 = now_sec();
+        const u64 walk_from = off;
         for (const auto& sp : residual) {
             ++st.fallback_spans;
             st.fallback_rows += sp.second - sp.first;
             std::sort(rows.begin() + ptrdiff_t(sp.first), rows.begin() + ptrdiff_t(sp.second),
-                      [](const Row& a, const Row& b) {
-                          return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), 0) < 0;
+                      [walk_from](const Row& a, const Row& b) {
+                          return suf_cmp_from(unpack_pos(a.pos), unpack_pos(b.pos), walk_from) < 0;
                       });
             for (u64 i = sp.first + 1; i < sp.second; ++i) {
                 u64 lcp = 0;
                 suf_cmp_lcp(unpack_pos(rows[size_t(i - 1)].pos),
-                            unpack_pos(rows[size_t(i)].pos), 0, lcp);
+                            unpack_pos(rows[size_t(i)].pos), walk_from, lcp);
                 lcpv[size_t(i)] = lcp;
             }
-            if (sp.first) {   // the span's own fence row: a fresh full walk
+            if (sp.first) {
+                // The span's own fence row: the bound it inherited is the tightest
+                // starting point available, and it is always a true lower bound.
                 u64 lcp = 0;
                 suf_cmp_lcp(unpack_pos(rows[size_t(sp.first - 1)].pos),
-                            unpack_pos(rows[size_t(sp.first)].pos), 0, lcp);
+                            unpack_pos(rows[size_t(sp.first)].pos),
+                            std::min<u64>(lcpv[size_t(sp.first)], walk_from), lcp);
                 lcpv[size_t(sp.first)] = lcp;
             }
         }
