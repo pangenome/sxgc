@@ -1,13 +1,21 @@
-# Tape reader: fixtures green; P1 not passed
+# Tape reader: scheduling diagnosis attested; P1 still VOID
 
-**Not ready for the pile.** The native reader fixes and fixture gate are
-committed, but both 3 GB P1 arms ended without `SS_DONE` and are **VOID**.
-No accepted P1 ratio, P2 identity, or pile-wall projection is claimed. Work
-stopped at this gate without changing knobs or attempting P2.
+**Not ready for the pile.** At `93f5656`, the branch-built corrected scatter
+arm completes 3,000,000,001 rows, but the reader exits through its unchanged
+memory guard before its first tie pass. P1 is **VOID**; its partial 2.015926
+rchar/corpus ratio is not accepted. P2 and the launch projection are blocked.
+
+The old tie-window refusal is reproduced as **OVERCOMMIT**, not a served-window
+leak. Deferred plane admission passes all fixture oracles and a constrained
+207-pass run with zero final live bytes. It remains a **partial scheduling
+fix**: eagerly constructed request metadata is still unbounded by the ledger.
+The banked 100 GB tail check is **ABSENT**, verified against the actual banked
+build source and the patched predicate. Detailed third-leg evidence follows
+the historical results below.
 
 Source of truth: `xsa/runtime/tools/binbwt/tape_sort.cpp` on `feat/tape-reader`.
-The stale `tools/binbwt` snapshot was not edited. Native gate binary source:
-`4a72ee18204a32c1abd197af2bc5acffdbd76518`; binary SHA-256:
+The stale `tools/binbwt` snapshot was not edited. The historical fixture binary
+was built from `4a72ee18204a32c1abd197af2bc5acffdbd76518`, SHA-256
 `725bf0fe966c1dc924838ca8876e83de930ec25cd75476ae39bf12265321dd13`.
 
 ## Design as implemented
@@ -80,7 +88,7 @@ Cargo exercises the existing product route; native gates exercise the reader.
 Full fixture commands, hashes, denominators and oracle receipts are committed
 in `gates/tape_reader_evidence/fixtures.json`.
 
-## P1: both arms VOID; stop
+## Historical P1: both arms VOID; stop
 
 Corpus: `/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt`, **3,000,000,000 bytes**, expected
 **3,000,000,001 rows**. Main was built from `origin/main` (`ea90a63`) in
@@ -261,3 +269,90 @@ arm is **VOID**, never a completed benchmark or an accepted ratio. A bounded
 16,384-byte test with limit 1 exits 2 after pass 1 with rchar 41,162 and no
 `SS_DONE`. The comparison producer and reader will both be compiled from this
 branch, including the tail predicate fix that must ride to main.
+
+
+## Third-leg P1 verdict: corrected comparator COMPLETE, reader VOID
+
+Both producers were compiled from this branch's source at **93f5656** with
+`g++ -O3 -std=c++17 -pthread -fopenmp`. Each arm received
+`posix_fadvise(DONTNEED)` before launch. Identical resource flags: 24 threads,
+210,453,397,504 budget bytes (196 GiB), and 268,435,456,000 scratch-budget
+bytes. Corpus: **3,000,000,000 bytes**; required rows: **3,000,000,001**.
+Long runs were detached; no wall deadline or signal was used.
+
+| Arm | rchar bytes | rchar / corpus bytes | read_bytes | syscr | Completed rows | Pipeline wall seconds | Status |
+|---|---:|---:|---:|---:|---:|---:|---|
+| corrected scatter / 93f5656 | 3,639,351,794,838 | 1213.117265 | 2,106,990,592 | 645,972,131 | 3,000,000,001 | 1146.128 | COMPLETE |
+| reader / 93f5656 | 6,047,777,504 | 2.015926 | 2,260,570,112 | 3,171 | 0 | 301.552 | VOID |
+
+I/O counters are producer-only; wall includes all native stages. Reader
+counters are the final sampled **partial** `/proc` values, not a completed
+benchmark. Scatter has `SS_DONE`, 1,414 bands, exactly 3,000,000,001 rows,
+producer wall 1123.05 seconds, `XSA_FINISH_DONE`, and exits `[0,0,0]`.
+The branch tail fix resolves the prior extra-row failure and must ride to main.
+
+Reader exits are `[2,75]`: the memory guard fires, then the harness writes
+`stop.requested` and the finish observes it. Anonymous RSS is **200,963 MiB**
+(**210,724,978,688 bytes**) against the unchanged **200,704 MiB** guard.
+The optional rchar counter guard did **not** fire. There is no `SS_DONE`.
+It serves one initial sweep: 40 requests, 2,999,999,977 non-tail rows,
+unmatched 0, 3,046,870,395 bytes, **152.60 seconds**. No tie pass or unit
+completes. No accepted ratio or completed pass-law claim is made.
+
+### Blocking accounting
+
+The replayed ledger has 64 reserves, zero releases and **171,564,426,420 live
+bytes**: initial chunks **82,535,262,590**, sort workspaces **89,029,163,830**.
+The cap remains **178,485,867,305 bytes**. No tie plane has been admitted.
+However, declarations still allocate outside this ledger before the parked
+frontier: `fus`, `FollowUp::positions`, `TapeRequest`, its copied positions,
+and the empty `Chunk` objects.
+
+The 14 units that reached `TIE_GROUPS` already declared **32,179,165 groups**
+covering **944,158,747 tied rows**. On this build, `sizeof(FollowUp)=152`,
+`sizeof(TapeRequest)=392`, and `sizeof(Chunk)=224` bytes. Thus logical object
+storage alone is **32,179,165 x 768 = 24,713,598,720 bytes**, and the two
+position copies are **944,158,747 x 16 = 15,106,539,952 bytes**: at least
+**39,820,138,672 bytes** before prefix storage, allocator overhead, spare
+capacity or metadata in the other ten sorters. These logical allocations are
+not a byte-exact RSS attribution: ledger reservations also include untouched
+capacity. RSS minus ledger is **39,160,552,268 bytes** at the guard sample.
+The 14 recorded units announce **3,867,274,227,712 bytes** of logical window
+planes, so eager declaration and eventual sweep multiplicity both remain
+material blockers. Bounding plane admission alone is insufficient.
+
+Reproduce type sizes with `g++ -std=c++17 -O0 -pthread -fopenmp
+ gates/tape_reader_metadata_sizes.cpp -o <scratch>/metadata-sizes`.
+Full receipts, commands, binary hashes, per-unit counts and partial ledger:
+`gates/tape_reader_evidence/p1_scheduled.json`; the complete reader log is
+`p1_scheduled_reader.log.gz`. The original overcommit operation timeline is
+separately retained. The next implementation must bound declaration metadata
+and its concurrency before allocation, while retaining the cap and refusals.
+
+### P2 and the pile-wall number
+
+**P2 NOT RUN.** There is no completed reader 3 GB container to compare.
+The corrected comparison container is 2,568,360,920 bytes with unpaired SHA-256
+`779934fa9d0f7820aa4a3d5208155b747a66e238f441df8ceee6963edcfa26ac`.
+This is not an identity pair. No first differing unit exists to report because
+no pair exists. The 100 GB comparison was not launched through this failed gate.
+
+**No defensible launch estimate.** The available extraction term scales as
+`152.60 s x (13.08e9 / 3.00e9) = 665.336 s per projected sweep`.
+The requested arithmetic would be
+`passes x 665.336 s + 13.08e9 rows x sort_seconds_per_row + finish_seconds`.
+Completed reader passes, reader sort rate, reader finish time and 100 GB P2
+measurements are unavailable. The scaled sweep is from a cold-start arm, not
+an isolated cold-device measurement. Filling those missing terms with zeros
+or borrowing the comparator's rates would fabricate the launch decision.
+**The pile remains blocked.**
+
+Validation: `BUILD_JOBS=24 cargo test --release -j 24` passes **106 tests**, with
+zero failures and one ignored. Cargo compilation overlapped early comparator
+work; wall measurements are not isolated. A redundant sequential refuse
+oracle (PID **830701**, parent **823768**, nice **19**) remains running because
+the fixture helper missed its saved reference and that oracle has no stop-file
+hook. The accepted refusal fixture uses exact identity with its committed
+brute-force SHA, not this pending oracle. No signal was sent. All requested
+artifact writes remain under TAPEREADER or this worktree; the frozen bank and
+reserved PILE directory were untouched. This third leg is **incomplete**.

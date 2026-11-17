@@ -1,0 +1,432 @@
+{
+  "status": "VOID",
+  "source_commit": "93f56567db6e9ef47b9b7e0a9bf84c01da93b7a5",
+  "corpus_bytes": 3000000000,
+  "expected_rows": 3000000001,
+  "arms": [
+    {
+      "binary_sha256": "4e3fefa97121333387796c102db4cb9cd1549277aaf0397807b1548387938b19",
+      "binary_source": "93f56567db6e9ef47b9b7e0a9bf84c01da93b7a5",
+      "arm": "main",
+      "corpus_bytes": 3000000000,
+      "rows_completed": 3000000001,
+      "wall": 1146.1282822471112,
+      "producer_receipt": "SS_DONE n=3000000001 waves=20 ties=2696516709 sample_s=0.02 waves_s=1121.22 total_s=1123.05",
+      "status": "COMPLETE",
+      "exits": [
+        0,
+        0,
+        0
+      ],
+      "io": {
+        "rchar": 3639351794838,
+        "wchar": 93782354529,
+        "syscr": 645972131,
+        "syscw": 48860697,
+        "read_bytes": 2106990592,
+        "write_bytes": 93892718592,
+        "cancelled_write_bytes": 29013889024
+      },
+      "rchar_per_corpus": 1213.117264946,
+      "flags": [
+        "--corpus",
+        "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/remap-256.bin",
+        "--threads",
+        "24",
+        "--budget-bytes",
+        "210453397504",
+        "--memory-gb",
+        "196",
+        "--scratch-budget-bytes",
+        "268435456000"
+      ],
+      "commands": [
+        [
+          "/mnt/nvme2n1/erikg/TAPEREADER/branch-bin/scatter_sort",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/remap-256.bin",
+          "--threads",
+          "24",
+          "--budget-bytes",
+          "210453397504",
+          "--memory-gb",
+          "196",
+          "--scratch-budget-bytes",
+          "268435456000",
+          "--scratch",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/main/waves",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/main/bands",
+          "--pending-bands",
+          "8"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/TAPEREADER/branch-bin/cross_lcp_merge",
+          "--binbwt",
+          "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/remap-256.bin",
+          "--out-prefix",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/main/merged/frag",
+          "--threads",
+          "24",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/main/bands"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/TAPEREADER/branch-bin/xsa_finish",
+          "--prefix",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/main/merged/frag",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/remap-256.bin",
+          "--output",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/main/product.sxi2",
+          "--threads",
+          "24",
+          "--poll-timeout",
+          "0",
+          "--wit-ram-budget",
+          "210453397504",
+          "--lcp-bands",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/main/bands",
+          "--no-chi"
+        ]
+      ],
+      "cold": "posix_fadvise DONTNEED before arm",
+      "environment": {
+        "XSA_MEM_GUARD_MB": "200704",
+        "CROSS_V2_PIECES": "1",
+        "CROSS_V2_PIECE_WINDOW": "1100",
+        "XSA_TAPE_WAIT_S": "inf",
+        "XSA_TAPE_RCHAR_LIMIT": "9000000000"
+      },
+      "pass_requests": []
+    },
+    {
+      "binary_sha256": "7ac6e29db513c883558ea2701306d6676401dfcc0cc8488d29454642b4647781",
+      "binary_source": "93f56567db6e9ef47b9b7e0a9bf84c01da93b7a5",
+      "arm": "reader",
+      "corpus_bytes": 3000000000,
+      "rows_completed": 0,
+      "wall": 301.55228600278497,
+      "producer_receipt": null,
+      "status": "VOID",
+      "exits": [
+        2,
+        75
+      ],
+      "io": {
+        "rchar": 6047777504,
+        "wchar": 21432,
+        "syscr": 3171,
+        "syscw": 230,
+        "read_bytes": 2260570112,
+        "write_bytes": 86016,
+        "cancelled_write_bytes": 0
+      },
+      "rchar_per_corpus": 2.0159258346666666,
+      "flags": [
+        "--corpus",
+        "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/remap-256.bin",
+        "--threads",
+        "24",
+        "--budget-bytes",
+        "210453397504",
+        "--memory-gb",
+        "196",
+        "--scratch-budget-bytes",
+        "268435456000"
+      ],
+      "commands": [
+        [
+          "/mnt/nvme2n1/erikg/TAPEREADER/bin/tape_sort.gated",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/remap-256.bin",
+          "--threads",
+          "24",
+          "--budget-bytes",
+          "210453397504",
+          "--memory-gb",
+          "196",
+          "--scratch-budget-bytes",
+          "268435456000",
+          "--out-prefix",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/reader/merged/frag",
+          "--bands",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/reader/bands"
+        ],
+        [
+          "/mnt/nvme2n1/erikg/TAPEREADER/branch-bin/xsa_finish",
+          "--prefix",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/reader/merged/frag",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/remap-256.bin",
+          "--output",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/reader/product.sxi2",
+          "--threads",
+          "24",
+          "--poll-timeout",
+          "0",
+          "--wit-ram-budget",
+          "210453397504",
+          "--lcp-bands",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/reader/bands",
+          "--no-chi"
+        ]
+      ],
+      "cold": "posix_fadvise DONTNEED before arm",
+      "environment": {
+        "XSA_MEM_GUARD_MB": "200704",
+        "CROSS_V2_PIECES": "1",
+        "CROSS_V2_PIECE_WINDOW": "1100",
+        "XSA_TAPE_WAIT_S": "inf",
+        "XSA_TAPE_RCHAR_LIMIT": "9000000000"
+      },
+      "pass_requests": [
+        "PASS_REQUEST pass=1 class=unit requests=40 rows_capacity=3751602845 reserved_bytes=0 round_max=0",
+        "PASS n=1 requests=40 rows=2999999977 unmatched=0 bytes=3046870395 wall=152.60 rule=one_sweep_serves_every_admitted_request"
+      ]
+    }
+  ],
+  "reader_ledger": {
+    "log": "/mnt/nvme2n1/erikg/TAPEREADER/p1-scheduled/reader/stage-0.log",
+    "events": 64,
+    "reserves": 64,
+    "releases": 0,
+    "live": 171564426420,
+    "peak": 171564426420,
+    "final": null,
+    "done": null,
+    "passes": [
+      "PASS n=1 requests=40 rows=2999999977 unmatched=0 bytes=3046870395 wall=152.60 rule=one_sweep_serves_every_admitted_request"
+    ],
+    "batches": [
+      "TAPE_BATCH admitted=40 deferred=0"
+    ],
+    "status": "PARTIAL"
+  },
+  "reader_failure": {
+    "kind": "MEM_GUARD",
+    "rss_anon_mib": 200963,
+    "guard_mib": 200704,
+    "rss_anon_bytes": 210724978688,
+    "ledger_live_bytes": 171564426420,
+    "ledger_cap_bytes": 178485867305,
+    "rss_minus_ledger_bytes": 39160552268,
+    "completed_tie_passes": 0,
+    "completed_units": 0,
+    "journaled_units": 14,
+    "journaled_groups": 32179165,
+    "journaled_tied_rows": 944158747,
+    "object_sizes_bytes": {
+      "FollowUp": 152,
+      "TapeRequest": 392,
+      "Chunk": 224
+    },
+    "declared_object_bytes": 24713598720,
+    "two_position_copies_bytes": 15106539952,
+    "logical_metadata_bytes_lower_bound": 39820138672,
+    "window_plane_demand_bytes": 3867274227712,
+    "unit_tie_groups": [
+      {
+        "unit": 22,
+        "groups": 966263,
+        "rows_tied": 15268057,
+        "window_bytes_total": 62537961472,
+        "window": 4096,
+        "p50": 3,
+        "p99": 181,
+        "max": 79472
+      },
+      {
+        "unit": 0,
+        "groups": 1837403,
+        "rows_tied": 32761635,
+        "window_bytes_total": 134191656960,
+        "window": 4096,
+        "p50": 3,
+        "p99": 187,
+        "max": 2098591
+      },
+      {
+        "unit": 5,
+        "groups": 1400140,
+        "rows_tied": 70618402,
+        "window_bytes_total": 289252974592,
+        "window": 4096,
+        "p50": 4,
+        "p99": 559,
+        "max": 249108
+      },
+      {
+        "unit": 21,
+        "groups": 2298175,
+        "rows_tied": 55889536,
+        "window_bytes_total": 228923539456,
+        "window": 4096,
+        "p50": 3,
+        "p99": 312,
+        "max": 380355
+      },
+      {
+        "unit": 6,
+        "groups": 1495386,
+        "rows_tied": 83697777,
+        "window_bytes_total": 342826094592,
+        "window": 4096,
+        "p50": 4,
+        "p99": 672,
+        "max": 672168
+      },
+      {
+        "unit": 12,
+        "groups": 2759306,
+        "rows_tied": 62353605,
+        "window_bytes_total": 255400366080,
+        "window": 4096,
+        "p50": 3,
+        "p99": 275,
+        "max": 549973
+      },
+      {
+        "unit": 4,
+        "groups": 1863543,
+        "rows_tied": 82896527,
+        "window_bytes_total": 339544174592,
+        "window": 4096,
+        "p50": 4,
+        "p99": 569,
+        "max": 605212
+      },
+      {
+        "unit": 3,
+        "groups": 1779904,
+        "rows_tied": 92350652,
+        "window_bytes_total": 378268270592,
+        "window": 4096,
+        "p50": 4,
+        "p99": 613,
+        "max": 673677
+      },
+      {
+        "unit": 19,
+        "groups": 2149461,
+        "rows_tied": 84846574,
+        "window_bytes_total": 347531567104,
+        "window": 4096,
+        "p50": 3,
+        "p99": 485,
+        "max": 546249
+      },
+      {
+        "unit": 17,
+        "groups": 3084781,
+        "rows_tied": 70240059,
+        "window_bytes_total": 287703281664,
+        "window": 4096,
+        "p50": 3,
+        "p99": 277,
+        "max": 142932
+      },
+      {
+        "unit": 14,
+        "groups": 2521685,
+        "rows_tied": 74751838,
+        "window_bytes_total": 306183528448,
+        "window": 4096,
+        "p50": 3,
+        "p99": 333,
+        "max": 419479
+      },
+      {
+        "unit": 2,
+        "groups": 3853718,
+        "rows_tied": 53023330,
+        "window_bytes_total": 217183559680,
+        "window": 4096,
+        "p50": 3,
+        "p99": 141,
+        "max": 134268
+      },
+      {
+        "unit": 18,
+        "groups": 2989990,
+        "rows_tied": 82204093,
+        "window_bytes_total": 336707964928,
+        "window": 4096,
+        "p50": 3,
+        "p99": 322,
+        "max": 610648
+      },
+      {
+        "unit": 23,
+        "groups": 3179410,
+        "rows_tied": 83256662,
+        "window_bytes_total": 341019287552,
+        "window": 4096,
+        "p50": 3,
+        "p99": 330,
+        "max": 212639
+      }
+    ],
+    "limitation": "Logical allocations are not identical to RSS: reserved planes include untouched capacity. Group journal covers only 14 units; other sorters were still preparing metadata. Prefix storage, allocator overhead, vector spare capacity and auxiliary maps are additional. Deferred plane admission does not bound declarations."
+  },
+  "comparison_container": {
+    "bytes": 2568360920,
+    "sha256": "779934fa9d0f7820aa4a3d5208155b747a66e238f441df8ceee6963edcfa26ac",
+    "status": "UNPAIRED: reader incomplete; not P2 identity"
+  },
+  "p2": {
+    "status": "NOT_RUN",
+    "reason": "Reader has no completed 3 GB container; cannot establish first differing unit or identity. 100 GB identity not launched.",
+    "identity_sha_pairs": []
+  },
+  "projection": {
+    "status": "UNAVAILABLE",
+    "target_rows": 13080000000,
+    "measured_extraction_seconds": 152.6,
+    "measured_corpus_bytes": 3000000000,
+    "scale": 4.36,
+    "scaled_sweep_seconds": 665.336,
+    "formula": "passes * 665.336 seconds + 13.08e9 rows * reader_sort_seconds_per_row + reader_finish_seconds",
+    "missing": [
+      "completed reader pass count",
+      "completed reader in-memory sort rate",
+      "reader finish estimate",
+      "100 GB P2 measurements"
+    ],
+    "limitation": "The only numeric term scales an extraction pass from a cold-start arm; it is not an isolated cold-device sweep or a validated pile-wall projection. Pile launch remains blocked."
+  },
+  "tests": {
+    "command": "BUILD_JOBS=24 cargo test --release -j 24",
+    "exit": 0,
+    "summary": "106 passed; 0 failed; 1 ignored",
+    "source_commit": "93f56567db6e9ef47b9b7e0a9bf84c01da93b7a5",
+    "log_sha256": "6eb4511526e264f44f4cc4dcae4e785d49ee6c9da2a5b9209c1865df69c0a304"
+  },
+  "residual_process": {
+    "pid": 830701,
+    "parent_pid": 823768,
+    "nice": 19,
+    "kind": "redundant sequential fixture oracle",
+    "reason": "Fixture helper missed the saved refuse reference; exact committed SHA was used instead. Oracle has no cooperative stop hook. No signal sent."
+  },
+  "measurement_limitations": [
+    "Native pipelines with --no-chi, not integrated xsa build CLI.",
+    "rchar/read_bytes/syscr are producer counters; wall covers all stages.",
+    "Cargo build overlapped early comparison work; a redundant one-core oracle ran at nice 19. Wall is not an isolated performance measurement.",
+    "Reader IO is the last sampled /proc receipt, partial and not SS_DONE. The optional 9 GB rchar guard did not fire; memory guard fired first."
+  ]
+}
