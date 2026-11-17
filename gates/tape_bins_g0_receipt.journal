@@ -1,0 +1,41 @@
+[23:03:26] START name=adv corpus=/mnt/nvme2n1/erikg/TAPEREADER/bins-g0/adv.bin bytes=20000
+[23:03:28] SS_DONE_OK name=adv rows=20001 rchar=168312042 parse_classes=7478 prefix_rel=4885 post_run_live_zero=1
+BRUTE_SA_DONE rows=20001 corpus_bytes=20000
+ORACLE OK rows=20001 expected=20001 mismatches=0
+[23:03:29] GATE name=adv PASS
+[23:03:29] START name=docsep corpus=/tmp/tr_p3/fixtures/docsep.txt bytes=6291456
+[23:03:38] SS_DONE_OK name=docsep rows=6291457 rchar=1660668313 parse_classes=0 prefix_rel=0 post_run_live_zero=1
+BRUTE_SA_DONE rows=6291457 corpus_bytes=6291456
+ORACLE OK rows=6291457 expected=6291457 mismatches=0
+[23:03:42] GATE name=docsep PASS
+[23:03:42] START name=eofrun corpus=/tmp/tr_p3/fixtures/eofrun.txt bytes=6291456
+[23:03:51] SS_DONE_OK name=eofrun rows=6291457 rchar=1652158495 parse_classes=0 prefix_rel=0 post_run_live_zero=1
+BRUTE_SA_DONE rows=6291457 corpus_bytes=6291456
+ORACLE OK rows=6291457 expected=6291457 mismatches=0
+[23:03:59] GATE name=eofrun PASS
+[23:03:59] START name=internsep corpus=/tmp/tr_p3/fixtures/internsep.txt bytes=6291456
+[23:04:10] SS_DONE_OK name=internsep rows=6291457 rchar=1658436621 parse_classes=0 prefix_rel=0 post_run_live_zero=1
+BRUTE_SA_DONE rows=6291457 corpus_bytes=6291456
+ORACLE OK rows=6291457 expected=6291457 mismatches=0
+[23:04:14] GATE name=internsep PASS
+[23:04:14] START name=mixed corpus=/tmp/tr_p3/fixtures/mixed.txt bytes=6291456
+[23:04:29] SS_DONE_OK name=mixed rows=6291457 rchar=855283415 parse_classes=0 prefix_rel=0 post_run_live_zero=1
+BRUTE_SA_DONE rows=6291457 corpus_bytes=6291456
+ORACLE OK rows=6291457 expected=6291457 mismatches=0
+[23:04:33] GATE name=mixed PASS
+[23:04:33] START name=period2 corpus=/tmp/tr_p3/fixtures/period2.txt bytes=6291456
+[23:04:42] SS_DONE_OK name=period2 rows=6291457 rchar=1660376769 parse_classes=0 prefix_rel=0 post_run_live_zero=1
+BRUTE_SA_DONE rows=6291457 corpus_bytes=6291456
+ORACLE OK rows=6291457 expected=6291457 mismatches=0
+[23:04:46] GATE name=period2 PASS
+[23:04:46] START name=r0 corpus=/tmp/tr_p3/fixtures/r0.txt bytes=6291456
+[23:04:55] SS_DONE_OK name=r0 rows=6291457 rchar=1660237346 parse_classes=0 prefix_rel=0 post_run_live_zero=1
+BRUTE_SA_DONE rows=6291457 corpus_bytes=6291456
+ORACLE OK rows=6291457 expected=6291457 mismatches=0
+[23:04:59] GATE name=r0 PASS
+[23:04:59] START name=single corpus=/tmp/tr_p3/fixtures/single.txt bytes=6291456
+[23:05:08] SS_DONE_OK name=single rows=6291457 rchar=1659943220 parse_classes=0 prefix_rel=0 post_run_live_zero=1
+BRUTE_SA_DONE rows=6291457 corpus_bytes=6291456
+ORACLE OK rows=6291457 expected=6291457 mismatches=0
+[23:05:11] GATE name=single PASS
+[23:05:11] SUMMARY fails=0 results= adv:PASS(rows=20001,parse=7478,rel=4885) docsep:PASS(rows=6291457,parse=0,rel=0) eofrun:PASS(rows=6291457,parse=0,rel=0) internsep:PASS(rows=6291457,parse=0,rel=0) mixed:PASS(rows=6291457,parse=0,rel=0) period2:PASS(rows=6291457,parse=0,rel=0) r0:PASS(rows=6291457,parse=0,rel=0) single:PASS(rows=6291457,parse=0,rel=0)
