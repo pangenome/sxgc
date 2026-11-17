@@ -283,7 +283,7 @@ struct RssMonitor {
                             " the OS OOM does damage\n",
                             a / 1024, g_mem_guard_mb, peak_anon.load() / 1024,
                             peak_file.load() / 1024, peak_total.load() / 1024);
-                        std::abort();
+                        ::_exit(2);
                     }
                 }
                 for (int i = 0; i < 5 && !stop.load(std::memory_order_relaxed); ++i)
@@ -385,7 +385,6 @@ static u64 g_parse_dict_allowance = 1ull << 20;  // XSA_PARSE_DICT_BYTES (per re
 // and counters) when it stops advancing for XSA_SPIN_GUARD_S seconds.
 static std::atomic<u64> g_spin_beat{0};
 static std::atomic<int> g_spin_where{0};   // 1 tape 2 plan 3 radix 4 parse 5 fallback 6 emit
-static u64 g_spin_guard_s = 300;           // XSA_SPIN_GUARD_S
 static void beat(int where) {
     g_spin_where.store(where, std::memory_order_relaxed);
     g_spin_beat.fetch_add(1, std::memory_order_relaxed);
@@ -1705,6 +1704,9 @@ struct Tape {
             for (u64 i = 0; i < len; ++i) {
                 const u32 nxt = nodes[at][p[i]];
                 if (!nxt) {
+                    if (nodes.size() >= (1ull << 20))
+                        die("MATCHER_NODES: refusing allocation at nodes=" +
+                            std::to_string(nodes.size()) + " limit=1048576");
                     nodes.emplace_back();
                     nodes[at][p[i]] = u32(nodes.size());   // 1-BASED: 0 = no child
                     reqs.emplace_back();
@@ -2953,7 +2955,9 @@ struct PieceCutter {
         }
     }
     void finish() {
-        require(next == n, "piece cutter did not see every row");
+        if (next != n)
+            die("piece cutter did not see every row: rows_completed=" +
+                std::to_string(next) + " expected=" + std::to_string(n));
         flushRun();
         if (band.size()) closeBand();
         {
@@ -2996,49 +3000,6 @@ int main(int argc, char** argv) {
     // tracks the bound again.
     ::mallopt(M_MMAP_THRESHOLD, 32768);
     ::mallopt(M_TRIM_THRESHOLD, 131072);
-    // THE SPIN-GUARD WATCHDOG (in-process, no external timeout): every phase
-    // bumps the heartbeat; when it stops advancing for XSA_SPIN_GUARD_S
-    // seconds the watchdog dumps EVERY thread's stack (SIGUSR1 handlers,
-    // in-process - ptrace is not required), then aborts. A slow-but-progressing
-    // run is never killed; a silent spin is impossible by contract.
-    ::signal(SIGUSR1, [](int) {
-        void* fr[24];
-        const int n = ::backtrace(fr, 24);
-        ::backtrace_symbols_fd(fr, n, 2);
-        const char* nl = "\n";
-        ssize_t rc2 = ::write(2, nl, 1); (void)rc2;
-    });
-    std::thread spinGuard([&] {
-        u64 lastBeat = 0;
-        double lastMove = now_sec();
-        for (;;) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5000));
-            const u64 b2 = g_spin_beat.load(std::memory_order_relaxed);
-            if (b2 != lastBeat) { lastBeat = b2; lastMove = now_sec(); continue; }
-            if (now_sec() - lastMove >= double(g_spin_guard_s)) {
-                std::fprintf(stderr,
-                    "SPIN_GUARD: no progress for %.0fs (beat=%" PRIu64
-                    " where=%d parse_classes=%" PRIu64 ") - dumping all thread "
-                    "stacks, then aborting. Where: 1=tape_pass 2=plan "
-                    "3=window_radix 4=parse_sort 5=lce_fallback\n",
-                    now_sec() - lastMove, b2, g_spin_where.load(),
-                    PARSE_CLASSES.load());
-                DIR* d = ::opendir("/proc/self/task");
-                if (d) {
-                    struct dirent* de;
-                    while ((de = ::readdir(d))) {
-                        const long tid = ::atol(de->d_name);
-                        if (tid > 0 && tid != ::syscall(SYS_gettid))
-                            ::syscall(SYS_tgkill, ::getpid(), tid, SIGUSR1);
-                    }
-                    ::closedir(d);
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                std::abort();
-            }
-        }
-    });
-    spinGuard.detach();
     std::string corpus, remapPath, outPrefix, bandsDir;
     u64 budget_bytes = 0, scratch_budget_bytes = 0;
     double memory_gb = 0.0;
@@ -3092,11 +3053,6 @@ int main(int argc, char** argv) {
             g_mem_guard_mb = std::strtoull(e4, nullptr, 10);
             if (g_mem_guard_mb && g_mem_guard_mb < 1024)
                 die("XSA_MEM_GUARD_MB must be 0 (off) or >= 1024");
-        }
-        if (const char* e3 = ::getenv("XSA_SPIN_GUARD_S")) {
-            g_spin_guard_s = std::strtoull(e3, nullptr, 10);
-            if (g_spin_guard_s < 10 || g_spin_guard_s > 86400)
-                die("XSA_SPIN_GUARD_S must be in [10, 86400] seconds");
         }
         if (const char* e2 = ::getenv("XSA_PARSE_DICT_BYTES")) {
             g_parse_dict_allowance = std::strtoull(e2, nullptr, 10);
