@@ -81,8 +81,9 @@ for f in bands:
         if bi >= reflen:
             mism += 1
             continue
-        r = next(refv)
-        if (w & (2**48 - 1)) != r:
+        (r,) = next(refv)   # iter_unpack yields TUPLES - a scalar compare
+        if (w & (2**48 - 1)) != r:   # mismatched every row (the spurious
+                                     # 7-fixture ORACLE FAIL was this line)
             if mism < 5:
                 print(f"MISMATCH at {bi}: band={w & (2**48-1)} ref={r}")
             mism += 1

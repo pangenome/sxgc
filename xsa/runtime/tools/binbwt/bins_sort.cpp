@@ -574,6 +574,8 @@ struct Unit {
 // ---- the readhead (TAPE_BINS.md): gap-merged ascending preads over the
 // class's own rows. Only the WANTED bytes are billed: a pread bills bytes
 // read, not bytes skipped. Serial within the bin, parallel across bins. ----
+static std::atomic<bool> g_expand_trace{false};
+static std::atomic<u64> g_etrace_a{0}, g_etrace_b{0};
 struct ReadHead {
     int fd = -1;
     std::vector<u8> buf;      // the round's merged window bytes (remapped)
@@ -667,13 +669,21 @@ struct Frontier {
 // never a fabricated order); 0xFFFFFFFEu = the TRUE text end (shorter
 // first, the dollar rule); PARTIAL ids carry 0x80000000u.
 // ===========================================================================
+static std::atomic<bool> g_parse_trace{false};
+static std::atomic<u32> g_trace_a{0}, g_trace_b{0};
+static std::atomic<u64> g_trace_round{0};
 struct ClassParse {
     u64 phraseBudget = 0;
     std::vector<u32> ids;                       // row-major [rows x B]
     std::vector<u32> off0;                      // the row's offset in its containing phrase
     std::vector<std::vector<u8>> dict;          // proper phrases (end with their trigger)
     std::vector<std::vector<u8>> pdict;         // partial phrases (the text edges)
-    std::unordered_map<u64, u32> dictOf, pdictOf;   // FNV hash -> id
+    // FNV hash -> CANDIDATE ids. The adversarial fixture is CONSTRUCTED to
+    // attack FNV-1a (its X/M k-mers were hash-searched): the dedup must be
+    // CONTENT-EXACT, so a hash hit is verified by memcmp and a real
+    // collision stores a distinct phrase (the receipt: a 1250-byte partial
+    // returned for a ~3750-byte ent, off0 > len - a fabricated keying).
+    std::unordered_map<u64, std::vector<u32>> dictOf, pdictOf;
     u64 dictBytes() const {
         u64 b = 0;
         for (const auto& ph : dict) b += ph.size();
@@ -1110,6 +1120,13 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
             u64 lvl = s2l.second;
             if (hi - lo <= 1) continue;
             if (hi - lo <= SS_WAVE_SMALL_ROWS) { smallOut.push_back(s2l.first); continue; }
+            u64 tA = ~0ull, tB = ~0ull;
+            if (g_expand_trace.load())
+                for (u64 i = lo; i < hi; ++i) {
+                    const u64 pp = unpack_pos(P[size_t(i)]);
+                    if (pp == g_etrace_a.load()) tA = i;
+                    if (pp == g_etrace_b.load()) tB = i;
+                }
             u64 splitLvl = ~0ull;
             for (u64 L = lvl; L < delta; ++L) {
                 const unsigned d0 = digkAt(lo, L);
@@ -1122,6 +1139,23 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
             if (splitLvl == ~0ull) {
                 deepOut.push_back(s2l.first);   // survived the whole window
                 continue;
+            }
+            if (tA != ~0ull && tB != ~0ull) {
+                std::fprintf(stderr,
+                    "  SPLIT unit=%llu span=[%llu,%llu) lvl_from=%llu"
+                    " split_lvl=%llu posA=%llu rowA=%llu digA=%u winA=%02x"
+                    " posB=%llu rowB=%llu digB=%u winB=%02x remA=%llu remB=%llu\n",
+                    (unsigned long long)unit_id, (unsigned long long)lo,
+                    (unsigned long long)hi, (unsigned long long)lvl,
+                    (unsigned long long)splitLvl,
+                    (unsigned long long)g_etrace_a.load(), (unsigned long long)tA,
+                    digkAt(tA, splitLvl),
+                    plane[size_t(slot[size_t(tA)]) * size_t(delta) + size_t(splitLvl)],
+                    (unsigned long long)g_etrace_b.load(), (unsigned long long)tB,
+                    digkAt(tB, splitLvl),
+                    plane[size_t(slot[size_t(tB)]) * size_t(delta) + size_t(splitLvl)],
+                    (unsigned long long)(FILE_N - g_etrace_a.load()),
+                    (unsigned long long)(FILE_N - g_etrace_b.load()));
             }
             const u64 m = hi - lo;
             w.sDig.resize(size_t(m));
@@ -1163,6 +1197,16 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
     // survivor spans grew cmp_len by the same delta (they tied through the
     // whole window): the first continues in place, the rest expand
     // independently from the SHARED depth (never from the radix start).
+    {
+        const char* es = ::getenv("XSA_EXPAND_TRACE");
+        if (es) {
+            u64 ea = 0, eb = 0;
+            if (std::sscanf(es, "%" SCNu64 ",%" SCNu64, &ea, &eb) == 2) {
+                g_etrace_a.store(ea); g_etrace_b.store(eb);
+                g_expand_trace.store(true);
+            }
+        }
+    }
     std::function<void(std::pair<u64, u64>, u64)> expand_class =
     [&](std::pair<u64, u64> sp0, u64 startCmp) {
         std::pair<u64, u64> sp = sp0;
@@ -1173,7 +1217,7 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
         std::vector<u32> slot;   // ABSOLUTE P index -> the row's window index
         std::vector<u8> plane;
         std::vector<std::pair<u64, u64>> deep, smallS, rest;
-        u64 steps = 0;
+        u64 steps = 0, roundsDone = 0;
         for (;;) {
             const u64 m = sp.second - sp.first;
             if (m < 2) return;
@@ -1190,12 +1234,28 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
             // whose projection exceeds the bin budget is FAT - the parse's
             // trigger population. A class the reverse slide refused never
             // re-triggers (no modality can trap it).
-            if (!parseRefused && m * (cmpLen + delta) > g_parse_plane_max) {
+            // THE CLASS BUDGET = max(knob, rows x 16): the floor is the
+            // minimum window plane the class must be able to hold in EITHER
+            // modality (expansion m x 16; parse keying m x 8). Without it a
+            // small knob made big classes unservable (the plane guard died
+            // on the 'single' fixture's 36k-row classes at 64 KiB) - with
+            // it the knob triggers SMALL classes early while every class
+            // still fits somewhere.
+            const u64 budgetEff = std::max(g_parse_plane_max, m * 16);
+            // THE CENSUS FIRES ON THE TRAJECTORY, never at round 0
+            // (TAPE_BINS.md: "rows still tied AFTER ROUND r x cmp_len
+            // growth"). A class that will resolve in its first expansion
+            // round must pay only that round: routing every big class at
+            // cmp_len=9 sent shallow classes (true depth ~30 B) to a
+            // parse costing 300x their whole expansion - the 'single'
+            // receipt: rchar 1771x at the 64 KiB knob.
+            if (!parseRefused && roundsDone > 0 &&
+                m * (cmpLen + delta) > budgetEff) {
                 std::fprintf(stderr,
                     "CENSUS unit=%" PRIu64 " rows=%" PRIu64 " cmp_len=%" PRIu64
                     " delta=%" PRIu64 " projected_bytes=%" PRIu64
                     " budget=%" PRIu64 " rule=fat_class_routes_to_the_parse\n",
-                    unit_id, m, cmpLen, delta, m * (cmpLen + delta), g_parse_plane_max);
+                    unit_id, m, cmpLen, delta, m * (cmpLen + delta), budgetEff);
                 if (parse_class(sp, cmpLen, delta, parseRefused)) return;
                 // parse_abandoned: journaled with both costs by the slide;
                 // continue the byte expansion from the SAME cmp_len
@@ -1208,8 +1268,8 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
             // minimum delta is a plan error: DIE WITH THE NUMBERS (bin id,
             // rows by term, bytes by term) - never the OS OOM killer.
             const u64 delta_eff = std::max<u64>(16u,
-                std::min(delta, g_parse_plane_max / std::max<u64>(1, m)));
-            if (m * delta_eff > g_parse_plane_max) {
+                std::min(delta, budgetEff / std::max<u64>(1, m)));
+            if (m * delta_eff > budgetEff) {
                 const u64 baseP = U.P.size() * 8, baseKb = U.Kb.size(),
                          baseLp = U.Lp.size() * 4, baseTp = U.Tp.size() * 2;
                 std::fprintf(stderr,
@@ -1274,8 +1334,14 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                 unit_id, m, cmpLen, delta, delta_eff, rh.wantedBytes,
                 rh.skippedBytes, rh.segments, deep.size(), m * delta_eff);
             if (deep.empty()) return;   // the class is fully ordered
-            // every survivor span tied through the whole window: all grow
-            const u64 grownCmp = cmpLen + delta;
+            ++roundsDone;
+            // every survivor span tied through the WHOLE COMPARED WINDOW
+            // (delta_eff, NOT the raw delta: the plane guard clamps the
+            // round to the budget, and growing past uncomparered bytes
+            // skipped divergences - the 'single' receipt: a 37173-row
+            // class at delta_eff=16 'grew' to cmp_len=265 while the pair
+            // diverged at byte 27, unseen)
+            const u64 grownCmp = cmpLen + delta_eff;
             rest.clear();
             for (size_t di = 1; di < deep.size(); ++di) rest.push_back(deep[di]);
             sp = deep[0];
@@ -1315,30 +1381,70 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
             rows.emplace_back(unpack_pos(P[size_t(i)]), u32(i - sp.first));
         std::sort(rows.begin(), rows.end());
         const u64 byteCost = m * (cmpLen + delta);   // one more expansion round
+        const char* traceSpec = ::getenv("XSA_PARSE_TRACE");
+        if (traceSpec) {
+            u64 ta = 0, tb = 0;
+            if (std::sscanf(traceSpec, "%" SCNu64 ",%" SCNu64, &ta, &tb) == 2) {
+                bool hasA = false, hasB = false;
+                for (const auto& rw : rows)
+                    if (rw.first == ta) hasA = true;
+                    else if (rw.first == tb) hasB = true;
+                if (hasA && hasB) {
+                    for (u64 ri = 0; ri < m; ++ri)
+                        if (rows[size_t(ri)].first == ta)
+                            g_trace_a.store(rows[size_t(ri)].second);
+                        else if (rows[size_t(ri)].first == tb)
+                            g_trace_b.store(rows[size_t(ri)].second);
+                    g_parse_trace.store(true);
+                }
+            }
+        }
         for (;;) {
             ++parseRound;
+            g_trace_round.store(parseRound);
             if (parseRound > g_parse_rounds + 1)
                 die("PARSE_ROUNDS: unit " + std::to_string(unit_id) +
                     " class of " + std::to_string(m) + " rows exceeded the round"
                     " machinery - refusing with the numbers");
-            // ---- THE IDS-PLANE GUARD (TAPE_BINS.md: the bin budget caps
-            // EVERY term). The parse's keying planes - ids (rows x B x 4)
-            // and off0 (rows x 4) - are terms like any other: a class
-            // whose keying cannot fit the budget REFUSES the parse (the
-            // census misrouted it; the expansion owns it from here) with
-            // the numbers, never a ballooning allocation.
-            const u64 idsBytes = m * B * 4, off0Bytes = m * 4;
-            if (idsBytes + off0Bytes > g_parse_plane_max) {
+            // ---- THE IDS-PLANE GUARD + THE MANDATORY CENSUS
+            // (TAPE_BINS.md: the bin budget caps EVERY term - AND the
+            // census's routing is MANDATORY, not advisory). When the
+            // census sends a class here, the parse MUST fire: shrink the
+            // phrase budget so the keying planes fit (B >= 1 phrase per
+            // row; the widening grows it back under the same guard). The
+            // receipt that forced this: the 'single' fixture - one giant
+            // tie class, the parse refused on its ids plane, and the
+            // expansion read the corpus 264x. Only a class too big even
+            // at B=1 (rows x 8 > budget) is a plan error: die with the
+            // numbers, never a ballooning allocation.
+            const u64 budgetEff = std::max(g_parse_plane_max, m * 8);
+            if (m * 8 > budgetEff) {   // unreachable with the floor; kept as the structural belt
                 std::fprintf(stderr,
                     "PARSE_REFUSED unit=%" PRIu64 " class_rows=%" PRIu64
-                    " budget=%" PRIu64 " phrase_budget=%" PRIu64
-                    " ids_bytes=%" PRIu64 " off0_bytes=%" PRIu64
+                    " budget=%" PRIu64 " ids_at_B1_bytes=%" PRIu64
                     " cmp_len=%" PRIu64
-                    " rule=parse_keying_over_budget_back_to_byte_expansion\n",
-                    unit_id, m, g_parse_plane_max, B, idsBytes, off0Bytes,
-                    cmpLen);
+                    " rule=class_too_big_for_any_keying_is_a_plan_error\n",
+                    unit_id, m, budgetEff, m * 8, cmpLen);
                 refused = true;
                 return false;
+            }
+            const u64 off0Bytes = m * 4;
+            {
+                const u64 idsBytes = m * B * 4;
+                if (idsBytes + off0Bytes > budgetEff) {
+                    const u64 Bfit = std::max<u64>(1,
+                        (budgetEff - off0Bytes) / (m * 4));
+                    std::fprintf(stderr,
+                        "PARSE_ADAPTED unit=%" PRIu64 " class_rows=%" PRIu64
+                        " budget=%" PRIu64 " phrase_budget=%" PRIu64 "->%llu"
+                        " ids_bytes=%" PRIu64 "->%" PRIu64
+                        " rule=census_is_mandatory_shrink_the_keying_to_fit\n",
+                        unit_id, m, budgetEff, B,
+                        (unsigned long long)Bfit, idsBytes,
+                        (budgetEff - off0Bytes) / (m * 4) * m * 4);
+                    B = Bfit;
+                    spanBytes = B * (g_pfp_k + g_pfp_w) * 2 + 4096;
+                }
             }
             ClassParse pc;
             pc.phraseBudget = B;
@@ -1397,13 +1503,18 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
             auto intern = [&](const u8* q2, u32 len, u64 hh, bool partial) -> u32 {
                 auto& tab = partial ? pc.pdict : pc.dict;
                 auto& mapOf = partial ? pc.pdictOf : pc.dictOf;
+                const u32 flag = partial ? 0x80000000u : 0u;
                 auto it = mapOf.find(hh);
-                if (it != mapOf.end()) return it->second |
-                    (partial ? 0x80000000u : 0u);
+                if (it != mapOf.end())
+                    for (const u32 cand : it->second)
+                        if (tab[size_t(cand)].size() == size_t(len) &&
+                            std::memcmp(tab[size_t(cand)].data(), q2, len) == 0)
+                            return cand | flag;   // verified content-exact
                 const u32 id = u32(tab.size());
                 tab.emplace_back(q2, q2 + len);
-                mapOf.emplace(hh, id);
-                return id | (partial ? 0x80000000u : 0u);
+                if (it != mapOf.end()) it->second.push_back(id);
+                else mapOf.emplace(hh, std::vector<u32>{id});
+                return id | flag;
             };
             // ---- the capture: one row at a time, ascending ----
             for (u64 ri = 0; ri < m; ++ri) {
@@ -1462,6 +1573,28 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                 }
                 const Frontier::Ent& ce = F.ents[size_t(entCursor)];
                 if (ce.start <= p) {
+                    // STRUCTURAL: the row must lie WITHIN its containing
+                    // phrase (off0 < len); a violation is a capture bug -
+                    // dump the ent and the row's context and die.
+                    if (p - ce.start >= ce.len || ce.len == 0) {
+                        std::fprintf(stderr,
+                            "OFF0_INVARIANT unit=%" PRIu64 " row_pos=%" PRIu64
+                            " rid=%u entCursor=%zu ents=%zu clamped0=%d"
+                            " ce.start=%" PRIu64 " ce.end=%" PRIu64
+                            " ce.len=%u pbufBase=%" PRIu64 " pbuf_size=%zu"
+                            " F.frontierStart=%" PRIu64 "\n",
+                            unit_id, p, rid, size_t(entCursor), F.ents.size(),
+                            int(F.clamped0), ce.start, ce.end, ce.len,
+                            pbufBase, pbuf.size(), F.frontierStart);
+                        for (size_t ei = entCursor > 2 ? entCursor - 2 : 0;
+                             ei < F.ents.size() && ei < entCursor + 3; ++ei)
+                            std::fprintf(stderr,
+                                "  ent[%zu] start=%" PRIu64 " end=%" PRIu64
+                                " len=%u\n", ei, F.ents[ei].start,
+                                F.ents[ei].end, F.ents[ei].len);
+                        die("PARSE_OFF0: the row's offset within its containing"
+                            " phrase exceeds the phrase - a capture bug; refusing");
+                    }
                     const bool part0 = (entCursor == 0 && F.clamped0);
                     idOut[0] = intern(F.arena.data() + ce.off, ce.len, ce.h, part0);
                     pc.off0[size_t(rid)] = u32(p - ce.start);
@@ -1608,7 +1741,18 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                 };
                 u64 steps = 0;
                 const u64 stepCap = 4 * B + 16;
+                const bool trace = g_parse_trace.load() &&
+                    ((a == g_trace_a.load() && b == g_trace_b.load()) ||
+                     (a == g_trace_b.load() && b == g_trace_a.load()));
                 for (;;) {
+                    if (trace)
+                        std::fprintf(stderr,
+                            "  CMP round=%llu B=%llu a=%u b=%u ia=%u ib=%u pa=%u pb=%u"
+                            " consumed=%" PRIu64 " ida=%x idb=%x\n",
+                            (unsigned long long)g_trace_round.load(),
+                            (unsigned long long)B,
+                            a, b, ia, ib, pa, pb, consumed,
+                            ids[size_t(u64(a)*B+ia)], ids[size_t(u64(b)*B+ib)]);
                     if (++steps > stepCap)
                         die("PARSE_WALK: a stream comparison exceeded " +
                             std::to_string(stepCap) + " steps (rows " +
@@ -1640,7 +1784,12 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                             else { ++ia; ++ib; pa = pb = 0; }
                             continue;
                         }
-                        const u32 pp = per[size_t(ida)];
+                        // per[] covers the PROPER dictionary only: a
+                        // partial id carries 0x80000000 and would index
+                        // far out of bounds (the ASan receipt at 64 KiB
+                        // budget, where partials meet mid-walk constantly).
+                        const u32 pp = (ida & 0x80000000u)
+                            ? 0u : per[size_t(ida)];
                         if (pp && ((pa > pb ? pa - pb : pb - pa) % pp) == 0) {
                             consumed += nn;   // run interior: byte-exact periodic skip
                         } else {
@@ -1693,13 +1842,48 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
             // ---- tie spans: widen or fall to the LCE residual ----
             std::vector<std::pair<u64, u64>> ties;
             {
+                // THE EQUALITY CLOSURE: a tie span must be a connected
+                // component of the pairwise "equal-so-far" relation, not
+                // merely a consecutive run. A row that proves NOTHING
+                // (id0 = TRUNC, prov 0) ties with EVERY row - once such a
+                // row is inside the run, every later row joins the span
+                // (the adversarial receipt: the TRUNC row sat between two
+                // runs whose true order interleaves - {12511,7511,17511}
+                // vs {1253,6253} - and the within-span residual could
+                // not cross them; the brute order interleaves them).
+                auto rowUnknown = [&](u64 slot) -> bool {
+                    return pc.ids[size_t(u64(idx[size_t(slot)] - sp.first)) *
+                                  size_t(B)] == ~0u;
+                };
                 u64 i2 = 0;
                 while (i2 < m) {
                     u64 j = i2 + 1;
+                    bool unknownInside = rowUnknown(i2);
                     while (j < m) {
+                        if (rowUnknown(j)) unknownInside = true;
+                        if (!unknownInside) {
                         u64 lcp = 0;
-                        if (streamCmp(u32(idx[size_t(i2)] - sp.first),
-                                      u32(idx[size_t(j)] - sp.first), lcp) != 0) break;
+                        const int tc = streamCmp(u32(idx[size_t(i2)] - sp.first),
+                                                 u32(idx[size_t(j)] - sp.first), lcp);
+                        if (g_parse_trace.load()) {
+                            const u32 ra = u32(idx[size_t(i2)] - sp.first);
+                            const u32 rb = u32(idx[size_t(j)] - sp.first);
+                            std::fprintf(stderr,
+                                "  TIECHK round=%llu B=%llu sp=[%llu,%llu) i=%llu ra=%u"
+                                " pos=%llu off0=%u id0=%x vs j=%llu rb=%u pos=%llu"
+                                " off0=%u id0=%x c=%d lcp=%llu\n",
+                                (unsigned long long)parseRound, (unsigned long long)B,
+                                (unsigned long long)sp.first, (unsigned long long)sp.second,
+                                (unsigned long long)i2, ra,
+                                (unsigned long long)unpack_pos(P[size_t(idx[size_t(i2)])]),
+                                pc.off0[size_t(ra)], pc.ids[size_t(u64(ra)*B)],
+                                (unsigned long long)j, rb,
+                                (unsigned long long)unpack_pos(P[size_t(idx[size_t(j)])]),
+                                pc.off0[size_t(rb)], pc.ids[size_t(u64(rb)*B)],
+                                tc, (unsigned long long)lcp);
+                        }
+                        if (tc != 0) break;
+                        }
                         ++j;
                     }
                     if (j - i2 > 1) ties.emplace_back(i2, j);
@@ -1817,6 +2001,43 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                     }
                 }
             }
+            if (::getenv("XSA_BIN_DEBUG") && m <= 32) {
+                // CAPTURE-ORDER dump: rows[] is position-ascending and its
+                // .second IS the P-index the keying lives at - reading P
+                // here would see the sort's permutation (the earlier dumps
+                // were misread from permuted P and wasted a hunt).
+                std::fprintf(stderr, "PARSE_KEYING unit=%" PRIu64 " rows=%" PRIu64
+                             " B=%" PRIu64 " spanBytes=%" PRIu64 "\n", unit_id, m, B, spanBytes);
+                for (u64 ri = 0; ri < m; ++ri) {
+                    const u32 row = rows[size_t(ri)].second;
+                    std::fprintf(stderr, "  k=%" PRIu64 " pidx=%u pos=%" PRIu64 " off0=%u"
+                                 " id0=%x id1=%x id2=%x id3=%x prov=%" PRIu64 "\n",
+                                 ri, row, rows[size_t(ri)].first,
+                                 pc.off0[size_t(row)],
+                                 pc.ids[size_t(row) * size_t(B)],
+                                 pc.ids[size_t(row) * size_t(B) + 1],
+                                 pc.ids[size_t(row) * size_t(B) + 2],
+                                 pc.ids[size_t(row) * size_t(B) + 3],
+                                 provOf(row));
+                }
+                for (const auto& t : ties)
+                    std::fprintf(stderr, "  TIE [%llu,%llu) provMin=%llu\n",
+                                 (unsigned long long)t.first, (unsigned long long)t.second,
+                                 (unsigned long long)[&] {
+                                     u64 pm = ~0ull;
+                                     for (u64 i2 = t.first; i2 < t.second; ++i2)
+                                         pm = std::min(pm, provOf(u32(idx[size_t(i2)] - sp.first)));
+                                     return pm;
+                                 }());
+            }
+            if (::getenv("XSA_BIN_DEBUG2")) {
+                for (size_t di2 = 0; di2 < pc.dict.size(); ++di2)
+                    std::fprintf(stderr, "  DICT id=%zu len=%zu\n", di2,
+                                 pc.dict[di2].size());
+                for (size_t di2 = 0; di2 < pc.pdict.size(); ++di2)
+                    std::fprintf(stderr, "  PDICT id=%zu len=%zu\n", di2,
+                                 pc.pdict[di2].size());
+            }
             if (ties.empty()) return true;   // fully ordered in phrase space
             // ---- THE REVERSE SLIDE: a class whose dictionary outgrows its
             // pure byte-expansion cost abandons the parse for this class
@@ -1834,20 +2055,22 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                 return false;
             }
             if (parseRound >= g_parse_rounds) {
-                // the round cap: the byte-exact LCE residual, from the
-                // round's PROVEN depth (carried over)
-                u64 provMin = ~0ull;
-                for (const auto& t : ties)
-                    for (u64 i2 = t.first; i2 < t.second; ++i2)
-                        provMin = std::min(provMin,
-                            provOf(u32(idx[size_t(i2)] - sp.first)));
-                for (const auto& t : ties) {
-                    residual.emplace_back(std::make_pair(sp.first + t.first,
-                                                         sp.first + t.second),
-                                          provMin);
-                    WAVE_KEY.tie_residual_groups.fetch_add(1);
-                    WAVE_KEY.tie_residual_rows.fetch_add(t.second - t.first);
-                }
+                // THE ROUND CAP: the byte-exact LCE residual owns the
+                // WHOLE CLASS from depth 0. Per-span residuals with a
+                // proven-depth floor were wrong in two measured ways:
+                // budget-truncated rows tie at their BUDGET boundary, and
+                // intransitive ties (A~B, B~C, A-C differing) split spans
+                // whose cross order the sort then placed arbitrarily.
+                // Brute-from-0 over the whole class is exact by
+                // construction and costs m log m short walks.
+                residual.emplace_back(std::make_pair(sp.first, sp.second), 0);
+                WAVE_KEY.tie_residual_groups.fetch_add(1);
+                WAVE_KEY.tie_residual_rows.fetch_add(m);
+                std::fprintf(stderr,
+                    "PARSE_RESIDUAL unit=%" PRIu64 " rows=%" PRIu64
+                    " round=%" PRIu64 " reason=round_cap"
+                    " rule=whole_class_brute_from_zero\n",
+                    unit_id, m, parseRound);
                 return true;   // the residual below finishes it
             }
             // WIDEN x 8: more phrases per row AND a longer span - but
@@ -1856,23 +2079,18 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
             // residual from this round's proven depth (the committed
             // mechanism - never a ballooning ids plane).
             const u64 Bnext = std::min<u64>(B * 8, g_parse_phrases * 512);
-            if (m * Bnext * 4 + off0Bytes > g_parse_plane_max) {
-                u64 provMin = ~0ull;
-                for (const auto& t : ties)
-                    for (u64 i2 = t.first; i2 < t.second; ++i2)
-                        provMin = std::min(provMin,
-                            provOf(u32(idx[size_t(i2)] - sp.first)));
-                for (const auto& t : ties) {
-                    residual.emplace_back(std::make_pair(sp.first + t.first,
-                                                         sp.first + t.second),
-                                          provMin);
-                    WAVE_KEY.tie_residual_groups.fetch_add(1);
-                    WAVE_KEY.tie_residual_rows.fetch_add(t.second - t.first);
-                }
+            if (m * Bnext * 4 + off0Bytes > budgetEff) {
+                // THE WIDEN CAP: same as the round cap - the residual owns
+                // the WHOLE CLASS from depth 0 (the 'single' receipt: the
+                // B=3 budget made rows tie AT the budget, the spans split,
+                // and the sort placed equal-so-far rows arbitrarily).
+                residual.emplace_back(std::make_pair(sp.first, sp.second), 0);
+                WAVE_KEY.tie_residual_groups.fetch_add(1);
+                WAVE_KEY.tie_residual_rows.fetch_add(m);
                 std::fprintf(stderr,
                     "PARSE_WIDEN_CAPPED unit=%" PRIu64 " rows=%" PRIu64
                     " budget_next=%" PRIu64 " phrase_budget_next=%" PRIu64
-                    " rule=widening_over_budget_goes_to_the_lce_residual\n",
+                    " rule=whole_class_brute_from_zero\n",
                     unit_id, m, m * Bnext * 4 + off0Bytes, Bnext);
                 return true;   // the residual below finishes it
             }
@@ -1982,6 +2200,20 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                     " got_suffix=%.40s want_suffix=%.40s\n",
                     unit_id, i, a, b, lcp,
                     (const char*)(T + a), (const char*)(T + b));
+                // neighborhood context: the rows around the mismatch in
+                // both orders, plus their LCPs (diagnostics only)
+                if (::getenv("XSA_BIN_DEBUG")) {
+                    std::fprintf(stderr, "VERIFY_CONTEXT rows=%" PRIu64 " at=%" PRIu64 "\n", n, i);
+                    for (u64 q2 = i > 4 ? i - 4 : 0; q2 < n && q2 < i + 5; ++q2) {
+                        u64 rl = 0;
+                        if (q2) suf_cmp_lcp(unpack_pos(ref[size_t(q2 - 1)]),
+                                            unpack_pos(ref[size_t(q2)]), 0, rl);
+                        std::fprintf(stderr,
+                            "  row=%" PRIu64 " got=%" PRIu64 " want=%" PRIu64
+                            " ref_prev_lcp=%" PRIu64 "\n", q2,
+                            unpack_pos(P[size_t(q2)]), unpack_pos(ref[size_t(q2)]), rl);
+                    }
+                }
                 die("WAVEKEY_VERIFY_FAIL: the bin order disagrees with the brute-force suffix order");
             }
         }
