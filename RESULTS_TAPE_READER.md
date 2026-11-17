@@ -44,3 +44,34 @@ product driver currently still invokes the old scatter-sort/concat route;
 container identity must exercise the new reader explicitly, not accidentally
 compare two old-route builds. Docsep's 6 passes versus two maximum sort rounds
 also exposes scheduler batching that the P1 accounting must measure.
+
+## Full fixture gate (green)
+
+Native source `4a72ee1`, 24 threads, 96,000,000,000-byte envelope,
+100,000-row units. All eight named 6 MiB fixtures (including `refuse`) and the
+16 KiB collision fixture completed with `SS_DONE`: **50,348,041 rows,
+1,175 units, zero SA mismatches**. The seven original nonperiodic fixtures
+match their saved brute-force oracle streams byte for byte. `refuse` matches
+the completed brute-force oracle compiled with GNU parallel sorting and
+`OMP_NUM_THREADS=24`; its comparator is unchanged. The collision is directly
+oracle-green at 16,385 rows with **4,112 prefix relations** journaled.
+
+Full commands, row denominators, SA hashes and receipts are committed in
+`gates/tape_reader_evidence/fixtures.json`. Additional period-1/31/257 boundary
+cases are oracle-green (30,017 rows total). `cargo test --release -j 24`:
+106 passed, 0 failed, 1 ignored. Cargo still exercises the existing product
+route; the native gates above exercise the new reader.
+
+The triggerless periodic case now uses a bounded candidate period (at most
+2,048 bytes), certified against every byte during the existing census. The
+sorter orders phase ranks and finite lengths, with exact short-tail handling;
+no deep per-row walk or widening of empty streams is needed. `refuse` uses a
+5-byte period and one extraction pass. The bound now tracks exact live bytes
+by unit and request class, charges follow-up reservations before allocating,
+and refuses a batch that would otherwise wait while retaining its own
+unconsumed groups. New builds observe `stop.requested` from the memory monitor.
+
+P1 is next. Its harness records identical resource flags and the distinct
+native output plumbing explicitly: main uses scatter-sort plus concat; the
+reader emits pieces directly. This is a native-stage comparison, not yet a
+comparison of two integrated `xsa build` routes.
