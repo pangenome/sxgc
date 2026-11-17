@@ -539,10 +539,28 @@ struct FollowUp {
     u64 phraseBudget = 0;     // round r's phrase count
     u64 round = 0;            // 1-based widening round
     std::vector<u64> positions;   // the group's exact rows (positional serving)
+    u64 metaBytes = 0;   // the declared metadata charged to the live ledger
     Chunk* chunk = nullptr;
     void* rq = nullptr;       // the TapeRequest the sorter issued (owned per unit)
     bool served = false;
 };
+
+// THE DECLARATION METADATA, exact: the FollowUp + the TapeRequest + the
+// Chunk objects, BOTH positions copies (the follow-up's and the request's),
+// the prefix bytes, and allocator slack. The object sizes are measured by
+// gates/tape_reader_metadata_sizes.cpp and PINNED by the static_assert at
+// the TapeRequest definition - the charge cannot drift from the truth.
+static constexpr u64 kFollowMetaOverhead =
+    160 + 392 + 224 + 64;   // MEASURED FollowUp=160 TapeRequest=392 Chunk=224
+// provenance: gates/tape_reader_metadata_sizes.cpp, run after the metaBytes
+// field landed in FollowUp (the +8 vs the earlier 152). Re-measure on any
+// object-layout change; the static_assert at the TapeRequest definition
+// refuses a drifted constant.
+static u64 follow_meta_bytes(u64 rows, u64 prefixLen) {
+    return kFollowMetaOverhead
+         + rows * 16        // the two positions copies
+         + prefixLen + 16;  // the prefix
+}
 
 // ===========================================================================
 // THE LEAF SORT (carried over from the wavekey lane). Round 0 - the captured
@@ -560,6 +578,10 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
                               const std::function<void(FollowUp&)>& enqueue_followup,
                               const std::function<void(FollowUp&)>& wait_followup,
                               const std::function<void(FollowUp&)>& free_followup,
+                              // THE DECLARATION CREDIT: charge/park follow-up
+                              // metadata in the live ledger (exact sizes)
+                              const std::function<bool(u64, u64)>& meta_try,
+                              const std::function<void(u64, u64)>& meta_park,
                               std::vector<u64>& lcpv, WaveKeyStats& st) {
     const u64 n = P.size();
     const u64 K = g_wave_key_bytes;
@@ -880,48 +902,15 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
     st.tie_groups = spans.size();
     st.tie_window_bytes = rows_tied * kk;
     st.rounds = spans.empty() ? 1 : 2;
-    std::vector<FollowUp> fus;
-    if (!spans.empty()) {
-        if (rows_tied * kk > (1ull << 40))
-            die("TAPE_TIE_WINDOW_TOO_BIG: unit " + std::to_string(unit_id) + " tie rows " +
-                std::to_string(rows_tied) + " x window " + std::to_string(kk) +
-                " B exceeds 1 TiB of chunk plane - this is the nested-repeat shape the "
-                "level-3 parse exists for; see TIE_GROUPS and raise XSA_TIE_WINDOW_BYTES "
-                "only with the operator's decision");
-        // enqueue every group's request FIRST: one pass serves them all.
-        // THE GROUP IS POSITIONAL: its rows are the tied positions in this
-        // unit's chunk (in memory). The tape serves them by direct position
-        // lookup during its sweep - no prefix is matched against the corpus
-        // for a follow-up (prefix matching is only for the initial radix
-        // partition), so no matcher memory grows with repeat depth.
-        for (const auto& sp : spans) {
-            FollowUp fu;
-            fu.prefix.assign(pre, pre + size_t(preLen));
-            fu.prefix.insert(fu.prefix.end(),
-                             Kb.begin() + ptrdiff_t(sp.first) * ptrdiff_t(K),
-                             Kb.begin() + ptrdiff_t(sp.first + 1) * ptrdiff_t(K));
-            fu.posLo = posLo; fu.posHi = posHi;
-            fu.key_len = kk;
-            fu.rowsExpected = sp.second - sp.first;
-            fu.positions.reserve(size_t(sp.second - sp.first));
-            for (u64 i = sp.first; i < sp.second; ++i)
-                fu.positions.push_back(unpack_pos(P[size_t(i)]));
-            (void)kbase;   // the window offset is fu.prefix.size() (pre + key)
-            // THE DEEP-REPEAT ANNOUNCEMENT: a group whose big-window plane
-            // (rows x tie window) exceeds the knob is a kilobytes-plus mutual
-            // match class - the parse's trigger population. Everything else
-            // takes the ordinary big window (level 2).
-            if (fu.rowsExpected * (kk + 8) > g_parse_plane_max) {
-                fu.parse = true;
-                fu.phraseBudget = g_parse_phrases;
-                fu.round = 1;
-                fu.key_len = g_parse_phrases * 4 + 2048;   // the plane's per-row price
-            }
-            fus.push_back(std::move(fu));
-        }
-        for (auto& fu : fus) enqueue_followup(fu);
-        st.extra_passes = 1;
-    }
+    // THE COHORT DRIVER is below (with the group loop): declaration - the
+    // follow-up objects and their positions copies - is CHARGED to the live
+    // ledger at exact measured sizes BEFORE the objects exist, and a cohort
+    // is fully declared, consumed and released before the next one declares.
+    // The old shape constructed every group's metadata up front: on the 3 GB
+    // corpus that was unbounded metadata before a single byte of ledger
+    // admission, and waiting inside that construction would deadlock because
+    // consumers cannot release what has not been declared.
+    st.extra_passes = spans.empty() ? 0 : 1;
     // the group-size distribution, journaled per unit (the level-3 gate)
     if (!spans.empty()) {
         std::vector<u64> sizes;
@@ -1349,6 +1338,14 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
                 }
                 // WIDEN x 8, DEFERRED: enqueue now, wait in the next round's
                 // pass (all of the round's widenings share it)
+                // THE WIDENING RIDES THE SAME CREDIT: the widened request
+                // is declared (metadata charged) now, served in the NEXT
+                // round's pass, and released with its round - never a
+                // cross-cohort dependency (this round does not wait on it).
+                const u64 metaW = follow_meta_bytes(job.fu.rowsExpected,
+                                                    job.fu.prefix.size());
+                if (!meta_try(metaW, job.fu.rowsExpected))
+                    meta_park(metaW, job.fu.rowsExpected);
                 FollowUp fu2;
                 fu2.prefix = job.fu.prefix;      // only its size is used (kbase)
                 fu2.posLo = posLo; fu2.posHi = posHi;
@@ -1358,6 +1355,7 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
                 fu2.parse = true;
                 fu2.phraseBudget = widen;
                 fu2.round = rounds + 1;
+                fu2.metaBytes = metaW;
                 enqueue_followup(fu2);
                 next.emplace_back(job.span, std::move(fu2));
                 free_followup(job.fu);
@@ -1368,13 +1366,71 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
     std::vector<std::pair<u64, u64>> deep;   // radix spans that tied over the window
     // whole-window survivors of a group's radix: the parse's population
     std::vector<ParseJob> parseJobs;   // the parse wave (enqueued, un-waited)
-    for (size_t gi = 0; gi < spans.size(); ++gi) {
-        const auto sp = spans[gi];
-        FollowUp& fu = fus[gi];
+    u64 cohortsDeclared = 0, cohortsConsumed = 0;
+    for (u64 cohortLo = 0; cohortLo < spans.size(); ) {
+        // ---- DECLARE the cohort, up to the credit ----
+        // THE GROUP IS POSITIONAL: its rows are the tied positions in this
+        // unit's chunk (in memory). The tape serves them by direct position
+        // lookup during its sweep - no prefix is matched against the corpus
+        // for a follow-up (prefix matching is only for the initial radix
+        // partition), so no matcher memory grows with repeat depth.
+        ++cohortsDeclared;
+        std::vector<FollowUp> fus;
+        u64 e2 = cohortLo;
+        while (e2 < spans.size()) {
+            const auto& sp2 = spans[size_t(e2)];
+            const u64 rowsG = sp2.second - sp2.first;
+            // THE DEEP-REPEAT ANNOUNCEMENT: a group whose big-window plane
+            // (rows x tie window) exceeds the knob is a kilobytes-plus
+            // mutual match class - the parse's trigger population (the
+            // parse is THE SLICE for surviving classes).
+            const bool deepCls = rowsG * (kk + 8) > g_parse_plane_max;
+            const u64 meta = follow_meta_bytes(rowsG, u64(preLen) + K);
+            if (!meta_try(meta, rowsG)) {
+                if (!fus.empty()) break;   // credit spent: close the cohort
+                // The cohort's FIRST declaration must fit. Park: poll the
+                // ledger and the stop file (no blocking sleeps, no
+                // signals) until consumers release enough credit. This
+                // cannot deadlock: earlier cohorts of this unit are fully
+                // released, so the credit is spent only by OTHER units'
+                // live planes, whose consumers are served in the meantime.
+                meta_park(meta, rowsG);
+            }
+            FollowUp fu;
+            fu.prefix.assign(pre, pre + size_t(preLen));
+            fu.prefix.insert(fu.prefix.end(),
+                             Kb.begin() + ptrdiff_t(sp2.first) * ptrdiff_t(K),
+                             Kb.begin() + ptrdiff_t(sp2.first + 1) * ptrdiff_t(K));
+            fu.posLo = posLo; fu.posHi = posHi;
+            fu.key_len = deepCls ? u64(g_parse_phrases) * 4 + 2048 : kk;
+            fu.rowsExpected = rowsG;
+            fu.positions.reserve(size_t(rowsG));
+            for (u64 i = sp2.first; i < sp2.second; ++i)
+                fu.positions.push_back(unpack_pos(P[size_t(i)]));
+            if (deepCls) {
+                fu.parse = true;
+                fu.phraseBudget = g_parse_phrases;
+                fu.round = 1;
+            }
+            fu.metaBytes = meta;   // released at free_followup
+            enqueue_followup(fu);
+            fus.push_back(std::move(fu));
+            ++e2;
+        }
+        std::fprintf(stderr,
+            "COHORT unit=%" PRIu64 " n=%" PRIu64 " declared=%zu spans=[%" PRIu64
+            ",%" PRIu64 ") meta_cohort_rule=declare_to_credit_consume_release\n",
+            unit_id, cohortsDeclared, fus.size(), cohortLo, e2);
+        // ---- CONSUME the cohort, in span order; every request released
+        // before the next cohort declares ----
+        ++cohortsConsumed;
+        for (size_t c2 = 0; c2 < fus.size(); ++c2) {
+        const auto sp = spans[size_t(cohortLo + c2)];
+        FollowUp& fu = fus[c2];
         if (fu.parse) {
-            // collect: the ladder already ENQUEUED every parse group, and
+            // collect: the cohort already ENQUEUED every parse group, and
             // the radix's reroutes join them below - one pass serves all
-            parseJobs.emplace_back(sp, std::move(fus[gi]));
+            parseJobs.emplace_back(sp, std::move(fus[c2]));
             continue;
         }
         serveGroup(fu, sp);
@@ -1481,6 +1537,14 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
         // request is POSITIONAL (the group's rows are known here); no
         // prefix is matched against the corpus.
         if (!deep.empty()) {
+            // THE REROUTE DECLARES ITS METADATA through the same credit:
+            // try, else park (poll the ledger + the stop file). This cannot
+            // deadlock: the request is not required by any earlier cohort,
+            // and the current cohort's remaining groups are already served.
+            const u64 metaR = follow_meta_bytes(fu.rowsExpected,
+                                                fu.prefix.size());
+            if (!meta_try(metaR, fu.rowsExpected))
+                meta_park(metaR, fu.rowsExpected);
             FollowUp fu2;
             fu2.prefix = fu.prefix;          // only its size is used (kbase)
             fu2.posLo = posLo; fu2.posHi = posHi;
@@ -1490,15 +1554,26 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
             fu2.phraseBudget = g_parse_phrases;
             fu2.round = 1;
             fu2.key_len = g_parse_phrases * 4 + 2048;
+            fu2.metaBytes = metaR;
             enqueue_followup(fu2);
             parseJobs.emplace_back(sp, std::move(fu2));
         }
         deep.clear();
         }
         free_followup(fu);          // the window's plane is done: return it now
+        }
+        cohortLo = e2;   // the cohort is fully consumed and released
     }
-    // THE PARSE WAVE: sort every parse job (the ladder's groups + the radix's
-    // reroutes), widening round by round - one tape pass per round.
+    std::fprintf(stderr,
+        "COHORTS unit=%" PRIu64 " declared=%" PRIu64 " consumed=%" PRIu64
+        " rule=no_cohort_waits_on_a_later_cohort\n",
+        unit_id, cohortsDeclared, cohortsConsumed);
+    // THE PARSE WAVE: sort every parse job (the cohorts' groups + the
+    // radix's reroutes), widening round by round - one tape pass per round.
+    // Each round's requests are declared (metadata charged) at enqueue and
+    // released at free_followup: the widening rides the same credit
+    // discipline as declaration, and a widened request never waits on a
+    // later one.
     if (!parseJobs.empty()) runParseWave(parseJobs);
     // (the unit's slot plane lives until the leaf returns; it is stack-scoped)
 
@@ -1741,6 +1816,12 @@ struct TapeRequest {
     u64 dictBilled = 0;   // dictionary bytes billed to the bound (freed at follow-up end)
     u64 curEnt = 0;                        // the request's frontier cursor (live ents)
 };
+// the declaration-metadata charge stays exact if the object sizes do
+static_assert(sizeof(FollowUp) + sizeof(TapeRequest) + sizeof(Chunk) + 64 ==
+              kFollowMetaOverhead,
+              "kFollowMetaOverhead drifted from the measured object sizes;"
+              " re-run gates/tape_reader_metadata_sizes.cpp and update the"
+              " constant to the fresh measurement - never silence this assert");
 
 struct Bound;
 struct Tape {
@@ -3531,16 +3612,26 @@ int main(int argc, char** argv) {
                 delete rq->chunk;
                 bound.sub(rq->billedBytes, u, rq->what);
                 bound.sub(rq->dictBilled, u, "parse-dict");
+                if (fu.metaBytes) bound.sub(fu.metaBytes, u, "follow-meta");
                 delete rq;
                 rq = nullptr;
             };
             {
                 const u8* pre = U.preLen ? UP.preArena.data() + U.preOff : nullptr;
                 const double ts0 = now_sec();
+                // THE DECLARATION CREDIT: the ledger charges exact
+                // follow-up metadata (try) and parks (poll, stop-aware)
+                // when the first declaration of a cohort cannot fit.
+                auto meta_try = [&](u64 meta, u64 rows) {
+                    return bound.add(meta, u, "follow-meta", rows, true);
+                };
+                auto meta_park = [&](u64 meta, u64 rows) {
+                    bound.wait_for(meta, u, "follow-meta", rows);
+                };
                 wavekey_sort_unit(U.chunk->P, U.chunk->Kb, U.chunk->Lp, U.chunk->Tp,
                                   U.preLen, u, pre, U.preLen, U.posLo, U.posHi,
                                   enqueue_followup, wait_followup, free_followup,
-                                  lcpv, st);
+                                  meta_try, meta_park, lcpv, st);
                 // ---- THE TAILS (positions [KEY_N, N)): sorted directly and
                 // merged into the ordered rows (carried over).
                 if (KEY_N < N) {
