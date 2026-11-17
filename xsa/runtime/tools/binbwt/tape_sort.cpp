@@ -59,6 +59,8 @@
 #include <sstream>
 #include <chrono>
 #include <filesystem>
+#include <unordered_map>
+#include <malloc.h>
 
 using u8 = uint8_t;
 using u16 = uint16_t;
@@ -344,6 +346,25 @@ static void read_proc_io(u64& rchar, u64& rb, u64& syscr) {
 static u64 g_wave_key_bytes = 8;        // K
 static u64 g_wave_run_cap = 65536;      // L's cap
 static u64 g_tie_window_bytes = 4096;   // the ONE big follow-up window (level 2)
+// ---- LEVEL 3: the parse (the named fallback). A tie class whose big-window
+// plane (rows x tie window) exceeds g_parse_plane_max is a DEEP REPEAT class
+// (kilobytes+ of mutual match, announced by its own size): instead of paying
+// the window plane, the tape extracts its continuations CUT AT MINIMIZER
+// TRIGGERS (the PFP discipline, as carried in bit6/pfp_ds_vendor: a k-mer is a
+// trigger iff it is strictly smaller than the w k-mers preceding it; phrases
+// end with their trigger). Identical chunks hash to one dictionary entry, so
+// the shared bytes are touched once and never re-read; a row's key is its
+// PHRASE-ID SEQUENCE (integers), with the mid-phrase tail as bytes (the
+// PFP-BWT mid-phrase rule). Phrase-level ties widen the budget (rounds,
+// journaled); what survives the round cap goes to the LCE residual.
+static u64 g_parse_plane_max = 256ull << 20;   // XSA_PARSE_PLANE_MAX
+static u64 g_parse_dict_allowance = 64ull << 20;  // XSA_PARSE_DICT_BYTES (per request)
+static u64 g_parse_phrases = 64;               // XSA_PARSE_PHRASES (round 1 budget)
+static u64 g_parse_rounds = 4;                 // XSA_PARSE_ROUNDS (widening rounds)
+static u64 g_pfp_k = 8;                        // XSA_PFP_K (trigger k-mer)
+static u64 g_pfp_w = 8;                        // XSA_PFP_W (trigger window)
+static std::atomic<u64> PARSE_CLASSES{0}, PARSE_ROWS{0}, PARSE_PHRASES{0},
+    PARSE_DICT_BYTES{0}, PARSE_ROUNDS_TOTAL{0};
 static std::atomic<u64> RUNKEY_CAPPED{0}, RUNKEY_ROWS{0};
 static std::atomic<u64> RUNKEY_FAM[3] = {{0}, {0}, {0}};
 static constexpr u64 SS_WAVE_RUN_BYTES = 4 + 2;
@@ -428,6 +449,22 @@ struct Chunk {
     std::vector<u8>  Kb;   // key_len bytes per row (padded past the text)
     std::vector<u32> Lp;   // run digit L   (initial requests only)
     std::vector<u16> Tp;   // run digit t   (initial requests only)
+    // ---- parse requests (level 3): phrase-id streams + the class dictionary.
+    // THE KEY IS (phrase id, intra-phrase offset) - NO per-row bytes: each
+    // distinct phrase is held ONCE in the dictionary and every row references
+    // it. ids: row-major [rows x phraseBudget]; ids[r*B+0] = the phrase
+    // CONTAINING the row (a proper dict id, or PARTIAL_FLAG|pdict index for
+    // the edge phrases); ids[r*B+i>0] = the following full phrases.
+    // MARKERS: ~0u = TRUNCATED (the window or the budget ran out - unknown
+    // beyond, compares equal-so-far so the tie machinery widens or defers to
+    // the residual); 0xFFFFFFFEu = the TRUE text end (shorter-first, the
+    // dollar rule). off0[r] = the row's offset within its containing phrase.
+    bool parse = false;
+    u64 phraseBudget = 0;
+    std::vector<u32> ids;
+    std::vector<u32> off0;
+    std::vector<std::vector<u8>> dict;   // proper id -> bytes (ends with its trigger k-mer)
+    std::vector<std::vector<u8>> pdict;  // partial id -> bytes (the text edges)
     u64 key_len = 0;
     u64 reserved_rows = 0;
     void reserve_rows(u64 rows, u64 klen) {
@@ -450,10 +487,18 @@ struct Chunk {
 // A follow-up request handle: enqueued first (all spans of a unit enqueue
 // before any waits, so ONE tape pass serves them all), then waited.
 struct FollowUp {
-    std::vector<u8> prefix;   // the group's proven common prefix (symbol space)
+    std::vector<u8> prefix;   // the group's common prefix: pre + the key window
     u64 posLo = 0, posHi = ~0ull;   // point-mass slices only
     u64 key_len = 0;          // the big window's width
-    u64 rowsExpected = 0;     // the group's row count (for the bound's pricing)
+    u64 rowsExpected = 0;     // the group's row count (the chunk is exactly this)
+    bool runFilter = false;   // (sigma, L, t) at filterBase: the group among the class
+    u64 filterBase = 0;
+    u8 runSigma = 0;
+    u32 runL = 0;
+    u16 runT = 0;
+    bool parse = false;       // level 3: extract trigger-cut phrases, not a window
+    u64 phraseBudget = 0;     // round r's phrase count
+    u64 round = 0;            // 1-based widening round
     Chunk* chunk = nullptr;
     void* rq = nullptr;       // the TapeRequest the sorter issued (owned per unit)
     bool served = false;
@@ -474,6 +519,7 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
                               u64 posLo, u64 posHi,
                               const std::function<void(FollowUp&)>& enqueue_followup,
                               const std::function<void(FollowUp&)>& wait_followup,
+                              const std::function<void(FollowUp&)>& free_followup,
                               std::vector<u64>& lcpv, WaveKeyStats& st) {
     const u64 n = P.size();
     const u64 K = g_wave_key_bytes;
@@ -767,33 +813,37 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
                 "level-3 parse exists for; see TIE_GROUPS and raise XSA_TIE_WINDOW_BYTES "
                 "only with the operator's decision");
         // enqueue every group's request FIRST: one pass serves them all.
-        // THE PREFIX ENCODES THE RUN DIGIT: a group's rows share (sigma, family,
-        // L, t, key), and the byte prefix that isolates them in the corpus is
-        //   L <  K : pre + the whole captured key window (the key DETERMINES
-        //            (L,t) when the run ends inside it), or
-        //   L >= K : pre + sigma^L + the terminator byte (t known), or
-        //   capped : pre + sigma^cap (the unknown-family set; every position
-        //            whose run outlives the cap is a member).
-        // Anything shorter would over-fetch sibling groups; anything longer is
-        // unnecessary. t == 0 (the text ends inside the run) cannot occur in a
-        // tie group: two such rows would be the same position.
+        // THE GROUP IS (prefix + the (sigma, L, t) RUN FILTER): a group's rows
+        // share the whole captured key window, so the byte prefix
+        //   pre + key[0..K)
+        // isolates exactly the positions whose run digit can matter, and the
+        // filter (measured at kbase) rejects the positions of sibling groups
+        // whose run digit differs. Run-extended prefixes were a wall at 256
+        // KiB; key-tie CLASS chunks (a superset) blew the envelope on docsep.
         for (const auto& sp : spans) {
             FollowUp fu;
-            const u64 Lg = Lp[size_t(sp.first)];
-            const u16 tg = Tp[size_t(sp.first)];
             fu.prefix.assign(pre, pre + size_t(preLen));
-            if (Lg >= K) {
-                const u64 run = std::min<u64>(Lg, g_wave_run_cap);
-                fu.prefix.insert(fu.prefix.end(), size_t(run), u8(Kb[size_t(sp.first) * size_t(K)]));
-                if (tg != 257) fu.prefix.push_back(u8(tg - 1));
-            } else {
-                fu.prefix.insert(fu.prefix.end(),
-                                 Kb.begin() + ptrdiff_t(sp.first) * ptrdiff_t(K),
-                                 Kb.begin() + ptrdiff_t(sp.first + 1) * ptrdiff_t(K));
-            }
+            fu.prefix.insert(fu.prefix.end(),
+                             Kb.begin() + ptrdiff_t(sp.first) * ptrdiff_t(K),
+                             Kb.begin() + ptrdiff_t(sp.first + 1) * ptrdiff_t(K));
             fu.posLo = posLo; fu.posHi = posHi;
             fu.key_len = kk;
             fu.rowsExpected = sp.second - sp.first;
+            fu.runFilter = true;
+            fu.filterBase = kbase;          // the digit was measured at kbase
+            fu.runSigma = Kb[size_t(sp.first) * size_t(K)];
+            fu.runL = Lp[size_t(sp.first)];
+            fu.runT = Tp[size_t(sp.first)];
+            // THE DEEP-REPEAT ANNOUNCEMENT: a group whose big-window plane
+            // (rows x tie window) exceeds the knob is a kilobytes-plus mutual
+            // match class - the parse's trigger population. Everything else
+            // takes the ordinary big window (level 2).
+            if (fu.rowsExpected * (kk + 8) > g_parse_plane_max) {
+                fu.parse = true;
+                fu.phraseBudget = g_parse_phrases;
+                fu.round = 1;
+                fu.key_len = g_parse_phrases * 4 + 2048;   // the plane's per-row price
+            }
             fus.push_back(std::move(fu));
         }
         for (auto& fu : fus) enqueue_followup(fu);
@@ -818,16 +868,23 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
             pick(0.5), pick(0.99), ss.empty() ? 0 : ss.back());
         for (u64 s : sizes) st.tie_group_sizes.push_back(s);
     }
-    for (size_t gi = 0; gi < spans.size(); ++gi) {
-        const auto sp = spans[gi];
-        FollowUp& fu = fus[gi];
+
+    // THE SLOT PLANE (hoisted once per unit): chunk-row indices. The radix
+    // and the parse share it; 0xffffffff = no chunk row yet.
+    std::vector<u32> slot(size_t(n), 0xffffffffu);
+    // THE SCATTER SCRATCH (hoisted once per unit: churn of chunk-sized
+    // vectors was the RSS leak the mallopt fix and this hoist removed)
+    std::vector<unsigned> sDig;
+    std::vector<u64> sCur, sP;
+    std::vector<u32> sS;
+    std::vector<u8> sSrc, sK2;
+    // serve one group's follow-up: wait, verify the chunk is EXACTLY the
+    // group (prefix + run filter are its definition), set the slot plane
+    auto serveGroup = [&](FollowUp& fu, const std::pair<u64, u64>& sp) {
         wait_followup(fu);
         Chunk* ck = fu.chunk;
         if (!ck) die("TAPE_FOLLOWUP_FAIL: no chunk for the tie window of unit " +
                      std::to_string(unit_id));
-        // rows: the chunk is EXACTLY the group (prefix routing is exact: the
-        // group's common prefix is [0, kbase+K) and every position that shares
-        // it is a member). Match by ascending position.
         std::vector<std::pair<u64, u64>> items;
         items.reserve(size_t(sp.second - sp.first));
         for (u64 i = sp.first; i < sp.second; ++i)
@@ -853,8 +910,6 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
                 std::to_string(items.size()) + " rows was served " +
                 std::to_string(ck->rows()) + " - prefix routing is not exact");
         }
-        const u64 woffG = fu.prefix.size();   // the window starts past the known prefix
-        std::vector<u32> slot(n, 0xffffffffu);
         for (size_t t = 0; t < items.size(); ++t) {
             if (unpack_pos(ck->P[t]) != items[t].first)
                 die("TAPE_FOLLOWUP_ROW: unit " + std::to_string(unit_id) + " expected pos " +
@@ -862,71 +917,445 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
                     std::to_string(unpack_pos(ck->P[t])));
             slot[size_t(items[t].second)] = u32(t);
         }
-        std::vector<u32> slot2(n, 0xffffffffu);
+    };
+    // the parse branch: sort one parse-served group over its phrase-id
+    // streams (the mid-phrase rule); widen ties; unresolved -> the residual
+    auto parseBranch = [&](FollowUp& fu, const std::pair<u64, u64>& sp) {
+        Chunk* ck = fu.chunk;
+        if (fu.parse) {
+            if (ck->off0.size() != ck->rows() ||
+                ck->ids.size() != ck->rows() * fu.phraseBudget)
+                die("PARSE_SHAPE: unit " + std::to_string(unit_id) + " rows=" +
+                    std::to_string(ck->rows()) + " off0=" +
+                    std::to_string(ck->off0.size()) + " ids=" +
+                    std::to_string(ck->ids.size()) + " budget=" +
+                    std::to_string(fu.phraseBudget));
+            // ================= LEVEL 3: THE PARSE =================
+            // The deep-repeat class arrived keyed (phrase id, intra-phrase
+            // offset): no per-row bytes - each distinct phrase is held once
+            // in the class dictionary, identical chunks hashed to one entry.
+            const u64 sp0 = sp.first, sp1 = sp.second;
+            u64 rounds = 0;
+            for (;;) {
+                ++rounds;
+                Chunk* pc = fu.chunk;
+                const u64 B = pc->phraseBudget;
+                // ---- the dictionary's exact periods (the run interiors) ----
+                // A phrase with exact period per compares equal-from any two
+                // offsets congruent modulo per: run interiors - the level-3
+                // population - then cost O(1) per comparison, not O(phrase).
+                const u64 D = pc->dict.size();
+                std::vector<u32> per(size_t(D), 0);
+                for (u64 i = 0; i < D; ++i) {
+                    const auto& ph = pc->dict[size_t(i)];
+                    const u32 nn = u32(ph.size());
+                    // failure function (O(len)): smallest exact period
+                    std::vector<u32> pi(size_t(nn), 0);
+                    for (u32 q2 = 1; q2 < nn; ++q2) {
+                        u32 k2 = pi[q2 - 1];
+                        while (k2 && ph[size_t(q2)] != ph[size_t(k2)]) k2 = pi[k2 - 1];
+                        if (ph[size_t(q2)] == ph[size_t(k2)]) ++k2;
+                        pi[size_t(q2)] = k2;
+                    }
+                    const u32 cand = nn ? nn - pi[size_t(nn - 1)] : 0;
+                    if (cand && cand <= nn / 2) per[size_t(i)] = cand;
+                }
+                // ---- THE PREFIX-FREE GATE (asserted, not assumed): every
+                // dictionary phrase ends with its trigger k-mer, and that
+                // k-mer occurs at no other position in any dictionary
+                // phrase. The trigger discipline is what makes phrase order
+                // equal byte order; the comparator below ALSO byte-verifies
+                // every resolving step (belt and braces), but a violation
+                // means the trigger discipline is broken and DIES here.
+                {
+                    std::map<std::pair<u64, u64>, u64> nonEnd, endCnt;
+                    auto khash2 = [&](const u8* q) {
+                        u64 h1 = 1469598103934665603ull, h2 = 1469598103934665603ull;
+                        for (u64 i = 0; i < g_pfp_k; ++i) {
+                            h1 = (h1 ^ q[i]) * 1099511628211ull;
+                            h2 = (h2 + q[i] * (i + 1)) * 1099511628211ull;
+                        }
+                        return std::make_pair(h1, h2);
+                    };
+                    for (const auto& ph : pc->dict) {
+                        if (ph.size() < g_pfp_k)
+                            die("PARSE_GATE: a dictionary phrase shorter than the trigger k-mer");
+                        for (size_t i = 0; i + g_pfp_k <= ph.size(); ++i) {
+                            const auto h = khash2(ph.data() + i);
+                            if (i + g_pfp_k == ph.size()) ++endCnt[h];
+                            else ++nonEnd[h];
+                        }
+                    }
+                    for (const auto& ph : pc->dict) {
+                        const auto h = khash2(ph.data() + ph.size() - g_pfp_k);
+                        if (nonEnd.count(h) && nonEnd.at(h) > 0)
+                            die("PARSE_GATE_FAIL: a trigger k-mer occurs inside another "
+                                "dictionary phrase - phrase order would NOT equal byte "
+                                "order. The container would be corrupt; refusing");
+                    }
+                }
+                // ---- the stream comparator (the mid-phrase rule) ----
+                // Walks both rows' byte streams through the dictionary: bytes
+                // of the current phrase from the intra-phrase offset, then
+                // the following phrases. TRUNCATED (either side) = unknown
+                // beyond: EQUAL-SO-FAR (0) - never a fabricated order; the
+                // tie machinery widens or defers to the byte-exact residual.
+                // The TRUE end is the dollar rule (shorter first). The exact
+                // periods make run interiors O(1) per step.
+                const std::vector<u32>& ids = pc->ids;
+                const std::vector<u32>& off0 = pc->off0;
+                // returns -1/0/+1 and sets lcp (bytes matched) on resolution
+                auto streamCmp = [&](u32 a, u32 b, u64& lcp) -> int {
+                    u32 ia = 0, ib = 0;            // phrase indices
+                    u32 pa = off0[size_t(a)], pb = off0[size_t(b)];
+                    u64 consumed = 0;
+                    auto phraseOf = [&](u32 id) -> const std::vector<u8>& {
+                        return (id & 0x80000000u)
+                                   ? pc->pdict[size_t(id & 0x7fffffffu)]
+                                   : pc->dict[size_t(id)];
+                    };
+                    for (;;) {
+                        const u32 ida = ids[size_t(u64(a) * B + ia)];
+                        const u32 idb = ids[size_t(u64(b) * B + ib)];
+                        if (ida == ~0u || idb == ~0u) { lcp = consumed; return 0; }
+                        if (ida == 0xFFFFFFFEu && idb == 0xFFFFFFFEu) {
+                            lcp = consumed; return 0;
+                        }
+                        if (ida == 0xFFFFFFFEu) { lcp = consumed; return -1; }
+                        if (idb == 0xFFFFFFFEu) { lcp = consumed; return 1; }
+                        const auto& da = phraseOf(ida);
+                        const auto& db = phraseOf(idb);
+                        const u32 la = u32(da.size()) - pa;
+                        const u32 lb = u32(db.size()) - pb;
+                        const u32 nn = std::min(la, lb);
+                        if (ida == idb) {
+                            if (pa == pb) {
+                                // identical remainder: skip the whole phrase
+                                consumed += la;
+                                if (la < lb) { ++ia; pa = 0; pb += nn; }
+                                else if (lb < la) { ++ib; pb = 0; pa += nn; }
+                                else { ++ia; ++ib; pa = pb = 0; }
+                                continue;
+                            }
+                            const u32 pp = per[size_t(ida)];
+                            if (pp && ((pa > pb ? pa - pb : pb - pa) % pp) == 0) {
+                                // run interior: congruent suffixes of a
+                                // periodic phrase - equal for nn bytes
+                                consumed += nn;
+                            } else {
+                                const u8* xa = da.data() + pa;
+                                const u8* xb2 = db.data() + pb;
+                                for (u32 d = 0; d < nn; ++d)
+                                    if (xa[d] != xb2[d]) {
+                                        lcp = consumed + d;
+                                        return xa[d] < xb2[d] ? -1 : 1;
+                                    }
+                                consumed += nn;
+                            }
+                        } else {
+                            const u8* xa = da.data() + pa;
+                            const u8* xb2 = db.data() + pb;
+                            for (u32 d = 0; d < nn; ++d)
+                                if (xa[d] != xb2[d]) {
+                                    lcp = consumed + d;
+                                    return xa[d] < xb2[d] ? -1 : 1;
+                                }
+                            consumed += nn;
+                        }
+                        if (la < lb) { ++ia; pa = 0; pb += nn; }
+                        else if (lb < la) { ++ib; pb = 0; pa += nn; }
+                        else { ++ia; ++ib; pa = pb = 0; }
+                    }
+                };
+                // ---- sort the span over the streams ----
+                {
+                    std::vector<u64> idx(size_t(sp1 - sp0));
+                    for (u64 i = 0; i < sp1 - sp0; ++i) idx[size_t(i)] = sp0 + i;
+                    std::sort(idx.begin(), idx.end(), [&](u64 x, u64 y) {
+                        u64 lcp = 0;
+                        if (slot[size_t(x)] == 0xffffffffu || slot[size_t(y)] == 0xffffffffu)
+                            die("PARSE_SLOT: unit " + std::to_string(unit_id) +
+                                " row " + std::to_string(x) + "/" + std::to_string(y) +
+                                " has no chunk row");
+                        return streamCmp(slot[size_t(x)], slot[size_t(y)], lcp) < 0;
+                    });
+                    std::vector<u64> sortedP(size_t(sp1 - sp0));
+                    std::vector<u32> sortedSlot(size_t(sp1 - sp0));
+                    for (u64 i = 0; i < sp1 - sp0; ++i) {
+                        sortedP[size_t(i)] = P[size_t(idx[size_t(i)])];
+                        sortedSlot[size_t(i)] = slot[size_t(idx[size_t(i)])];
+                    }
+                    for (u64 i = 0; i < sp1 - sp0; ++i) {
+                        P[size_t(sp0 + i)] = sortedP[size_t(i)];
+                        slot[size_t(sp0 + i)] = sortedSlot[size_t(i)];
+                    }
+                    check_perm("parse-sort", rounds, 1);
+                    // adjacent LCPs (the column falls out of the sort)
+                    for (u64 i = 1; i < sp1 - sp0; ++i) {
+                        u64 lcp = 0;
+                        const int c = streamCmp(sortedSlot[size_t(i - 1)],
+                                                 sortedSlot[size_t(i)], lcp);
+                        if (c != 0) lcpv[size_t(sp0 + i)] = lcp;
+                        else lcpv[size_t(sp0 + i)] = lcp;   // the tie boundary's proven depth
+                    }
+                    if (sp0 > 0) {
+                        // the span's first row vs its round-0 predecessor
+                        const u64 v = lcp_pair(sp0 - 1, sp0);
+                        if (v != ~0ull) lcpv[size_t(sp0)] = v;
+                    }
+                }
+                // ---- tie spans: widen (rounds) or fall to the LCE residual ----
+                std::vector<std::pair<u64, u64>> ties;
+                {
+                    u64 i = sp0;
+                    while (i < sp1) {
+                        u64 j = i + 1;
+                        while (j < sp1) {
+                            u64 lcp = 0;
+                            const int c = streamCmp(slot[size_t(i)], slot[size_t(j)], lcp);
+                            if (c != 0) break;
+                            ++j;
+                        }
+                        if (j - i > 1) ties.emplace_back(i, j);
+                        i = j;
+                    }
+                }
+                // the proven depth of a truncated row (for the residual)
+                auto phraseLenOf = [&](u32 id) -> u64 {
+                    return ((id & 0x80000000u) ? pc->pdict[size_t(id & 0x7fffffffu)]
+                                               : pc->dict[size_t(id)]).size();
+                };
+                auto provOf = [&](u32 row) -> u64 {
+                    u64 prov = 0;
+                    {
+                        const u32 id = ids[size_t(u64(row) * B)];
+                        if (id == ~0u) return 0;   // nothing proven: a TRUNC-only row
+                        prov += phraseLenOf(id) -
+                                std::min<u64>(phraseLenOf(id), off0[size_t(row)]);
+                    }
+                    for (u64 q2 = 1; q2 < B; ++q2) {
+                        const u32 id = ids[size_t(u64(row) * B + q2)];
+                        if (id == ~0u || id == 0xFFFFFFFEu) break;
+                        prov += phraseLenOf(id);
+                    }
+                    return prov;
+                };
+                PARSE_CLASSES.fetch_add(1);
+                PARSE_ROWS.fetch_add(sp1 - sp0);
+                PARSE_PHRASES.fetch_add(B * (sp1 - sp0));
+                PARSE_DICT_BYTES.fetch_add([&] {
+                    u64 b = 0;
+                    for (const auto& ph : pc->dict) b += ph.size();
+                    for (const auto& ph : pc->pdict) b += ph.size();
+                    return b;
+                }());
+                PARSE_ROUNDS_TOTAL.fetch_add(rounds);
+                std::fprintf(stderr,
+                    "PARSE_CLASS unit=%" PRIu64 " rows=%" PRIu64 " phrases=%" PRIu64
+                    " dict_entries=%" PRIu64 " partials=%" PRIu64 " dict_bytes=%" PRIu64
+                    " rounds=%" PRIu64 " tie_spans=%zu" " budget=%" PRIu64 "\n",
+                    unit_id, sp1 - sp0, B * (sp1 - sp0), pc->dict.size(),
+                    pc->pdict.size(), PARSE_DICT_BYTES.load(), rounds, ties.size(), B);
+                if (ties.empty()) break;
+                if (rounds >= g_parse_rounds) {
+                    // DIAGNOSTIC: dump the first tied pair's keying
+                    if (!ties.empty()) {
+                        const u32 ra = slot[size_t(ties[0].first)];
+                        const u32 rb = slot[size_t(ties[0].first + 1)];
+                        std::string da, db;
+                        for (u64 q2 = 0; q2 < 8 && q2 < B; ++q2) {
+                            char t[16];
+                            std::snprintf(t, sizeof t, "%08x ", ids[size_t(u64(ra) * B + q2)]);
+                            da += t;
+                            std::snprintf(t, sizeof t, "%08x ", ids[size_t(u64(rb) * B + q2)]);
+                            db += t;
+                        }
+                        std::fprintf(stderr,
+                            "PARSE_TIE_DEBUG unit=%" PRIu64 " rows=%u/%u off0=%u/%u"
+                            " idsA=%s idsB=%s provA=%" PRIu64 " provB=%" PRIu64 "\n",
+                            unit_id, ra, rb, off0[size_t(ra)], off0[size_t(rb)],
+                            da.c_str(), db.c_str(), provOf(ra), provOf(rb));
+                    }
+                    // the round cap: the LCE residual, from the proven depth
+                    u64 provMin = ~0ull;
+                    for (const auto& t : ties)
+                        for (u64 i = t.first; i < t.second; ++i)
+                            provMin = std::min(provMin, provOf(slot[size_t(i)]));
+                    for (const auto& t : ties) {
+                        residual.emplace_back(t, provMin);
+                        WAVE_KEY.tie_residual_groups.fetch_add(1);
+                        WAVE_KEY.tie_residual_rows.fetch_add(t.second - t.first);
+                    }
+                    break;
+                }
+                // WIDEN: one more request for the tied rows, budget x 8
+                {
+                    FollowUp fu2;
+                    fu2.prefix = fu.prefix;
+                    fu2.posLo = posLo; fu2.posHi = posHi;
+                    fu2.key_len = fu.key_len;
+                    fu2.rowsExpected = fu.rowsExpected;
+                    fu2.runFilter = fu.runFilter;
+                    fu2.filterBase = fu.filterBase;
+                    fu2.runSigma = fu.runSigma;
+                    fu2.runL = fu.runL;
+                    fu2.runT = fu.runT;
+                    fu2.parse = true;
+                    fu2.phraseBudget = std::min<u64>(B * 8, g_parse_phrases * 512);
+                    fu2.round = rounds + 1;
+                    if (fu2.phraseBudget <= B) {
+                        // the budget cannot widen further: the LCE residual
+                        u64 provMin = ~0ull;
+                        for (const auto& t : ties)
+                            for (u64 i = t.first; i < t.second; ++i)
+                                provMin = std::min(provMin, provOf(slot[size_t(i)]));
+                        for (const auto& t : ties) {
+                            residual.emplace_back(t, provMin);
+                            WAVE_KEY.tie_residual_groups.fetch_add(1);
+                            WAVE_KEY.tie_residual_rows.fetch_add(t.second - t.first);
+                        }
+                        break;
+                    }
+                    enqueue_followup(fu2);
+                    wait_followup(fu2);
+                    free_followup(fu);
+                    fu = std::move(fu2);   // continue with the wider streams
+                    // remap slot: the new chunk's rows (exact, by position)
+                    {
+                        Chunk* nc = fu.chunk;
+                        std::map<u64, u32> pos2;
+                        for (size_t t = 0; t < nc->P.size(); ++t)
+                            pos2.emplace(unpack_pos(nc->P[t]), u32(t));
+                        for (u64 i = sp0; i < sp1; ++i) {
+                            auto it = pos2.find(unpack_pos(P[size_t(i)]));
+                            if (it == pos2.end())
+                                die("PARSE_REEXTRACT: a widened chunk lost a row");
+                            slot[size_t(i)] = it->second;
+                        }
+                    }
+                    continue;
+                }
+            }
+            return;   // the parse handled this group; the CALLER frees
+        }
+        die("PARSE_BRANCH: called for a non-parse group");
+    };
+    std::vector<std::pair<u64, u64>> deep;   // radix spans that tied over the window
+    // whole-window survivors of a group's radix: the parse's population
+    auto parseReroute = [&](FollowUp& parent, Chunk* ck, const u64 woffG,
+                            const std::pair<u64, u64>& s2) {
+        FollowUp fu2;
+        fu2.prefix = parent.prefix;
+        {   // the span's rows share the whole big window: extend the prefix
+            const u32 srow = slot[size_t(s2.first)];
+            fu2.prefix.insert(fu2.prefix.end(),
+                              ck->Kb.begin() + ptrdiff_t(srow) * ptrdiff_t(kk),
+                              ck->Kb.begin() + ptrdiff_t(srow + 1) * ptrdiff_t(kk));
+        }
+        fu2.posLo = posLo; fu2.posHi = posHi;
+        fu2.rowsExpected = s2.second - s2.first;
+        fu2.runFilter = parent.runFilter;   // the same run-digit class
+        fu2.filterBase = parent.filterBase;
+        fu2.runSigma = parent.runSigma;
+        fu2.runL = parent.runL;
+        fu2.runT = parent.runT;
+        fu2.parse = true;
+        fu2.phraseBudget = g_parse_phrases;
+        fu2.round = 1;
+        fu2.key_len = g_parse_phrases * 4 + 2048;
+        enqueue_followup(fu2);
+        serveGroup(fu2, s2);
+        parseBranch(fu2, s2);
+        free_followup(fu2);
+    };
+    for (size_t gi = 0; gi < spans.size(); ++gi) {
+        const auto sp = spans[gi];
+        FollowUp& fu = fus[gi];
+        serveGroup(fu, sp);
+        Chunk* ck = fu.chunk;
+        if (fu.parse) { parseBranch(fu, sp); free_followup(fu); continue; }
+        {
+        const u64 woffG = fu.prefix.size();   // the window starts past the known prefix
         wk_keys = &ck->Kb; wk_slot = &slot; wk_kk = kk; kbase_off = woffG;
-        // radix over the big window; levels are the doubling rounds 16/32/64...
-        // walked in memory at zero corpus cost
-        std::vector<std::pair<u64, u64>> roundSpans;
-        roundSpans.push_back(sp);
-        prev_parent.assign(1, std::make_pair(u64(0), n));   // full resync (carried over)
-        for (u64 lvl = 0; lvl < kk && !roundSpans.empty(); ++lvl) {
-            const u64 g = woffG + lvl;
-            std::vector<std::pair<u64, u64>> bigspan, parent(roundSpans);
-            for (const auto& s2 : roundSpans) {
-                if (s2.second - s2.first > SS_WAVE_SMALL_ROWS) bigspan.push_back(s2);
-                else small.push_back(s2);
-            }
-            if (bigspan.empty()) { roundSpans.clear(); break; }
-            const u64 lvlc = lvl, gc = g;
-            auto digk = [&](u64 i) -> unsigned {
-                if (rem_of(P[size_t(i)]) <= gc) return 0u;
-                return unsigned((*wk_keys)[size_t((*wk_slot)[size_t(i)]) * size_t(kk) +
-                                             size_t(lvlc)]) + 1u;
-            };
-            for (const auto& s2 : prev_parent) {
-                std::memcpy(&P2[size_t(s2.first)], &P[size_t(s2.first)],
-                            size_t(s2.second - s2.first) * sizeof(u64));
-                std::memcpy(&Kb2[size_t(s2.first) * size_t(K)], &Kb[size_t(s2.first) * size_t(K)],
-                            size_t(s2.second - s2.first) * size_t(K));
-            }
-            for (const auto& s2 : prev_parent)
-                std::memcpy(&slot2[size_t(s2.first)], &slot[size_t(s2.first)],
-                            size_t(s2.second - s2.first) * sizeof(u32));
-            nxt.clear();
-            for (const auto& s2 : bigspan) {
-                starts.assign(SS_WAVE_BUCKETS + 1, 0);
-                for (u64 i = s2.first; i < s2.second; ++i) ++starts[size_t(digk(i)) + 1];
-                for (unsigned b = 0; b < SS_WAVE_BUCKETS; ++b) starts[b + 1] += starts[b];
-                std::vector<u64> cur(starts.begin(), starts.end() - 1);
-                for (u64 i = s2.first; i < s2.second; ++i) {
-                    const unsigned b = digk(i);
-                    const u64 at = s2.first + cur[b]++;
-                    P2[size_t(at)] = P[size_t(i)];
-                    std::memcpy(&Kb2[size_t(at) * size_t(K)], &Kb[size_t(i) * size_t(K)],
-                                size_t(K));
-                    slot2[size_t(at)] = slot[size_t(i)];
+        // ---- THE WINDOW RADIX, SPAN-LOCAL AND DIVERGENCE-JUMPING. One scatter
+        // per ACTUAL split: a level whose byte every row of the span shares is
+        // skipped by a direct scan (adjacent-slot digit comparison), which
+        // finds the next level that can split. A byte-at-a-time walk over the
+        // whole 4096-byte window re-copied the span per level and was the
+        // wall on the adversarial fixtures; this does S x (jump) byte
+        // compares and one scatter per split.
+        const auto digkAt = [&](u64 i, u64 lvl) -> unsigned {
+            if (rem_of(P[size_t(i)]) <= woffG + lvl) return 0u;
+            return unsigned((*wk_keys)[size_t((*wk_slot)[size_t(i)]) * size_t(kk) +
+                                         size_t(lvl)]) + 1u;
+        };
+        std::vector<std::pair<std::pair<u64, u64>, u64>> work;   // (span, level)
+        work.emplace_back(sp, 0);
+        while (!work.empty()) {
+            const auto s2l = work.back();
+            work.pop_back();
+            const u64 lo = s2l.first.first, hi = s2l.first.second;
+            u64 lvl = s2l.second;
+            if (hi - lo <= 1) continue;
+            if (hi - lo <= SS_WAVE_SMALL_ROWS) { small.push_back(s2l.first); continue; }
+            // find the next level that can split this span
+            u64 splitLvl = ~0ull;
+            for (u64 L = lvl; L < kk; ++L) {
+                const unsigned d0 = digkAt(lo, L);
+                bool same = true;
+                for (u64 i = lo + 1; i < hi; ++i) {
+                    if (digkAt(i, L) != d0) { same = false; break; }
                 }
-                for (unsigned b = 0; b <= SS_WAVE_BUCKETS; ++b) starts[b] += s2.first;
-                for (unsigned b = 0; b < SS_WAVE_BUCKETS; ++b) {
-                    const u64 s = starts[b], e = starts[b + 1];
-                    if (e - s > 1) nxt.emplace_back(s, e);
-                    if (s > s2.first && e > s) lcpv[size_t(s)] = g;
-                }
+                if (!same) { splitLvl = L; break; }
             }
-            P.swap(P2); Kb.swap(Kb2); slot.swap(slot2);
-            check_perm("window-level", lvl, bigspan.size());
-            prev_parent = parent;
-            roundSpans.swap(nxt);
+            if (splitLvl == ~0ull) {
+                // every row is equal over the whole window: the rows
+                // SURVIVED level 2 - the parse's population. Reroute.
+                deep.emplace_back(s2l.first);
+                continue;
+            }
+            // ONE STABLE SCATTER at the splitting level (span-local). The
+            // round-0 key plane travels with the row (payload, as before).
+            const u64 m = hi - lo;
+            sDig.resize(size_t(m));
+            starts.assign(SS_WAVE_BUCKETS + 1, 0);
+            for (u64 i = 0; i < m; ++i) {
+                sDig[size_t(i)] = digkAt(lo + i, splitLvl);
+                ++starts[size_t(sDig[size_t(i)]) + 1];
+            }
+            for (unsigned b = 0; b < SS_WAVE_BUCKETS; ++b) starts[b + 1] += starts[b];
+            sCur.assign(starts.begin(), starts.end() - 1);
+            if (K) {
+                sSrc.resize(size_t(m) * size_t(K));
+                std::memcpy(sSrc.data(), &Kb[size_t(lo) * size_t(K)], size_t(m) * size_t(K));
+            }
+            sP.resize(size_t(m));
+            sS.resize(size_t(m));
+            sK2.resize(size_t(m) * size_t(K));
+            for (u64 i = 0; i < m; ++i) {
+                const u64 at = sCur[size_t(sDig[size_t(i)])]++;
+                sP[size_t(at)] = P[size_t(lo + i)];
+                sS[size_t(at)] = (*wk_slot)[size_t(lo + i)];
+                if (K) std::memcpy(&sK2[size_t(at) * size_t(K)],
+                                   &sSrc[size_t(i) * size_t(K)], size_t(K));
+            }
+            for (u64 i = 0; i < m; ++i) {
+                P[size_t(lo + i)] = sP[size_t(i)];
+                if (K) std::memcpy(&Kb[size_t(lo + i) * size_t(K)],
+                                   &sK2[size_t(i) * size_t(K)], size_t(K));
+                (*wk_slot)[size_t(lo + i)] = sS[size_t(i)];
+            }
+            check_perm("window-scatter", splitLvl, 1);
+            for (unsigned b = 0; b < SS_WAVE_BUCKETS; ++b) {
+                const u64 s = starts[b], e = starts[b + 1];
+                if (e > s + 1) work.emplace_back(std::make_pair(lo + s, lo + e),
+                                                  splitLvl + 1);
+                if (s > 0 && e > s) lcpv[size_t(lo + s)] = woffG + splitLvl;
+            }
         }
-        for (const auto& s2 : roundSpans) small.push_back(s2);
-        roundSpans.clear();
         if (!small.empty()) { settle_small(small, 1, carry); small.clear(); }
-        // what still ties over the whole window is the level-3 shape
-        for (const auto& s2 : carry) {
-            residual.emplace_back(s2, woffG + kk);
-            WAVE_KEY.tie_residual_groups.fetch_add(1);
-            WAVE_KEY.tie_residual_rows.fetch_add(s2.second - s2.first);
-        }
+        // what still ties over the whole window SURVIVED level 2: the parse
+        for (const auto& s2 : carry) deep.emplace_back(s2);
         carry.clear();
         std::fprintf(stderr,
             "SORT_ROUND unit=%" PRIu64 " round=1 off=%" PRIu64 " k=%" PRIu64
@@ -934,8 +1363,14 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
             " rule=one_big_window_replaces_the_doubling_passes\n",
             unit_id, woffG, kk, sp.second - sp.first,
             [&] { u64 r = 0; for (const auto& s2 : residual) if (s2.first.first >= sp.first && s2.first.second <= sp.second) r += s2.first.second - s2.first.first; return r; }());
-        bswap_release(slot);
+        // THE LEVEL-3 REROUTE: the whole-window survivors go through the
+        // parse (they announced themselves by surviving the big window)
+        for (const auto& s2 : deep) parseReroute(fu, ck, woffG, s2);
+        deep.clear();
+        }
+        free_followup(fu);          // the window's plane is done: return it now
     }
+    // (the unit's slot plane lives until the leaf returns; it is stack-scoped)
 
     // ---- THE FALLBACK: the big window's leftovers. Walks from the PROVED
     // depth, under the counted WALK BUDGET (carried over). ----
@@ -1114,8 +1549,27 @@ struct TapeRequest {
     const char* what = "unit";
     std::atomic<bool>* servedTarget = nullptr;   // the unit's own served flag
     std::vector<u8> exactPre;    // storage for exact prefixes
+    // THE LIVE BILL: the bound is charged by the bytes actually captured, in
+    // slabs, BY THE TAPE (a class chunk is a superset of the groups that asked
+    // for it, so the asker cannot price it exactly up front).
+    struct Bound* bill = nullptr;
+    u64 billedRows = 0;
+    u64 billedBytes = 0;
+    u64 slabRows = 0;   // the charge granularity (the asker's row estimate)
+    bool runFilter = false;
+    u64 filterBase = 0;   // the run's absolute offset (the unit's kbase)
+    u8 runSigma = 0;
+    u32 runL = 0;
+    u16 runT = 0;
+    bool parse = false;        // level 3
+    u64 phraseBudget = 0;
+    u64 round = 0;
+    std::unordered_map<u64, u32> dictOf;   // proper phrase hash -> local dict id
+    std::unordered_map<u64, u32> pdictOf;  // partial phrase hash -> pdict index
+    u64 curEnt = 0;                        // the request's frontier cursor (live ents)
 };
 
+struct Bound;
 struct Tape {
     int fd = -1;
     std::mutex mu;
@@ -1142,16 +1596,16 @@ struct Tape {
     // most one request and a leaf ends the walk.
     struct Matcher {
         std::vector<std::array<u32, 256>> nodes;
-        std::vector<u32> req;   // 0 = none, else request index + 1
+        std::vector<std::vector<u32>> reqs;   // per node: request indices + 1
         size_t insert(const u8* p, u64 len) {
-            if (nodes.empty()) { nodes.resize(1); req.push_back(0); }
+            if (nodes.empty()) { nodes.resize(1); reqs.emplace_back(); }
             u32 at = 0;
             for (u64 i = 0; i < len; ++i) {
                 const u32 nxt = nodes[at][p[i]];
                 if (!nxt) {
                     nodes.emplace_back();
                     nodes[at][p[i]] = u32(nodes.size());   // 1-BASED: 0 = no child
-                    req.push_back(0);
+                    reqs.emplace_back();
                     at = u32(nodes.size() - 1);
                 } else at = nxt - 1;
             }
@@ -1213,44 +1667,130 @@ struct Tape {
         }
     }
 
+    // ---- THE TRIGGER FRONTIER (level 3, shared by every parse request of a
+    // pass). The pass walks the corpus ASCENDING, so the minimizer stream is
+    // computed once and extended monotonically; a row never re-reads bytes a
+    // previous row of the pass already touched. THE DISCIPLINE IS PFP's (as
+    // carried in bit6/pfp_ds_vendor): a k-mer start s is a TRIGGER iff it is
+    // the leftmost minimum of the window of w k-mers starting at s; phrases end
+    // with their trigger k-mer, and consecutive triggers are <= w apart.
+    struct Frontier {
+        struct Ent { u64 end; u64 start; u64 off; u32 len; };  // phrase [start, end]
+        std::vector<Ent> ents;      // ascending end; off into arena
+        std::vector<u8> arena;      // phrase bytes, concatenated
+        u64 frontierStart = 0;      // k-mer starts below this are classified
+        bool clamped0 = false;     // ents[0] starts mid-text: a PARTIAL, not a phrase
+        // the text is exhausted when no k-mer start with a full forward
+        // window remains unclassified (the final w are withheld by the
+        // upTo margin while a window is still open; at the corpus end the
+        // classification covers everything the rule can see)
+        bool exhaustedText() const {
+            return frontierStart + g_pfp_k + g_pfp_w > FILE_N;
+        }
+        // drop phrases that ended below `lo` (no future row can land in
+        // them); compacts the arena and re-bases every live cursor.
+        u64 trimBelow(u64 lo, std::vector<TapeRequest*>& reqs) {
+            u64 k2 = 0;
+            while (k2 < ents.size() && ents[size_t(k2)].end < lo) ++k2;
+            if (!k2) return 0;
+            const u64 dropBytes = ents[size_t(k2 - 1)].off + ents[size_t(k2 - 1)].len;
+            ents.erase(ents.begin(), ents.begin() + ptrdiff_t(k2));
+            for (auto& e : ents) e.off -= dropBytes;
+            arena.erase(arena.begin(), arena.begin() + ptrdiff_t(dropBytes));
+            for (TapeRequest* r : reqs)
+                if (r->parse && r->curEnt >= k2)
+                    r->curEnt -= k2;   // never below 0: it pointed at a live ent
+                else if (r->parse && r->curEnt < k2)
+                    r->curEnt = 0;
+            return k2;
+        }
+    };
     void runPass(std::vector<TapeRequest*>& snap, std::vector<u8>& buf, std::vector<u8>& pad) {
         const double t0 = now_sec();
+        auto kmHash = [](const u8* q) -> u64 {   // FNV-1a over the k-mer at q
+            u64 h = 1469598103934665603ull;
+            for (u64 i = 0; i < g_pfp_k; ++i) { h ^= q[i]; h *= 1099511628211ull; }
+            return h;
+        };
+        // classify trigger starts up to `upTo` using bytes valid from winBase.
+        // THE TRIGGER RULE (two-sided strict window minimum): start s is a
+        // trigger iff km(s) is STRICTLY smaller than the w k-mers preceding
+        // it AND the w k-mers following it. Consequence (the spacing lemma):
+        // two triggers are at least w+1 apart - suppose s < s' with
+        // s' - s <= w: then s' lies in s's forward window (km(s) < km(s'))
+        // and s lies in s's backward window (km(s') < km(s)) - contradiction.
+        // So every phrase [prev_end+1, s+k-1] is >= w+1 > k bytes long and
+        // ends with its own trigger k-mer. The prefix-free gate below
+        // asserts the dictionary consequence on the class's actual data.
+        auto extendFrontier = [&](Frontier& F, u64 upTo, const u8* win, u64 winBase) {
+            for (u64 s = std::max(F.frontierStart, winBase);
+                 s + g_pfp_k + g_pfp_w <= upTo; ++s) {
+                const u64 h = kmHash(win + (s - winBase));
+                bool isTrig = true;
+                const u64 back = std::min<u64>(g_pfp_w, s - winBase);
+                for (u64 j = 1; j <= back; ++j) {
+                    if (!(h < kmHash(win + (s - j - winBase)))) { isTrig = false; break; }
+                }
+                if (isTrig)
+                    for (u64 j = 1; j <= g_pfp_w; ++j) {
+                        if (!(h < kmHash(win + (s + j - winBase)))) { isTrig = false; break; }
+                    }
+                if (isTrig) {
+                    const u64 end = s + g_pfp_k - 1;
+                    // ent[0]'s content may begin past the true phrase start
+                    // (classification starts mid-text): it is interned as a
+                    // PARTIAL (pdict), never as a proper phrase.
+                    const u64 start = F.ents.empty()
+                        ? std::max(F.frontierStart, winBase)
+                        : F.ents.back().end + 1;
+                    if (F.ents.empty() && start > 0) F.clamped0 = true;
+                    if (start > end) die("trigger frontier: phrase start past end");
+                    const u32 len = u32(end - start + 1);
+                    Frontier::Ent e{end, start, F.arena.size(), len};
+                    F.arena.insert(F.arena.end(), win + (start - winBase),
+                                   win + (end - winBase) + 1);
+                    F.ents.push_back(e);
+                }
+                F.frontierStart = s + 1;
+            }
+        };
         // ---- build the matcher ----
         Matcher M;
         for (size_t ri = 0; ri < snap.size(); ++ri) {
             TapeRequest* r = snap[ri];
             if (r->bHi == 0) {          // exact prefix (follow-up)
                 const size_t at = M.insert(r->exactPre.data(), r->exactPre.size());
-                if (M.req[at])
-                    die("TAPE_MATCH_CONFLICT: two outstanding requests share the prefix "
-                        "(the protocol requires pairwise disjoint prefixes)");
-                M.req[at] = u32(ri + 1);
+                M.reqs[at].push_back(u32(ri + 1));
             } else {                     // preLen bytes + one byte in [bLo,bHi)
                 std::vector<u8> pfx(r->pre, r->pre + r->preLen);
                 for (unsigned c = r->bLo; c < r->bHi; ++c) {
                     pfx.resize(size_t(r->preLen));
                     pfx.push_back(u8(c));
                     const size_t at = M.insert(pfx.data(), pfx.size());
-                    if (M.req[at])
-                        die("TAPE_MATCH_CONFLICT: two outstanding requests share the prefix "
-                            "(the protocol requires pairwise disjoint prefixes)");
-                    M.req[at] = u32(ri + 1);
+                    M.reqs[at].push_back(u32(ri + 1));
                 }
             }
         }
+        std::fprintf(stderr, "TRIE_BUILD pass=%" PRIu64 " requests=%zu nodes=%zu"
+                     " node_bytes=%zu\n", passes + 1, snap.size(), M.nodes.size(),
+                     M.nodes.size() * 1024);
         // ---- the look-ahead is data: predicate depth + key window + run cap ----
         u64 need = 1;
         for (TapeRequest* r : snap) {
             need = std::max(need, u64(r->preLen) + (r->bHi ? 1 : 0));
             need = std::max(need, r->kbase + r->keyLen);
             if (r->withRun) need = std::max(need, r->kbase + g_wave_run_cap + 1);
+            if (r->parse)
+                need = std::max(need, u64(g_pfp_k) + 64);   // the lookback is the run-up
         }
+        Frontier F;
         u64 rowsThis = 0, unmatched = 0, bytesThis = 0;
         const u64 scanHi = KEY_N;
         for (u64 base = 0; base < scanHi;) {
             const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, scanHi - base);
-            const u64 from = base ? base - 1 : base;
-            const u64 off = base - from;             // 0 or 1 (the symbol run-up)
+            const u64 runup = g_pfp_w + g_pfp_k - 1;   // the trigger rule's lookback
+            const u64 from = base > runup ? base - runup : 0;
+            const u64 off = base - from;   // the run-up (symbol + trigger lookback)
             const u64 want = std::min<u64>(chunk + off + need, FILE_N > from ? FILE_N - from : 0);
             if (want) read_window(fd, from, want, buf);
             bytesThis += want;
@@ -1267,26 +1807,162 @@ struct Tape {
                     q = pad.data();
                 }
                 // ---- THE WALK: one table lookup for a non-member ----
-                u32 at = 0, reqIdx = 0;
+                u32 at = 0;
+                bool hitAny = false;
+                TapeRequest* r = nullptr;
                 if (!M.nodes.empty()) {
                     u64 i = 0;
                     for (;;) {
                         const u32 nxt = M.nodes[at][q[i]];
                         if (!nxt) break;
                         at = nxt - 1;
-                        if (M.req[at]) { reqIdx = M.req[at]; break; }
+                        if (!M.reqs[at].empty()) { hitAny = true; break; }
                         ++i;
                     }
                 }
-                if (!reqIdx) { ++unmatched; continue; }
-                TapeRequest* r = snap[size_t(reqIdx - 1)];
-                if (r->sliced && (p < r->posLo || p >= r->posHi)) continue;
+                if (hitAny) {
+                    for (u32 cand : M.reqs[at]) {
+                        TapeRequest* c = snap[size_t(cand - 1)];
+                        if (c->sliced && (p < c->posLo || p >= c->posHi)) continue;
+                        if (c->runFilter) {
+                            const u8* fq = q + c->filterBase;
+                            const u64 favail =
+                                avail > c->filterBase ? avail - c->filterBase : 0;
+                            if (!favail) continue;   // no run: not a member
+                            u32 fl = 0; u16 ft = 0;
+                            wavekey_run_digit(fq, favail, g_wave_run_cap, fl, ft);
+                            if (fl != c->runL || ft != c->runT || fq[0] != c->runSigma)
+                                continue;
+                        }
+                        r = c;
+                        break;
+                    }
+                    if (!r) hitAny = false;
+                }
+                if (!hitAny) { ++unmatched; continue; }
                 Chunk* ck = r->chunk;
+                if (r->parse) {
+                    // ---- LEVEL 3 CAPTURE: the continuation cut at triggers,
+                    // keyed (phrase id, intra-phrase offset). NO per-row bytes:
+                    // each distinct phrase is interned once into the class
+                    // dictionary (identical chunks hash to one entry - the
+                    // compression happens at extraction); rows only carry ids.
+                    if (ck->rows() >= r->capRows)
+                        die("TAPE_CHUNK_OVER_TARGET: parse request unit=" +
+                            std::to_string(r->unitId) + " capped at " +
+                            std::to_string(r->capRows) + " rows, got more");
+                    if (F.ents.empty() && F.frontierStart == 0 && p > 2 * (g_pfp_k + g_pfp_w))
+                        F.frontierStart = p - 2 * (g_pfp_k + g_pfp_w);
+                    const u64 validHi = from + want;      // bytes valid in buf
+                    extendFrontier(F, validHi > (g_pfp_w + g_pfp_k - 1)
+                                       ? validHi - (g_pfp_w + g_pfp_k - 1) : 0,
+                                   buf.data(), from);
+                    ck->P.push_back(pack_sym(p, p == 0 ? SENTINEL_SYMBOL : qraw[-1]));
+                    const u64 row = ck->P.size() - 1;
+                    const u64 B = r->phraseBudget;
+                    std::vector<u32> rowIds(size_t(B), ~0u);  // append-only:
+                    // ids is NEVER resized behind the writer (resize would
+                    // value-initialize and wipe the just-written ids)
+                    // hash a byte range; interns into dict (proper) or pdict
+                    auto intern = [&](const u8* q2, u32 len, bool partial) -> u32 {
+                        u64 hh = 1469598103934665603ull;
+                        for (u32 b = 0; b < len; ++b) {
+                            hh ^= q2[b]; hh *= 1099511628211ull;
+                        }
+                        auto& tab = partial ? ck->pdict : ck->dict;
+                        auto& mapOf = partial ? r->pdictOf : r->dictOf;
+                        auto it = mapOf.find(hh);
+                        if (it != mapOf.end()) return it->second |
+                            (partial ? 0x80000000u : 0u);
+                        const u32 id = u32(tab.size());
+                        tab.emplace_back(q2, q2 + len);
+                        mapOf.emplace(hh, id);
+                        return id | (partial ? 0x80000000u : 0u);
+                    };
+                    u32* idOut = rowIds.data();
+                    u64 prev = 0;
+                    // the phrase containing p: the first live ent with end >= p
+                    while (r->curEnt < F.ents.size() && F.ents[size_t(r->curEnt)].end < p)
+                        ++r->curEnt;
+                    if (r->curEnt >= F.ents.size()) {
+                        // no trigger end >= p classified yet: the row's stream
+                        // is UNKNOWN beyond -> TRUNCATED (widen / residual)
+                        ck->off0.push_back(0);
+                        ck->ids.insert(ck->ids.end(), rowIds.begin(), rowIds.end());
+                        ++rowsThis;
+                        if (r->bill && r->slabRows && ck->rows() >= r->billedRows) {
+                            r->bill->add(r->slabRows * (r->keyLen + 8), r->unitId,
+                                         r->what, r->billedRows);
+                            r->billedRows += r->slabRows;
+                            r->billedBytes += r->slabRows * (r->keyLen + 8);
+                        }
+                        continue;
+                    }
+                    const Frontier::Ent& ce = F.ents[size_t(r->curEnt)];
+                    if (ce.start <= p) {
+                        // p is inside a classified phrase: (id, offset). The
+                        // FIRST classified phrase starts mid-text (its true
+                        // start is unknown): it is a PARTIAL, never proper.
+                        const bool part0 = (r->curEnt == 0 && F.clamped0);
+                        idOut[0] = intern(F.arena.data() + ce.off, ce.len, part0);
+                        ck->off0.push_back(u32(p - ce.start));
+                        prev = ce.end;
+                    } else {
+                        // p lies in the gap before the first classified
+                        // phrase: a partial from the bytes in hand
+                        idOut[0] = intern(q, u32(ce.end - p + 1), true);
+                        ck->off0.push_back(0);
+                        prev = ce.end;
+                    }
+                    // the following phrases, until the budget or the text end
+                    u64 i = 1;
+                    for (; i < B; ++i) {
+                        u64 entIdx = r->curEnt + 1;
+                        while (entIdx < F.ents.size() &&
+                               F.ents[size_t(entIdx)].end <= prev)
+                            ++entIdx;
+                        if (entIdx >= F.ents.size()) {
+                            if (!F.exhaustedText()) {
+                                idOut[i] = ~0u;   // not yet classified: TRUNCATED
+                                break;
+                            }
+                            // the TRUE end: the final partial phrase, then TEND
+                            if (prev >= FILE_N - 1) { idOut[i] = 0xFFFFFFFEu; break; }
+                            const u64 fl = FILE_N - 1 - prev;
+                            if (prev + 1 < base || fl > (1u << 20)) {
+                                // the partial's bytes are not in this window
+                                // (a long un-triggered tail): UNKNOWN beyond
+                                idOut[i] = ~0u; break;
+                            }
+                            idOut[i] = intern(q + (prev + 1 - p), u32(fl), true);
+                            if (i + 1 < B) { idOut[i + 1] = 0xFFFFFFFEu; ++i; }
+                            break;
+                        }
+                        const Frontier::Ent& e = F.ents[size_t(entIdx)];
+                        idOut[i] = intern(F.arena.data() + e.off, e.len, false);
+                        prev = e.end;
+                    }
+                    ck->ids.insert(ck->ids.end(), rowIds.begin(), rowIds.end());
+                    ++rowsThis;
+                    if (r->bill && r->slabRows && ck->rows() >= r->billedRows) {
+                        r->bill->add(r->slabRows * (r->keyLen + 8), r->unitId,
+                                     r->what, r->billedRows);
+                        r->billedRows += r->slabRows;
+                        r->billedBytes += r->slabRows * (r->keyLen + 8);
+                    }
+                    continue;
+                }
                 if (ck->rows() >= r->capRows)
                     die("TAPE_CHUNK_OVER_TARGET: request unit=" + std::to_string(r->unitId) +
                         " capped at " + std::to_string(r->capRows) + " rows, got more "
                         "(the plan's estimate is wrong by more than the headroom; this is "
                         "the per-request accounting, not a knob to tune)");
+                if (r->bill && r->slabRows && ck->rows() >= r->billedRows) {
+                    r->bill->add(r->slabRows * (r->keyLen + 8), r->unitId,
+                                 r->what, r->billedRows);
+                    r->billedRows += r->slabRows;
+                    r->billedBytes += r->slabRows * (r->keyLen + 8);
+                }
                 const u8* kq = q + r->kbase;
                 const size_t at2 = ck->Kb.size();
                 ck->P.push_back(pack_sym(p, p == 0 ? SENTINEL_SYMBOL : qraw[-1]));
@@ -1300,6 +1976,14 @@ struct Tape {
                     ck->Tp.push_back(runT);
                 }
                 ++rowsThis;
+            }
+            // the frontier holds phrase bytes for the whole pass otherwise -
+            // text materialization. Phrases that ended below the NEXT window
+            // can never contain a future row: drop them, compact the arena.
+            {
+                const u64 nextBase = base + chunk;
+                if (!F.ents.empty() && F.ents.front().end < nextBase)
+                    F.trimBelow(nextBase, snap);
             }
             base += chunk;
         }
@@ -1845,6 +2529,15 @@ struct PieceCutter {
 // MAIN: the four components wired together.
 // ===========================================================================
 int main(int argc, char** argv) {
+    // THE CHUNK ALLOCATOR POLICY: follow-up group windows are ~40 KB vectors -
+    // below glibc's 128 KB mmap threshold they are heap allocations, and freed
+    // into per-thread arenas that NEVER return the bytes (measured: +5.5 GB of
+    // retained anon RSS over the bound's live bytes on mixed, anon 9.6 GB
+    // against bound.live 4.1 GB). A low mmap threshold makes every chunk-sized
+    // allocation a mapping, so a freed chunk is a munmap and the RSS receipt
+    // tracks the bound again.
+    ::mallopt(M_MMAP_THRESHOLD, 32768);
+    ::mallopt(M_TRIM_THRESHOLD, 131072);
     std::string corpus, remapPath, outPrefix, bandsDir;
     u64 budget_bytes = 0, scratch_budget_bytes = 0;
     double memory_gb = 0.0;
@@ -1892,6 +2585,27 @@ int main(int argc, char** argv) {
             g_wave_run_cap = std::strtoull(e, nullptr, 10);
         if (const char* e = ::getenv("XSA_TIE_WINDOW_BYTES"))
             g_tie_window_bytes = std::strtoull(e, nullptr, 10);
+        if (const char* e = ::getenv("XSA_PARSE_PLANE_MAX"))
+            g_parse_plane_max = std::strtoull(e, nullptr, 10);
+        if (const char* e2 = ::getenv("XSA_PARSE_DICT_BYTES")) {
+            g_parse_dict_allowance = std::strtoull(e2, nullptr, 10);
+            if (g_parse_dict_allowance < (1ull << 20) ||
+                g_parse_dict_allowance > (8ull << 30))
+                die("XSA_PARSE_DICT_BYTES must be in [1MiB, 8GiB]");
+        }
+        if (const char* e = ::getenv("XSA_PARSE_PHRASES"))
+            g_parse_phrases = std::strtoull(e, nullptr, 10);
+        if (const char* e = ::getenv("XSA_PARSE_ROUNDS"))
+            g_parse_rounds = std::strtoull(e, nullptr, 10);
+        if (const char* e = ::getenv("XSA_PFP_K"))
+            g_pfp_k = std::strtoull(e, nullptr, 10);
+        if (const char* e = ::getenv("XSA_PFP_W"))
+            g_pfp_w = std::strtoull(e, nullptr, 10);
+        if (g_parse_plane_max < (1u << 20) || g_parse_phrases < 4 ||
+            g_parse_phrases > (1u << 20) || g_parse_rounds < 1 || g_parse_rounds > 16 ||
+            g_pfp_k < 2 || g_pfp_k > 32 || g_pfp_w < 2 || g_pfp_w > 64)
+            die("level-3 knobs out of range (XSA_PARSE_PLANE_MAX/PHRASES/ROUNDS, "
+                "XSA_PFP_K/W)");
         if (const char* e = ::getenv("XSA_WAVE_FALLBACK_WALK_MAX")) {
             g_wave_fallback_walk_max = std::strtoull(e, nullptr, 10);
             g_wave_fallback_walk_set = true;
@@ -1907,9 +2621,12 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
             "SS_WAVE_KEY_KNOB key_bytes=%" PRIu64 " run_cap=%" PRIu64
             " tie_window=%" PRIu64 " fallback_walk_max=%" PRIu64 " source=%s"
-            " rule=one_big_window_replaces_the_doubling_passes;residual_to_LCE\n",
+            " parse_plane_max=%" PRIu64 " parse_phrases=%" PRIu64
+            " parse_rounds=%" PRIu64 " pfp_k=%" PRIu64 " pfp_w=%" PRIu64
+            " rule=run_digit;big_window;parse_for_deep_classes;LCE_residual\n",
             g_wave_key_bytes, g_wave_run_cap, g_tie_window_bytes,
-            g_wave_fallback_walk_max, src.c_str());
+            g_wave_fallback_walk_max, src.c_str(), g_parse_plane_max,
+            g_parse_phrases, g_parse_rounds, g_pfp_k, g_pfp_w);
     }
     const bool trieTap = ::getenv("TRIE_TAP") != nullptr;
     const u64 lcpSliceWindow = [] {
@@ -2104,7 +2821,6 @@ int main(int argc, char** argv) {
             unparked.fetch_add(1);
             WaveKeyStats st;
             std::vector<u64> lcpv;
-            u64 fuBytes = 0;
             auto enqueue_followup = [&](FollowUp& fu) {
                 TapeRequest* rq = new TapeRequest();
                 rq->exactPre = fu.prefix;
@@ -2117,12 +2833,39 @@ int main(int argc, char** argv) {
                 rq->sliced = U.sliced;
                 rq->posLo = U.posLo; rq->posHi = U.posHi;
                 rq->unitId = u;
+                rq->parse = fu.parse;
+                rq->phraseBudget = fu.phraseBudget;
+                rq->round = fu.round;
                 rq->chunk = new Chunk();
-                rq->capRows = ~0ull;   // exact by construction; the leaf asserts the count
-                rq->chunk->reserve_rows(0, fu.key_len);
-                const u64 plane = fu.rowsExpected * (fu.key_len + 8) + 64;
+                rq->chunk->parse = fu.parse;
+                rq->chunk->phraseBudget = fu.phraseBudget;
+                rq->capRows = fu.rowsExpected;   // exact: prefix + run filter
+                rq->chunk->key_len = fu.key_len;
+                rq->chunk->P.reserve(size_t(fu.rowsExpected));
+                if (fu.parse) {
+                    rq->chunk->ids.reserve(size_t(fu.rowsExpected) *
+                                           size_t(fu.phraseBudget));
+                    rq->chunk->off0.reserve(size_t(fu.rowsExpected));
+                } else {
+                    rq->chunk->Kb.reserve(size_t(fu.rowsExpected) *
+                                          size_t(fu.key_len));
+                }
+                // THE CHUNK IS EXACT (prefix + run filter), so the asker
+                // prices it exactly and waits for capacity here - PARKED while
+                // blocked, so the tape's pass fixpoint still fires.
+                const u64 plane = fu.parse
+                    ? fu.rowsExpected * (fu.phraseBudget * 4 + 8) +
+                      64 + g_parse_dict_allowance
+                    : fu.rowsExpected * (fu.key_len + 8) + 64;
+                unparked.fetch_sub(1);
                 bound.wait_for(plane, u, "tie-window", fu.rowsExpected);
-                fuBytes += plane;
+                unparked.fetch_add(1);
+                rq->slabRows = std::max<u64>(1, fu.rowsExpected);
+                rq->runFilter = fu.runFilter;
+                rq->filterBase = fu.filterBase;
+                rq->runSigma = fu.runSigma;
+                rq->runL = fu.runL;
+                rq->runT = fu.runT;
                 fu.chunk = rq->chunk;
                 fu.rq = rq;
                 {
@@ -2137,12 +2880,20 @@ int main(int argc, char** argv) {
                 while (!rq->served.load(std::memory_order_acquire)) ::usleep(10000);
                 unparked.fetch_add(1);
             };
+            auto free_followup = [&](FollowUp& fu) {
+                TapeRequest* rq = (TapeRequest*)fu.rq;
+                bound.sub(fu.rowsExpected * (fu.key_len + 8) + 64);
+                delete rq->chunk;
+                delete rq;
+                rq = nullptr;
+            };
             {
                 const u8* pre = U.preLen ? UP.preArena.data() + U.preOff : nullptr;
                 const double ts0 = now_sec();
                 wavekey_sort_unit(U.chunk->P, U.chunk->Kb, U.chunk->Lp, U.chunk->Tp,
                                   U.preLen, u, pre, U.preLen, U.posLo, U.posHi,
-                                  enqueue_followup, wait_followup, lcpv, st);
+                                  enqueue_followup, wait_followup, free_followup,
+                                  lcpv, st);
                 // ---- THE TAILS (positions [KEY_N, N)): sorted directly and
                 // merged into the ordered rows (carried over).
                 if (KEY_N < N) {
@@ -2188,11 +2939,16 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
-                std::fprintf(stderr,
-                    "SS_UNIT unit=%" PRIu64 " rows=%" PRIu64 " sort_s=%.2f rounds=%" PRIu64
-                    " tie_rows=%" PRIu64 " tie_groups=%" PRIu64 " fallback_rows=%" PRIu64 "\n",
-                    u, U.chunk->P.size(), now_sec() - ts0, st.rounds, st.tie_rows,
-                    st.tie_groups, st.fallback_rows);
+                {
+                    u64 anon=0,file=0,tot=0;
+                    RssMonitor::sample(anon,file,tot);
+                    std::fprintf(stderr,
+                        "SS_UNIT unit=%" PRIu64 " rows=%" PRIu64 " sort_s=%.2f rounds=%" PRIu64
+                        " tie_rows=%" PRIu64 " tie_groups=%" PRIu64 " fallback_rows=%" PRIu64
+                        " anon_mb=%" PRIu64 " bound_live_mb=%" PRIu64 "\n",
+                        u, U.chunk->P.size(), now_sec() - ts0, st.rounds, st.tie_rows,
+                        st.tie_groups, st.fallback_rows, anon/1024, bound.live/1048576);
+                }
             }
             WAVE_KEY.add(st);
             // hand off to the emitter and release the sort's extra planes
@@ -2201,17 +2957,6 @@ int main(int argc, char** argv) {
             bswap_release(U.chunk->Kb);
             bswap_release(U.chunk->Lp);
             bswap_release(U.chunk->Tp);
-            {
-                std::lock_guard<std::mutex> lk(fuMu);
-                for (TapeRequest* rq : fuAll) {
-                    if (rq->unitId == u) {
-                        bound.sub(rq->chunk->rows() * (rq->keyLen + 8) + 64);
-                        delete rq->chunk;
-                        delete rq;
-                    }
-                }
-                (void)fuBytes;
-            }
             const u64 hold = emitHold * std::max<u64>(1, U.P.size()) + 16 * 1024;
             bound.sub(U.boundWaitBytes + U.boundSortBytes);
             bound.add(hold, u, "emit-hold", U.P.size());
@@ -2388,6 +3133,8 @@ int main(int argc, char** argv) {
             rq->unitId = admitted;
             rq->what = "unit";
             rq->servedTarget = &U.served;
+            rq->billedRows = rowsCap;   // admission already committed the whole unit
+            rq->billedBytes = 0;
             tape.enqueue(rq);
             ++admitted;
         }
@@ -2499,6 +3246,12 @@ int main(int argc, char** argv) {
             FILE_N ? double(rchar) / double(FILE_N) : 0.0,
             FILE_N ? double(rb) / double(FILE_N) : 0.0, tape.passes);
     }
+    std::fprintf(stderr,
+        "PARSE_TOTALS classes=%" PRIu64 " rows=%" PRIu64 " phrases=%" PRIu64
+        " dict_bytes=%" PRIu64 " rounds=%" PRIu64
+        " rule=level3_parse_only_classes_that_announce_deep_repeats\n",
+        PARSE_CLASSES.load(), PARSE_ROWS.load(), PARSE_PHRASES.load(),
+        PARSE_DICT_BYTES.load(), PARSE_ROUNDS_TOTAL.load());
     std::fprintf(stderr,
         "SS_DONE n=%" PRIu64 " units=%" PRIu64 " passes=%" PRIu64
         " tie_rounds_max=%" PRIu64 " plan_s=%.2f run_s=%.2f total_s=%.2f\n",
