@@ -406,7 +406,10 @@ static u64 g_wave_run_cap = 65536;      // L's cap
 static u64 g_parse_plane_max = 256ull << 20;   // XSA_PARSE_PLANE_MAX (the bin's per-class budget)
 static u64 g_expand_delta_start = 256;         // XSA_EXPAND_DELTA_START (bytes)
 static u64 g_expand_delta_cap = 1ull << 20;    // XSA_EXPAND_DELTA_CAP (bytes)
-static u64 g_readhead_gap_merge = 1ull << 16;  // XSA_READHEAD_GAP_MERGE (bytes)
+// The merge covers only NEAR-OVERLAPPING windows (syscall reduction);
+// a coarse merge (64KB) read gaps no row needed and billed them - on the
+// docsep fixture that was 5.6x the honest per-row demand (rchar 7149x).
+static u64 g_readhead_gap_merge = 512;          // XSA_READHEAD_GAP_MERGE (bytes)
 static u64 g_parse_dict_allowance = 1ull << 20;  // XSA_PARSE_DICT_BYTES (per request)
 // THE SPIN GUARD: a silent spin is impossible by contract. Every phase
 // bumps the heartbeat; the watchdog thread aborts LOUDLY (with the phase
@@ -744,6 +747,8 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
             }
         }
         U.Pout = std::move(P);
+        U.tails.clear();
+        U.tails.shrink_to_fit();
         return;
     }
     if (CORPUS_PERIOD) {
@@ -780,6 +785,32 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
         std::fprintf(stderr, "PERIOD_INDEX unit=%" PRIu64 " rows=%" PRIu64
                      " dictionary_bytes=%" PRIu64 " verified_bytes=%" PRIu64
                      " rule=exact_phase_and_finite_length\n", unit_id, n, CORPUS_PERIOD, FILE_N);
+        // the tails still ride the period path (the empty suffix among them)
+        if (!U.tails.empty()) {
+            std::sort(U.tails.begin(), U.tails.end(), [](u64 a2, u64 b2) {
+                return suf_cmp_from(unpack_pos(a2), unpack_pos(b2), 0) < 0;
+            });
+            for (const u64 tp : U.tails) {
+                const u64 pos = unpack_pos(tp);
+                const size_t i = size_t(std::lower_bound(
+                    P.begin(), P.end(), pos,
+                    [](u64 x, u64 t) {
+                        return suf_cmp_from(unpack_pos(x), t, 0) < 0;
+                    }) - P.begin());
+                P.insert(P.begin() + ptrdiff_t(i), tp);
+                U.lcpv.insert(U.lcpv.begin() + ptrdiff_t(i), 0);
+                u64 lcp = 0;
+                if (i) suf_cmp_lcp(unpack_pos(P[size_t(i - 1)]), pos, 0, lcp),
+                    U.lcpv[size_t(i)] = lcp;
+                if (i + 1 < P.size()) {
+                    suf_cmp_lcp(pos, unpack_pos(P[size_t(i + 1)]), 0, lcp);
+                    U.lcpv[size_t(i + 1)] = lcp;
+                }
+            }
+            U.tails.clear();
+            U.tails.shrink_to_fit();
+        }
+        U.Pout = std::move(P);
         return;
     }
     std::vector<u64> P2(n, 0);
@@ -1169,16 +1200,43 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                 // parse_abandoned: journaled with both costs by the slide;
                 // continue the byte expansion from the SAME cmp_len
             }
+            // ---- THE WINDOW-PLANE GUARD (TAPE_BINS.md: the bin budget caps
+            // EVERY term - chunk, keys, expansion buffers, dictionary). A
+            // class the parse refused still cannot balloon its window
+            // plane: delta shrinks to fit the budget (the same total
+            // bytes over more rounds), and a class too big even at the
+            // minimum delta is a plan error: DIE WITH THE NUMBERS (bin id,
+            // rows by term, bytes by term) - never the OS OOM killer.
+            const u64 delta_eff = std::max<u64>(16u,
+                std::min(delta, g_parse_plane_max / std::max<u64>(1, m)));
+            if (m * delta_eff > g_parse_plane_max) {
+                const u64 baseP = U.P.size() * 8, baseKb = U.Kb.size(),
+                         baseLp = U.Lp.size() * 4, baseTp = U.Tp.size() * 2;
+                std::fprintf(stderr,
+                    "EXPAND_PLANE_REFUSED unit=%" PRIu64 " bin_rows=%" PRIu64
+                    " class=[%" PRIu64 ",%" PRIu64 ") class_rows=%" PRIu64
+                    " cmp_len=%" PRIu64 " delta=%" PRIu64 " delta_eff=%" PRIu64
+                    " plane_bytes=%" PRIu64 " budget=%" PRIu64
+                    " bin_base_bytes=P:%" PRIu64 "+Kb:%" PRIu64
+                    "+Lp:%" PRIu64 "+Tp:%" PRIu64
+                    " rule=class_too_big_even_at_min_delta_is_a_plan_error\n",
+                    unit_id, U.P.size(), sp.first, sp.second, m,
+                    cmpLen, delta, delta_eff, m * delta_eff, g_parse_plane_max,
+                    baseP, baseKb, baseLp, baseTp);
+                die("EXPAND_PLANE: the class's window plane cannot fit the"
+                    " bin budget at any delta - refusing with the numbers"
+                    " before the memory does damage");
+            }
             // ---- the readhead: only the wanted bytes are billed ----
             const double tr0 = now_sec();
             rows.clear();
             for (u64 i = sp.first; i < sp.second; ++i)
                 rows.emplace_back(unpack_pos(P[size_t(i)]), u32(i - sp.first));
             std::sort(rows.begin(), rows.end());
-            rh.fetch(rows, cmpLen, delta);
+            rh.fetch(rows, cmpLen, delta_eff);
             st.bytes_read += rh.wantedBytes;
-            // ---- the window plane: row-major m x delta, END-padded ----
-            plane.assign(size_t(m) * size_t(delta), SENTINEL_SYMBOL);
+            // ---- the window plane: row-major m x delta_eff, END-padded ----
+            plane.assign(size_t(m) * size_t(delta_eff), SENTINEL_SYMBOL);
             for (u64 i = 0; i < m; ++i) {
                 const auto& rw = rh.rowWin[size_t(i)];
                 if (!rw.len) continue;
@@ -1187,7 +1245,7 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                         " off=" + std::to_string(rw.off) + " len=" +
                         std::to_string(rw.len) + " buf=" +
                         std::to_string(rh.buf.size()));
-                std::memcpy(&plane[size_t(i) * size_t(delta)],
+                std::memcpy(&plane[size_t(i) * size_t(delta_eff)],
                             rh.buf.data() + size_t(rw.off), size_t(rw.len));
             }
             // ABSOLUTE indexing: settle_small (mode 1) addresses the slot
@@ -1196,9 +1254,9 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
             slot.assign(size_t(sp.second), 0u);
             for (u64 i = sp.first; i < sp.second; ++i)
                 slot[size_t(i)] = u32(i - sp.first);
-            wk_keys = &plane; wk_slot = &slot; wk_kk = delta; kbase_off = cmpLen;
+            wk_keys = &plane; wk_slot = &slot; wk_kk = delta_eff; kbase_off = cmpLen;
             deep.clear(); smallS.clear();
-            radixWindow(std::make_pair(sp.first, sp.second), cmpLen, delta,
+            radixWindow(std::make_pair(sp.first, sp.second), cmpLen, delta_eff,
                         plane, slot, deep, smallS);
             if (!smallS.empty()) {
                 settle_small(smallS, 1, carry);
@@ -1208,11 +1266,13 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
             st.t_extract += now_sec() - tr0;
             std::fprintf(stderr,
                 "EXPAND unit=%" PRIu64 " rows=%" PRIu64 " cmp_len=%" PRIu64
-                " delta=%" PRIu64 " wanted_bytes=%" PRIu64 " skipped_bytes=%" PRIu64
+                " delta=%" PRIu64 " delta_eff=%" PRIu64
+                " wanted_bytes=%" PRIu64 " skipped_bytes=%" PRIu64
                 " segments=%" PRIu64 " survivors=%zu"
-                " rule=readhead_bills_wanted_bytes_only\n",
-                unit_id, m, cmpLen, delta, rh.wantedBytes, rh.skippedBytes,
-                rh.segments, deep.size());
+                " plane_bytes=%" PRIu64
+                " rule=readhead_bills_wanted_bytes_only;plane_is_a_budgeted_term\n",
+                unit_id, m, cmpLen, delta, delta_eff, rh.wantedBytes,
+                rh.skippedBytes, rh.segments, deep.size(), m * delta_eff);
             if (deep.empty()) return;   // the class is fully ordered
             // every survivor span tied through the whole window: all grow
             const u64 grownCmp = cmpLen + delta;
@@ -1261,6 +1321,25 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                 die("PARSE_ROUNDS: unit " + std::to_string(unit_id) +
                     " class of " + std::to_string(m) + " rows exceeded the round"
                     " machinery - refusing with the numbers");
+            // ---- THE IDS-PLANE GUARD (TAPE_BINS.md: the bin budget caps
+            // EVERY term). The parse's keying planes - ids (rows x B x 4)
+            // and off0 (rows x 4) - are terms like any other: a class
+            // whose keying cannot fit the budget REFUSES the parse (the
+            // census misrouted it; the expansion owns it from here) with
+            // the numbers, never a ballooning allocation.
+            const u64 idsBytes = m * B * 4, off0Bytes = m * 4;
+            if (idsBytes + off0Bytes > g_parse_plane_max) {
+                std::fprintf(stderr,
+                    "PARSE_REFUSED unit=%" PRIu64 " class_rows=%" PRIu64
+                    " budget=%" PRIu64 " phrase_budget=%" PRIu64
+                    " ids_bytes=%" PRIu64 " off0_bytes=%" PRIu64
+                    " cmp_len=%" PRIu64
+                    " rule=parse_keying_over_budget_back_to_byte_expansion\n",
+                    unit_id, m, g_parse_plane_max, B, idsBytes, off0Bytes,
+                    cmpLen);
+                refused = true;
+                return false;
+            }
             ClassParse pc;
             pc.phraseBudget = B;
             pc.ids.assign(size_t(m) * size_t(B), ~0u);
@@ -1430,6 +1509,26 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                     const Frontier::Ent& e = F.ents[size_t(entIdx)];
                     idOut[i] = intern(F.arena.data() + e.off, e.len, e.h, false);
                     prev = e.end;
+                }
+                // THE MID-CAPTURE REVERSE SLIDE (the dictionary is a
+                // budgeted term like any other): a hostile class can grow
+                // the dictionary past the class's pure byte-expansion cost
+                // DURING the capture - refusing only at round end would
+                // let the balloon happen first. Check periodically; on the
+                // crossing, abandon immediately with both costs.
+                if ((ri & 0xff) == 0xff) {
+                    const u64 dNow = pc.dictBytes();
+                    if (dNow > byteCost) {
+                        PARSE_ABANDONED.fetch_add(1);
+                        std::fprintf(stderr,
+                            "PARSE_ABANDONED unit=%" PRIu64 " rows=%" PRIu64
+                            " dict_bytes=%" PRIu64 " byte_expansion_cost=%" PRIu64
+                            " round=%" PRIu64 " mid_capture=row:%" PRIu64
+                            " rule=reverse_slide_no_class_traps_a_modality\n",
+                            unit_id, m, dNow, byteCost, parseRound, ri);
+                        refused = true;
+                        return false;
+                    }
                 }
                 // bound the frontier: no future row of this class lands in
                 // a phrase that ended below the next row's position
@@ -1672,10 +1771,13 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                 pc.dictBytes(), parseRound, ties.size(),
                 PARSE_PREFIX_REL.load(), B);
             // THE MODALITY-SLIDE BELT (cheap, always on): adjacent rows in
-            // the phrase-space sort MUST agree with the byte order - the
-            // comparator's construction claims exactly that. A mismatch is
-            // a capture or comparator bug: dump both streams and die.
-            if (m <= 4096) {
+            // a FULLY-RESOLVED phrase-space sort MUST agree with the byte
+            // order - the comparator's construction claims exactly that.
+            // TRUNC ties are NOT resolved (the widening/residual owns
+            // them); the belt runs only when the round left no ties. The
+            // adversarial fixture caught the belt firing on a deliberate
+            // equal-so-far pair (rows 1251/6251, both TRUNC after ~5 KB).
+            if (m <= 4096 && ties.empty()) {
                 for (u64 i = 1; i < m; ++i) {
                     const u64 pa = unpack_pos(P[size_t(sp.first + i - 1)]);
                     const u64 pb = unpack_pos(P[size_t(sp.first + i)]);
@@ -1748,8 +1850,33 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                 }
                 return true;   // the residual below finishes it
             }
-            // WIDEN x 8: more phrases per row AND a longer span
-            B = std::min<u64>(B * 8, g_parse_phrases * 512);
+            // WIDEN x 8: more phrases per row AND a longer span - but
+            // only while the NEXT round's keying fits the bin budget; a
+            // class whose widening cannot fit goes to the byte-exact LCE
+            // residual from this round's proven depth (the committed
+            // mechanism - never a ballooning ids plane).
+            const u64 Bnext = std::min<u64>(B * 8, g_parse_phrases * 512);
+            if (m * Bnext * 4 + off0Bytes > g_parse_plane_max) {
+                u64 provMin = ~0ull;
+                for (const auto& t : ties)
+                    for (u64 i2 = t.first; i2 < t.second; ++i2)
+                        provMin = std::min(provMin,
+                            provOf(u32(idx[size_t(i2)] - sp.first)));
+                for (const auto& t : ties) {
+                    residual.emplace_back(std::make_pair(sp.first + t.first,
+                                                         sp.first + t.second),
+                                          provMin);
+                    WAVE_KEY.tie_residual_groups.fetch_add(1);
+                    WAVE_KEY.tie_residual_rows.fetch_add(t.second - t.first);
+                }
+                std::fprintf(stderr,
+                    "PARSE_WIDEN_CAPPED unit=%" PRIu64 " rows=%" PRIu64
+                    " budget_next=%" PRIu64 " phrase_budget_next=%" PRIu64
+                    " rule=widening_over_budget_goes_to_the_lce_residual\n",
+                    unit_id, m, m * Bnext * 4 + off0Bytes, Bnext);
+                return true;   // the residual below finishes it
+            }
+            B = Bnext;
             spanBytes *= 8;
             if (spanBytes > (1ull << 30)) spanBytes = 1ull << 30;
         }
@@ -1834,6 +1961,8 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                 U.lcpv[size_t(i + 1)] = lcp;
             }
         }
+        U.tails.clear();   // consumed by the merge: POST_RUN_LIVE counts 0
+        U.tails.shrink_to_fit();
     }
 
     // ---- THE ORACLE GUARD (XSA_WAVEKEY_VERIFY=1): brute force, per bin ----
@@ -2604,6 +2733,24 @@ int main(int argc, char** argv) {
         });
     for (auto& th : sorterThreads) th.join();
     emitterThread.join();
+
+    // ---- POST-RUN LIVE == 0 (TAPE_BINS.md's memory law): every bin's
+    // every plane must be freed after emission - the same discipline the
+    // old ledger's LEDGER_FINAL enforced, asserted by walking the bins.
+    {
+        u64 liveBytes = 0, liveRows = 0;
+        for (const Unit& U : bins) {
+            liveBytes += U.P.size() * 8 + U.Pout.size() * 8 +
+                         U.Kb.size() + U.Lp.size() * 4 + U.Tp.size() * 2 +
+                         U.lcpv.size() * 8 + U.tails.size() * 8;
+            liveRows += U.Pout.size() + U.P.size();
+        }
+        if (liveBytes)
+            die("POST_RUN_LIVE: " + std::to_string(liveBytes) +
+                " bytes of bin planes survived emission (" +
+                std::to_string(liveRows) + " rows) - a leak, refusing");
+        std::fprintf(stderr, "POST_RUN_LIVE bytes=0 rows=0 rule=every_plane_freed\n");
+    }
 
     // ---- the emitter's terminal receipts (the unchanged contracts) ----
     if (endRows != 1)
