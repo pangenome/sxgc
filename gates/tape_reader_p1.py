@@ -29,7 +29,7 @@ for arm in ('main', 'reader'):
         producer = [str(baseline/'scatter_sort'), *common, '--scratch', str(run/'waves'), '--tape-bands', str(run/'bands'), '--pending-bands', '8']
     else:
         producer = [str(reader), *common, '--out-prefix', str(prefix), '--bands', str(run/'bands')]
-    finish = [str(baseline/'xsa_finish'), '--prefix', str(prefix), '--corpus', str(corpus), '--output', str(run/'product.sxi2'), '--threads', '24', '--poll-timeout', '86400000', '--wit-ram-budget', str(196 << 30), '--lcp-bands', str(run/'bands'), '--no-chi']
+    finish = [str(baseline/'xsa_finish'), '--prefix', str(prefix), '--corpus', str(corpus), '--output', str(run/'product.sxi2'), '--threads', '24', '--poll-timeout', '0', '--wit-ram-budget', str(196 << 30), '--lcp-bands', str(run/'bands'), '--no-chi']
     commands = [producer]
     if arm == 'main':
         commands.append([str(baseline/'cross_lcp_merge'), '--binbwt', str(corpus), '--out-prefix', str(prefix), '--threads', '24', '--tape-bands', str(run/'bands')])
