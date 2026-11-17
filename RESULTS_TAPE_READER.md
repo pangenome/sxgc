@@ -221,3 +221,43 @@ assertion at every boundary. Evidence and source/remap/plan hashes:
 `gates/tape_reader_evidence/banked_tail.json`. This bounded read-only check
 supports absence of this tail defect; it is not a new full chi certificate.
 The frozen container was not modified or rebuilt.
+
+## Scheduling gate: overcommit reproduced; bounded batches validated
+
+The instrumented 3,000,000,000-byte reproduction (base `58f17d4`, 24 threads)
+reproduces the exact refusal: live **178,485,790,772**, request **123,424**,
+cap **178,485,867,305**, remaining **76,533 bytes**, unit 22. Every reserve and
+release is journaled with a sequence, unit, class, bytes and running total.
+The replay is exact; there are **zero releases and zero served tie passes**
+before refusal. This is **OVERCOMMIT**, not a served-window leak. The compressed
+operation timeline and diagnosis are in `gates/tape_reader_evidence/`.
+
+The scheduler now queues declarations without allocating window planes. At a
+parked frontier it reserves demanded classes first, then prefetches the same
+phase in each consumer's order while credits fit. Unadmitted classes remain
+queued. Parse requests cannot displace windows that their consumer must process
+first. Waits poll credits and `stop.requested` and yield; the numerical hard
+refusal remains for a class that cannot make progress. The cap is unchanged.
+Chunks are destroyed before returning credits. Every successful run asserts
+`live == 0` and an empty per-unit ledger. An unused registry of freed request
+pointers was removed, and publishing service no longer dereferences a request
+after its consumer can free it.
+
+Nine fixture streams again match the brute-force references: **50,348,032
+corpus bytes, 50,348,041 rows, zero mismatches**, collision prefix relations
+**4,112**. All have `SS_DONE` and zero final live bytes. A constrained test uses
+**1,000,000,000 budget bytes**, 6,291,456 corpus bytes and 6,291,457 rows:
+**207 passes**, 31.37 seconds native wall, exact docsep oracle SHA
+`48834e29ea79d3390eafa0292756f08f92311924673759bd7051768b4e124aa7`.
+Every ledger operation replays within the cap and finishes at zero. This proves
+bounded progress and preserved fixture order; it does **not** prove P1's pass
+or I/O requirements. Detailed receipts: `scheduling_validation.json`.
+
+For the next P1 run, `XSA_TAPE_RCHAR_LIMIT=9000000000` is an explicit in-process
+measurement guard checked after each completed reader sweep. Once this
+monotonic counter exceeds 3 x 3,000,000,000 corpus bytes, acceptance is already
+impossible. It exits with counters, never a signal or wall deadline. Such an
+arm is **VOID**, never a completed benchmark or an accepted ratio. A bounded
+16,384-byte test with limit 1 exits 2 after pass 1 with rchar 41,162 and no
+`SS_DONE`. The comparison producer and reader will both be compiled from this
+branch, including the tail predicate fix that must ride to main.

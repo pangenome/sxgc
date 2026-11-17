@@ -1613,15 +1613,22 @@ static std::string prefix_label(const u8* pre, u64 n) {
 struct Unit;
 struct Bound {
     u64 cap = 0;
+    std::string stopPath;
     std::mutex mu;
     std::condition_variable cv;
-    u64 live = 0, peak = 0;
+    u64 live = 0, peak = 0, sequence = 0;
+    void journal(const char* op, u64 bytes, u64 unit, const char* phase) {
+        std::fprintf(stderr, "LEDGER seq=%" PRIu64 " op=%s unit=%" PRIu64
+            " phase=%s bytes=%" PRIu64 " live=%" PRIu64 " cap=%" PRIu64 "\n",
+            ++sequence, op, unit, phase, bytes, live, cap);
+    }
     // per-unit receipts for the die message
     struct Receipt { u64 unit; const char* phase; u64 rows; u64 bytes; };
     std::map<std::pair<u64, std::string>, Receipt> holding;
-    void add(u64 bytes, u64 unit, const char* phase, u64 rows) {
+    bool add(u64 bytes, u64 unit, const char* phase, u64 rows, bool tryOnly = false) {
         std::unique_lock<std::mutex> lk(mu);
-        if (live + bytes > cap) {
+        if (bytes > cap || live > cap - bytes) {
+            if (tryOnly) return false;
             std::string acc;
             for (const auto& entry : holding) {
                 const auto& r = entry.second;
@@ -1637,11 +1644,13 @@ struct Bound {
                 "or the envelope is a knob error");
         }
         live += bytes;
+        journal("reserve", bytes, unit, phase);
         if (live > peak) peak = live;
         if (bytes) {
             auto& r = holding[{unit, phase}];
             r.unit = unit; r.phase = phase; r.rows = std::max(r.rows, rows); r.bytes += bytes;
         }
+        return true;
     }
     void sub(u64 bytes, u64 unit, const char* phase) {
         if (!bytes) return;
@@ -1653,6 +1662,7 @@ struct Bound {
                     " phase=" + phase + " bytes=" + std::to_string(bytes) +
                     " live=" + std::to_string(live));
             live -= bytes;
+            journal("release", bytes, unit, phase);
             it->second.bytes -= bytes;
             if (!it->second.bytes) holding.erase(it);
         }
@@ -1664,8 +1674,14 @@ struct Bound {
             die("TAPE_BOUND_REQUEST: unit=" + std::to_string(unit) +
                 " phase=" + phase + " rows=" + std::to_string(rows) +
                 " bytes=" + std::to_string(bytes) + " cap=" + std::to_string(cap));
-        cv.wait(lk, [&] { return live + bytes <= cap; });
+        while (live + bytes > cap) {
+            lk.unlock();
+            if (::access(stopPath.c_str(), F_OK) == 0) ::_exit(75);
+            std::this_thread::yield();
+            lk.lock();
+        }
         live += bytes;
+        journal("reserve", bytes, unit, phase);
         if (live > peak) peak = live;
         if (bytes) {
             auto& r = holding[{unit, phase}];
@@ -1717,6 +1733,8 @@ struct TapeRequest {
     u16 runT = 0;
     bool parse = false;        // level 3
     u64 phraseBudget = 0;
+    u64 deferredBytes = 0;
+    std::atomic<bool> wanted{false};
     u64 round = 0;
     std::unordered_map<u64, u32> dictOf;   // proper phrase hash -> local dict id
     std::unordered_map<u64, u32> pdictOf;  // partial phrase hash -> pdict index
@@ -1727,6 +1745,7 @@ struct TapeRequest {
 struct Bound;
 struct Tape {
     int fd = -1;
+    std::string stopPath;
     std::mutex mu;
     std::condition_variable cvReq;      // a request arrived
     std::vector<TapeRequest*> queue;
@@ -1826,9 +1845,8 @@ struct Tape {
             std::vector<TapeRequest*> snap;
             {
                 std::unique_lock<std::mutex> lk(mu);
-                cvReq.wait_for(lk, std::chrono::milliseconds(10), [&] {
-                    return stopping.load() || !queue.empty();
-                });
+                if (::access(stopPath.c_str(), F_OK) == 0) ::_exit(75);
+                std::this_thread::yield();
                 if (stopping.load() && queue.empty()) break;
                 if (queue.empty()) {
                     if (!idling) {
@@ -1847,11 +1865,66 @@ struct Tape {
                                  (admitting && admitting->load(std::memory_order_acquire));
                 if (busy) {
                     lk.unlock();
-                    ::usleep(1000);
+                    std::this_thread::yield();
                     beat(1);   // waiting for a live sorter to park: visible
                     continue;
                 }
-                snap.swap(queue);
+                // Reserve demanded classes first. Prefetch only the same phase
+                // of those units, in consumer order. Parse classes are consumed
+                // after windows even though they were declared interleaved.
+                std::map<u64, bool> phase;
+                for (auto* r : queue)
+                    if (r->wanted.load(std::memory_order_acquire)) phase[r->unitId] = r->parse;
+                auto admit = [&](TapeRequest* r) {
+                    if (r->deferredBytes) {
+                        if (!r->bill->add(r->deferredBytes, r->unitId, r->what, r->capRows, true)) return false;
+                        r->billedBytes = r->deferredBytes;
+                        r->deferredBytes = 0;
+                        r->chunk->P.reserve(size_t(r->capRows));
+                        if (r->parse) {
+                            r->chunk->ids.reserve(size_t(r->capRows) * size_t(r->phraseBudget));
+                            r->chunk->off0.reserve(size_t(r->capRows));
+                        } else r->chunk->Kb.reserve(size_t(r->capRows) * size_t(r->keyLen));
+                    }
+                    snap.push_back(r);
+                    return true;
+                };
+                std::set<TapeRequest*> chosen;
+                std::set<u64> blocked;
+                for (auto* r : queue) {
+                    if (!r->positional || r->wanted.load(std::memory_order_acquire)) {
+                        if (admit(r)) chosen.insert(r);
+                        else blocked.insert(r->unitId);
+                    }
+                }
+                for (auto* r : queue) {
+                    if (chosen.count(r) || blocked.count(r->unitId)) continue;
+                    auto it = phase.find(r->unitId);
+                    if (it == phase.end() || it->second != r->parse) continue;
+                    if (admit(r)) chosen.insert(r);
+                    else blocked.insert(r->unitId);
+                }
+                if (snap.empty() && !queue.empty()) {
+                    // A served consumer may not yet have woken, and the
+                    // emitter can independently return credits. Poll both.
+                    bool reclaiming = false;
+                    for (auto* r : queue) if (r->bill) {
+                        std::lock_guard<std::mutex> bl(r->bill->mu);
+                        for (const auto& e : r->bill->holding)
+                            if (e.first.second != "chunk" && e.first.second != "sort") reclaiming = true;
+                        break;
+                    }
+                    if (reclaiming) { lk.unlock(); std::this_thread::yield(); continue; }
+                    // No served class remains: all active consumers are parked.
+                    // The demanded class cannot fit beside the initial/sort
+                    // planes. Preserve the numerical refusal, never raise cap.
+                    for (auto* r : queue) if (r->wanted.load())
+                        r->bill->add(r->deferredBytes, r->unitId, r->what, r->capRows);
+                    die("TAPE_SCHEDULE: no demanded class can progress");
+                }
+                queue.erase(std::remove_if(queue.begin(), queue.end(),
+                    [&](TapeRequest* r) { return chosen.count(r); }), queue.end());
+                std::fprintf(stderr, "TAPE_BATCH admitted=%zu deferred=%zu\n", snap.size(), queue.size());
             }
             if (idling) {
                 idling = false;
@@ -2520,12 +2593,27 @@ struct Tape {
         std::fprintf(stderr,
             "PASS n=%" PRIu64 " requests=%zu rows=%" PRIu64 " unmatched=%" PRIu64
             " bytes=%" PRIu64 " wall=%.2f"
-            " rule=one_sweep_serves_every_outstanding_request\n",
+            " rule=one_sweep_serves_every_admitted_request\n",
             passes, snap.size(), rowsThis, unmatched, bytesThis, now_sec() - t0);
+        // Optional measurement guard: a monotonic I/O counter, never a
+        // wall deadline. A truncated arm is VOID, even if its prefix is fast.
+        if (const char* limitText = std::getenv("XSA_TAPE_RCHAR_LIMIT")) {
+            const u64 limit = std::strtoull(limitText, nullptr, 10);
+            u64 rc = 0, rb = 0, sc = 0;
+            read_proc_io(rc, rb, sc);
+            if (limit && rc > limit) {
+                std::fprintf(stderr, "SS_IO rchar=%" PRIu64 " read_bytes=%" PRIu64
+                    " syscr=%" PRIu64 " corpus_bytes=%" PRIu64 " rows_completed=0\n",
+                    rc, rb, sc, FILE_N);
+                die("TAPE_RCHAR_LIMIT: rchar=" + std::to_string(rc) +
+                    " limit=" + std::to_string(limit) + " corpus_bytes=" + std::to_string(FILE_N) +
+                    " completed_passes=" + std::to_string(passes) + " status=VOID");
+            }
+        }
         for (TapeRequest* r : snap) {
+            auto* target = r->servedTarget;
+            if (target) target->store(true, std::memory_order_release);
             r->served.store(true, std::memory_order_release);
-            if (r->servedTarget)
-                r->servedTarget->store(true, std::memory_order_release);
         }
     }
 };
@@ -3362,24 +3450,18 @@ int main(int argc, char** argv) {
     // ---- THE TAPE, THE BOUND, THE SORTERS, THE EMITTER ----
     Tape tape;
     tape.fd = fd;
+    tape.stopPath = rss.stopPath;
     std::atomic<u64> unparked{0};
     std::atomic<bool> admitting{false};
     tape.unparked = &unparked;
     tape.admitting = &admitting;
     Bound bound;
     bound.cap = capBytes;
-
-    // the follow-up requests of one in-flight unit are tracked globally (fuAll)
-    // and freed by the sorter when the unit's sort completes.
+    bound.stopPath = rss.stopPath;
 
     const u64 nSorters = std::max<u64>(1, threads);
     std::atomic<u64> nextSort{0};
     std::vector<std::thread> sorterThreads;
-    // every follow-up request a sorter issues is owned per UNIT and freed once
-    // the unit's sort completes (the chunk is the radix's window plane).
-    std::mutex fuMu;
-    std::vector<TapeRequest*> fuAll;
-
     auto sorterLoop = [&](u64 tid) {
         std::vector<u8> qpad;
         for (;;) {
@@ -3413,26 +3495,16 @@ int main(int argc, char** argv) {
                 rq->chunk->phraseBudget = fu.phraseBudget;
                 rq->capRows = fu.rowsExpected;   // exact: prefix + run filter
                 rq->chunk->key_len = fu.key_len;
-                // All groups enqueue before any is consumed. Waiting here can
-                // deadlock while retaining this unit's earlier groups. Refuse
-                // with the live ledger BEFORE reserving the next allocation.
+                // Declaration carries metadata only. The tape reserves planes
+                // at a parked scheduling frontier, before allocation/I/O.
                 const u64 plane = fu.parse
-                    ? fu.rowsExpected * (fu.phraseBudget * 4 + 20) +
-                      64 + g_parse_dict_allowance
+                    ? fu.rowsExpected * (fu.phraseBudget * 4 + 20) + 64 + g_parse_dict_allowance
                     : fu.rowsExpected * (fu.key_len + 16) + 64;
                 rq->what = fu.parse ? "parse" : "tie-window";
-                bound.add(plane, u, rq->what, fu.rowsExpected);
                 rq->bill = &bound;
-                rq->billedBytes = plane;
+                rq->deferredBytes = plane;
                 rq->billedRows = fu.rowsExpected;
-                rq->slabRows = 0; // exact reservation; only dictionary grows
-                rq->chunk->P.reserve(size_t(fu.rowsExpected));
-                if (fu.parse) {
-                    rq->chunk->ids.reserve(size_t(fu.rowsExpected) * size_t(fu.phraseBudget));
-                    rq->chunk->off0.reserve(size_t(fu.rowsExpected));
-                } else {
-                    rq->chunk->Kb.reserve(size_t(fu.rowsExpected) * size_t(fu.key_len));
-                }
+                rq->slabRows = 0;
                 rq->runFilter = fu.runFilter;
                 rq->filterBase = fu.filterBase;
                 rq->runSigma = fu.runSigma;
@@ -3440,27 +3512,25 @@ int main(int argc, char** argv) {
                 rq->runT = fu.runT;
                 fu.chunk = rq->chunk;
                 fu.rq = rq;
-                {
-                    std::lock_guard<std::mutex> lk(fuMu);
-                    fuAll.push_back(rq);
-                }
                 tape.enqueue(rq);
             };
             auto wait_followup = [&](FollowUp& fu) {
                 TapeRequest* rq = (TapeRequest*)fu.rq;
+                rq->wanted.store(true, std::memory_order_release);
                 unparked.fetch_sub(1);
                 u64 sp0 = 0;
                 while (!rq->served.load(std::memory_order_acquire)) {
-                    ::usleep(10000);
+                    if (::access(rss.stopPath.c_str(), F_OK) == 0) ::_exit(75);
+                    std::this_thread::yield();
                     if (++sp0 % 500 == 0) beat(1);   // a parked wait, visible
                 }
                 unparked.fetch_add(1);
             };
             auto free_followup = [&](FollowUp& fu) {
                 TapeRequest* rq = (TapeRequest*)fu.rq;
+                delete rq->chunk;
                 bound.sub(rq->billedBytes, u, rq->what);
                 bound.sub(rq->dictBilled, u, "parse-dict");
-                delete rq->chunk;
                 delete rq;
                 rq = nullptr;
             };
@@ -3686,6 +3756,7 @@ int main(int argc, char** argv) {
                     continue;
                 }
                 bound.live += wait;
+                bound.journal("reserve", wait, admitted, "chunk");
                 if (bound.live > bound.peak) bound.peak = bound.live;
                 bound.holding[{admitted, "chunk"}] = {admitted, "chunk", rowsCap, wait};
                 U.boundWaitBytes = wait;
@@ -3724,6 +3795,9 @@ int main(int argc, char** argv) {
     tape.stopping.store(true);
     tape.cvReq.notify_all();
     tapeThread.join();
+    if (bound.live != 0 || !bound.holding.empty())
+        die("TAPE_BOUND_FINAL: live=" + std::to_string(bound.live) + " expected=0");
+    std::fprintf(stderr, "LEDGER_FINAL live=0 peak=%" PRIu64 " events=%" PRIu64 "\n", bound.peak, bound.sequence);
 
     // ---- the emitter's terminal receipts (the unchanged contracts) ----
     if (endRows != 1)
