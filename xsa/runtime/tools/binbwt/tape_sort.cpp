@@ -1978,7 +1978,10 @@ struct Tape {
         std::vector<u64> servedRing(size_t(servedMaskVal), ~0ull);
         Frontier F;
         u64 rowsThis = 0, unmatched = 0, bytesThis = 0;
-        const u64 scanHi = KEY_N;
+        // Matchers report at prefix END, while KEY_N bounds row STARTS.
+        // Consume the lookahead for the last owned rows; tails remain owned
+        // exclusively by the sorter.
+        const u64 scanHi = std::min(FILE_N, KEY_N + maxPre - 1);
         for (u64 base = 0; base < scanHi;) {
             const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, scanHi - base);
             // the run-up covers BOTH the trigger rule's lookback AND the
@@ -2208,6 +2211,7 @@ struct Tape {
             bool servedAny = false;
             for (u32 on = M.outLink[at]; on; on = M.outLink[M.fail[on]]) {
             const u64 pFirst = pEnd - M.depth[on] + 1;
+            if (pFirst >= KEY_N) continue;
             const size_t slot = size_t(pFirst) & servedMask;
             if (servedRing[slot] == pFirst) continue;
             servedRing[slot] = pFirst;
