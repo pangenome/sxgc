@@ -2861,14 +2861,19 @@ int main(int argc, char** argv) {
             if (cE < W.bLo || cE >= W.bHi) return false;
             return !W.sliced || (p >= W.posLo && p < W.posHi);
         };
-        u8 qpad[SS_SURVEY_P + 8];
         auto wave_match = [&](u64 p) -> bool {
-            if (p + W.depth <= FILE_N) return wave_match_q(T + p, p);
-            if (W.depth > sizeof qpad) die("wave prefix longer than the survey cache in a tail test");
+            // The plan and sweep use remapped symbols, including finite tails.
+            // Mixing raw bytes with padded symbols can admit one tail twice.
             const u64 avail = p < FILE_N ? FILE_N - p : 0;
-            for (u64 i = 0; i < avail && i < W.depth; ++i) qpad[i] = u8(REMAP ? REMAP[T[p + i]] : T[p + i]);
-            for (u64 i = avail; i < W.depth; ++i) qpad[i] = SENTINEL_SYMBOL;
-            return wave_match_q(qpad, p);
+            auto symbol = [&](u64 i) -> unsigned {
+                return i < avail ? (REMAP ? REMAP[T[p + i]] : T[p + i])
+                                 : SENTINEL_SYMBOL;
+            };
+            for (u64 i = 0; i + 1 < W.depth; ++i)
+                if (symbol(i) != Wpre[i]) return false;
+            const unsigned c = symbol(W.depth - 1);
+            return c >= W.bLo && c < W.bHi &&
+                   (!W.sliced || (p >= W.posLo && p < W.posHi));
         };
         // THE CENSUS IS FREE: the wave's sampled positions are answered from the
         // survey's prefix cache, never from a fresh 4 KB page per sample (the
@@ -3656,14 +3661,19 @@ int main(int argc, char** argv) {
         };
         // The finite tails (KEY_N..N, including the virtual END at FILE_N) need the
         // END symbol past the text's end: T + p would read past the mapping.
-        u8 qpad[SS_SURVEY_P + 8];
         auto wave_match = [&](u64 p) -> bool {
-            if (p + W.depth <= FILE_N) return wave_match_q(T + p, p);
-            if (W.depth > sizeof qpad) die("wave prefix longer than the survey cache in a tail test");
+            // The plan and sweep use remapped symbols, including finite tails.
+            // Mixing raw bytes with padded symbols can admit one tail twice.
             const u64 avail = p < FILE_N ? FILE_N - p : 0;
-            for (u64 i = 0; i < avail && i < W.depth; ++i) qpad[i] = u8(REMAP ? REMAP[T[p + i]] : T[p + i]);
-            for (u64 i = avail; i < W.depth; ++i) qpad[i] = SENTINEL_SYMBOL;
-            return wave_match_q(qpad, p);
+            auto symbol = [&](u64 i) -> unsigned {
+                return i < avail ? (REMAP ? REMAP[T[p + i]] : T[p + i])
+                                 : SENTINEL_SYMBOL;
+            };
+            for (u64 i = 0; i + 1 < W.depth; ++i)
+                if (symbol(i) != Wpre[i]) return false;
+            const unsigned c = symbol(W.depth - 1);
+            return c >= W.bLo && c < W.bHi &&
+                   (!W.sliced || (p >= W.posLo && p < W.posHi));
         };
         // ---- THE BAND PLAN FOR THIS WAVE, ALREADY COMPUTED -----------------
         // The window's sweep had to have it BEFORE it routed a single row (see

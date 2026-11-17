@@ -154,3 +154,51 @@ Redundant sequential brute-force oracle processes **740391** and **763059**
 were still running at final inspection; they are not needed for the green
 fixture attestation, which uses the completed 24-thread oracle and exact SA
 identity. They have been left to finish without a timeout or signal.
+
+## Follow-up diagnosis: tail predicate regression
+
+The excess main row is localized: **offset 2,999,999,999**, raw suffix key
+`20`, remapped key `21`. The original production predicate in `ea90a63`
+admits it into wave 0 (depth 1, raw byte 32 in `[0,33)`) and wave 1
+(depth 2, remapped byte 33 followed by virtual END). The END suffix itself,
+offset 3,000,000,000, is admitted once. Several other finite tails are routed
+to the wrong wave because the non-padding path compares raw bytes with a
+symbol-space partition. This is a baseline predicate defect, not evidence
+that the reader dropped this row.
+
+Both census and emission predicates in the canonical
+`xsa/runtime/tools/binbwt/scatter_sort.cpp` now compare remapped symbols at
+all positions. No main output was filtered. The standalone regression extracts
+and compiles both actual production predicates from `ea90a63` and the patched
+source, then executes the recorded 20-wave plan against all 24 tails of the
+3,000,000,000-byte P1 corpus. Baseline: 25 admissions; patched: 24 admissions,
+each position exactly once. First **tail-only** stream divergence is rank 1:
+both keys/off are `20` / 2,999,999,999 (symbol key `21`), in baseline wave 0
+versus patched wave 1. This is not the first divergence of the full SA stream;
+no completed reader stream exists to establish that comparison.
+
+Reproduce: `python3 gates/tape_reader_tail_regression.py`.
+Evidence: `gates/tape_reader_evidence/tail_regression.json`, including source
+hashes. Native syntax compilation passes with an existing format warning at
+`WAVEKEY_LCP_SAMPLE_FAIL` (`W.preLen` is unsigned but printed with PRIu64).
+
+The second failure is still unresolved. The recorded refusal occurs before
+any tie pass is served; 6,921,364,352 tie-window bytes belong to one unit.
+`wavekey_sort_unit` enqueues all groups before waiting, and the tape waits for
+all active sorters to park before serving any. Thus waiting inside the current
+enqueue callback would deadlock, and serializing units alone does not bound
+one unit's aggregate windows. Release callbacks already return billed window
+and dictionary bytes after consumption. The evidence supports concurrent /
+aggregate enqueue pressure, not a demonstrated post-service reservation leak.
+No per-operation ledger timeline was captured by the old run; the snapshot
+must not be represented as one. A bounded request-batch scheduling change and
+its pass-accounting proof remain required. The cap and refusal remain intact.
+
+**Gate status remains NOT PASSED:** no new P1 measurement was launched, no
+accepted ratio, no P2 SHA pair, and no defensible pile-wall projection. The
+unchanged origin/main comparator has the demonstrated tail defect; a corrected
+baseline must be established before identity can attest correct order. No
+claim is made about banked containers with different corpora/maps. This work
+is incomplete and the pile remains blocked. No signals were sent and no files
+were written beneath PILE. The stale process notes above describe the prior
+run; the task setup reports those old processes are now dead.
