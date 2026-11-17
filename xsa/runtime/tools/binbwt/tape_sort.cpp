@@ -87,6 +87,8 @@ static const u8* T = nullptr;
 static u64 N = 0, FILE_N = 0;
 static u64 KEY_N = 0; // positions with >= 24 real bytes enter the tape; the rest are tails
 static constexpr u8 SENTINEL_SYMBOL = 0;
+static u64 CORPUS_PERIOD = 0;
+static std::vector<u64> PERIOD_RANK;
 static const u8* REMAP = nullptr;
 static uint16_t PAIRMAP[65536];
 static bool PAIRMAP_READY = false;
@@ -573,6 +575,42 @@ static void wavekey_sort_unit(std::vector<u64>& P, std::vector<u8>& Kb,
     st.rows += n;
     st.key_bytes += n * K;
     if (n < 2) return;
+    if (CORPUS_PERIOD) {
+        // The census verified EVERY text byte against this dictionary period.
+        // Equal phases have identical infinite continuations: finite suffix
+        // length alone orders them and gives their exact LCP.
+        std::sort(P.begin(), P.end(), [](u64 a, u64 b) {
+            const u64 pa = unpack_pos(a), pb = unpack_pos(b);
+            const u64 cap = std::min(FILE_N-pa, FILE_N-pb);
+            if (cap < CORPUS_PERIOD) {
+                for (u64 i = 0; i < cap; ++i) {
+                    const u8 x = T[(pa+i) % CORPUS_PERIOD];
+                    const u8 y = T[(pb+i) % CORPUS_PERIOD];
+                    if (x != y) return x < y;
+                }
+                return pa > pb;
+            }
+            const u64 ra = PERIOD_RANK[pa % CORPUS_PERIOD];
+            const u64 rb = PERIOD_RANK[pb % CORPUS_PERIOD];
+            return ra != rb ? ra < rb : pa > pb;
+        });
+        for (u64 i = 1; i < n; ++i) {
+            const u64 a = unpack_pos(P[i-1]), b = unpack_pos(P[i]);
+            const u64 cap = std::min(FILE_N-a, FILE_N-b);
+            if (a % CORPUS_PERIOD == b % CORPUS_PERIOD) lcpv[i] = cap;
+            else {
+                u64 l = 0;
+                while (l < cap && l < CORPUS_PERIOD &&
+                       T[(a+l) % CORPUS_PERIOD] == T[(b+l) % CORPUS_PERIOD]) ++l;
+                lcpv[i] = l;
+            }
+        }
+        ++st.rounds;
+        std::fprintf(stderr, "PERIOD_INDEX unit=%" PRIu64 " rows=%" PRIu64
+                     " dictionary_bytes=%" PRIu64 " verified_bytes=%" PRIu64
+                     " rule=exact_phase_and_finite_length\n", unit_id, n, CORPUS_PERIOD, FILE_N);
+        return;
+    }
     std::vector<u64> P2(n, 0);
     std::vector<u8> Kb2(n * size_t(K), 0);
     std::vector<u32> Lp2(n, 0);
@@ -1610,6 +1648,10 @@ struct Bound {
     }
     void wait_for(u64 bytes, u64 unit, const char* phase, u64 rows) {
         std::unique_lock<std::mutex> lk(mu);
+        if (bytes > cap)
+            die("TAPE_BOUND_REQUEST: unit=" + std::to_string(unit) +
+                " phase=" + phase + " rows=" + std::to_string(rows) +
+                " bytes=" + std::to_string(bytes) + " cap=" + std::to_string(cap));
         cv.wait(lk, [&] { return live + bytes <= cap; });
         live += bytes;
         if (live > peak) peak = live;
@@ -3133,8 +3175,38 @@ int main(int argc, char** argv) {
         ::close(rf);
         REMAP = remapBuf.data();
     }
+    // A bounded candidate dictionary; verify it during the existing census.
+    const u64 probe = std::min<u64>(4096, FILE_N);
+    std::vector<u64> failure(probe, 0);
+    for (u64 i = 1; i < probe; ++i) {
+        u64 j = failure[i-1];
+        while (j && T[i] != T[j]) j = failure[j-1];
+        if (T[i] == T[j]) ++j;
+        failure[i] = j;
+    }
+    const u64 candidate = probe - failure.back();
+    bool periodic = candidate * 2 <= probe;
     bool used[256]{};
-    for (u64 p = 0; p < FILE_N; ++p) used[T[p]] = true;
+    for (u64 p = 0; p < FILE_N; ++p) {
+        used[T[p]] = true;
+        if (periodic && T[p] != T[p % candidate]) periodic = false;
+    }
+    if (periodic) {
+        CORPUS_PERIOD = candidate;
+        std::vector<u64> phases(candidate);
+        for (u64 i = 0; i < candidate; ++i) phases[i] = i;
+        std::sort(phases.begin(), phases.end(), [&](u64 a, u64 b) {
+            for (u64 i = 0; i < candidate; ++i) {
+                const u8 x = T[(a+i) % candidate], y = T[(b+i) % candidate];
+                if (x != y) return x < y;
+            }
+            return false;
+        });
+        PERIOD_RANK.resize(candidate);
+        for (u64 i = 0; i < candidate; ++i) PERIOD_RANK[phases[i]] = i;
+        std::fprintf(stderr, "PERIOD_CERTIFICATE dictionary_bytes=%" PRIu64
+                     " verified_bytes=%" PRIu64 " rows=%" PRIu64 "\n", candidate, FILE_N, N);
+    }
     unsigned present = 0;
     for (unsigned c = 0; c < 256; ++c) present += used[c];
     if (REMAP) {
