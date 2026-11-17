@@ -202,3 +202,22 @@ claim is made about banked containers with different corpora/maps. This work
 is incomplete and the pile remains blocked. No signals were sent and no files
 were written beneath PILE. The stale process notes above describe the prior
 run; the task setup reports those old processes are now dead.
+
+## Banked 100 GB tail check (third-leg gate)
+
+**ABSENT.** The frozen container's own `xsa-build.log` identifies source
+`6b87aa1620505cff02bc93e6c008483d0d895a83`, predating the defective raw-byte
+fast path. Its actual production predicate calls `sym_at`, which remaps every
+byte and supplies virtual END. Thus the premise that this particular bank was
+built with the demonstrated defective predicate is not supported by provenance.
+
+`python3 gates/tape_reader_banked_tail.py` extracts that production predicate
+and both patched production sites, compiles them, and executes the recorded
+123-wave partition against the last 23 bytes plus END of the 100,000,000,000-byte
+corpus. All three admit exactly 24 tails, each once, with identical wave
+assignments. No duplicate and no changed assignment. The partition prefixes
+are reconstructed from contiguous lexicographic interval boundaries, with an
+assertion at every boundary. Evidence and source/remap/plan hashes:
+`gates/tape_reader_evidence/banked_tail.json`. This bounded read-only check
+supports absence of this tail defect; it is not a new full chi certificate.
+The frozen container was not modified or rebuilt.

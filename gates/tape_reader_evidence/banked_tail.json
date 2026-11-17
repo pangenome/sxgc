@@ -1,0 +1,19 @@
+{
+  "test": "bounded production tail predicates against recorded banked wave plan",
+  "corpus_bytes": 100000000000,
+  "tail_rows": 24,
+  "waves": 123,
+  "baseline_admissions": 24,
+  "fixed_admissions": 24,
+  "duplicate_offsets": [],
+  "changed_assignments": [],
+  "verdict": "ABSENT",
+  "banked_source_commit": "6b87aa1620505cff02bc93e6c008483d0d895a83",
+  "baseline_source_sha256": "4da2617bd2bb762ddcdf3429a01d0a81b2def2ba43d3f86a18436151692db76e",
+  "fixed_source_sha256": "37a192a1a3b14ed59c6578d1628df74c1f115e009429975e66590179baa42361",
+  "source_commit": "58f17d43aafe23983c11888be7fe9c14ba29ad0a",
+  "tail_hex": "7320697320746865206669727374207265706f7274206f",
+  "remap_sha256": "0ce35ac950b471c0da0e9a7773a6d82871d53d5de5a496bb9ffda6078b896780",
+  "plan_sha256": "727e94c5908854016ff9cce6f6c67ec7ea458045a656153cd6b7ff5d3ae98edc",
+  "limitation": "Read-only predicate check; no claim about unrelated banked chi defects; frozen container untouched."
+}
