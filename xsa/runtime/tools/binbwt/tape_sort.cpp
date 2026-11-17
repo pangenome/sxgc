@@ -1988,11 +1988,23 @@ struct Tape {
                 if (snap.empty() && !queue.empty()) {
                     // A served consumer may not yet have woken, and the
                     // emitter can independently return credits. Poll both.
+                    // "chunk", "sort" and "follow-meta" are the LONG-TERM
+                    // holds (declaration metadata is released only at
+                    // free_followup, after the plane it describes): waiting
+                    // on them reclaims nothing. The consumption phases
+                    // (tie-window, parse, parse-dict) are what a waking
+                    // consumer releases. Counting follow-meta here spun
+                    // the admission loop forever while every consumer was
+                    // parked (measured: 3 GB arm, 24 parked sorters, no
+                    // TAPE_BATCH after pass 1 for 90+ minutes).
                     bool reclaiming = false;
                     for (auto* r : queue) if (r->bill) {
                         std::lock_guard<std::mutex> bl(r->bill->mu);
-                        for (const auto& e : r->bill->holding)
-                            if (e.first.second != "chunk" && e.first.second != "sort") reclaiming = true;
+                        for (const auto& e : r->bill->holding) {
+                            const std::string& ph = e.first.second;
+                            if (ph != "chunk" && ph != "sort" && ph != "follow-meta")
+                                reclaiming = true;
+                        }
                         break;
                     }
                     if (reclaiming) { lk.unlock(); std::this_thread::yield(); continue; }
