@@ -246,6 +246,7 @@ static inline int prefix_cmp(u64 a, u64 b, u64 depth) {
 // refusal fires BEFORE the OS OOM killer's, with numbers.
 static u64 g_mem_guard_mb = 196 * 1024;    // XSA_MEM_GUARD_MB (0 = off)
 struct RssMonitor {
+    std::string stopPath;
     std::thread th;
     std::atomic<bool> stop{false};
     std::atomic<u64> peak_anon{0}, peak_file{0}, peak_total{0};
@@ -267,6 +268,10 @@ struct RssMonitor {
     void start() {
         th = std::thread([this] {
             while (!stop.load(std::memory_order_relaxed)) {
+                if (!stopPath.empty() && ::access(stopPath.c_str(), F_OK) == 0) {
+                    std::fprintf(stderr, "STOP_OBSERVED source=%s exit=75\n", stopPath.c_str());
+                    ::_exit(75);
+                }
                 u64 a = 0, f = 0, t = 0;
                 if (sample(a, f, t)) {
                     if (a > peak_anon.load()) peak_anon.store(a);
@@ -1896,6 +1901,17 @@ struct Tape {
     };
     void runPass(std::vector<TapeRequest*>& snap, std::vector<u8>& buf, std::vector<u8>& pad) {
         const double t0 = now_sec();
+        for (const char* cls : {"unit", "tie-window", "parse"}) {
+            u64 requests = 0, rows = 0, reserved = 0, round = 0;
+            for (const TapeRequest* r : snap) if (std::strcmp(r->what, cls) == 0) {
+                ++requests; rows += r->capRows; reserved += r->billedBytes;
+                round = std::max(round, r->round);
+            }
+            if (requests) std::fprintf(stderr, "PASS_REQUEST pass=%" PRIu64
+                " class=%s requests=%" PRIu64 " rows_capacity=%" PRIu64
+                " reserved_bytes=%" PRIu64 " round_max=%" PRIu64 "\n",
+                passes+1, cls, requests, rows, reserved, round);
+        }
         auto kmHash = [](const u8* q) -> u64 {   // FNV-1a over the k-mer at q
             u64 h = 1469598103934665603ull;
             for (u64 i = 0; i < g_pfp_k; ++i) { h ^= q[i]; h *= 1099511628211ull; }
@@ -3249,6 +3265,7 @@ int main(int argc, char** argv) {
 
     // ---- THE SURVEY (one pass) ----
     RssMonitor rss;
+    rss.stopPath = bandsDir + "/../stop.requested";
     rss.start();
     Survey S;
     survey_run(S, fd, FILE_N, sample_n, std::max<u64>(1, threads));
@@ -3386,30 +3403,26 @@ int main(int argc, char** argv) {
                 rq->chunk->phraseBudget = fu.phraseBudget;
                 rq->capRows = fu.rowsExpected;   // exact: prefix + run filter
                 rq->chunk->key_len = fu.key_len;
+                // All groups enqueue before any is consumed. Waiting here can
+                // deadlock while retaining this unit's earlier groups. Refuse
+                // with the live ledger BEFORE reserving the next allocation.
+                const u64 plane = fu.parse
+                    ? fu.rowsExpected * (fu.phraseBudget * 4 + 20) +
+                      64 + g_parse_dict_allowance
+                    : fu.rowsExpected * (fu.key_len + 16) + 64;
+                rq->what = fu.parse ? "parse" : "tie-window";
+                bound.add(plane, u, rq->what, fu.rowsExpected);
+                rq->bill = &bound;
+                rq->billedBytes = plane;
+                rq->billedRows = fu.rowsExpected;
+                rq->slabRows = 0; // exact reservation; only dictionary grows
                 rq->chunk->P.reserve(size_t(fu.rowsExpected));
                 if (fu.parse) {
-                    rq->chunk->ids.reserve(size_t(fu.rowsExpected) *
-                                           size_t(fu.phraseBudget));
+                    rq->chunk->ids.reserve(size_t(fu.rowsExpected) * size_t(fu.phraseBudget));
                     rq->chunk->off0.reserve(size_t(fu.rowsExpected));
                 } else {
-                    rq->chunk->Kb.reserve(size_t(fu.rowsExpected) *
-                                          size_t(fu.key_len));
+                    rq->chunk->Kb.reserve(size_t(fu.rowsExpected) * size_t(fu.key_len));
                 }
-                // THE CHUNK IS EXACT (prefix + run filter), so the asker
-                // prices it exactly and waits for capacity here - PARKED while
-                // blocked, so the tape's pass fixpoint still fires.
-                const u64 plane = fu.parse
-                    ? fu.rowsExpected * (fu.phraseBudget * 4 + 8) +
-                      64 + g_parse_dict_allowance
-                    : fu.rowsExpected * (fu.key_len + 8) + 64;
-                // (parse) the dict allowance is a small HEADROOM GATE: the
-                // actual dictionary bytes are BILLED BY THE CAPTURE as they
-                // intern (r->dictBilled), so the bound tracks the real plane
-                // and free_followup returns exactly what was taken.
-                unparked.fetch_sub(1);
-                bound.wait_for(plane, u, "tie-window", fu.rowsExpected);
-                unparked.fetch_add(1);
-                rq->slabRows = std::max<u64>(1, fu.rowsExpected);
                 rq->runFilter = fu.runFilter;
                 rq->filterBase = fu.filterBase;
                 rq->runSigma = fu.runSigma;
@@ -3435,8 +3448,7 @@ int main(int argc, char** argv) {
             };
             auto free_followup = [&](FollowUp& fu) {
                 TapeRequest* rq = (TapeRequest*)fu.rq;
-                bound.sub(fu.rowsExpected * (fu.key_len + 8) + 64 +
-                          rq->dictBilled);
+                bound.sub(rq->billedBytes + rq->dictBilled);
                 delete rq->chunk;
                 delete rq;
                 rq = nullptr;
