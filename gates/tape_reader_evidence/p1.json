@@ -1,0 +1,617 @@
+{
+  "verdict": "NOT_PASSED_BOTH_ARMS_VOID",
+  "accepted_p1_ratio": null,
+  "corpus_bytes": 3000000000,
+  "expected_rows": 3000000001,
+  "receipts": [
+    {
+      "binary_sha256": "0a7f00e08e7b2f8ef00700be0376acb508e78ab4113ad21511b5e9487448c5ca",
+      "binary_source": "ea90a63",
+      "arm": "main",
+      "corpus_bytes": 3000000000,
+      "rows_completed": 0,
+      "wall": 1171.8703556209803,
+      "producer_receipt": null,
+      "status": "VOID",
+      "exits": [
+        2,
+        2,
+        75
+      ],
+      "io": {
+        "rchar": 3639351928941,
+        "wchar": 93782323795,
+        "syscr": 645972382,
+        "syscw": 48860688,
+        "read_bytes": 3005157376,
+        "write_bytes": 93892685824,
+        "cancelled_write_bytes": 27592589312
+      },
+      "rchar_per_corpus": 1213.117309647,
+      "flags": [
+        "--corpus",
+        "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/TAPEREADER/p1/remap-256.bin",
+        "--threads",
+        "24",
+        "--budget-bytes",
+        "210453397504",
+        "--memory-gb",
+        "196",
+        "--scratch-budget-bytes",
+        "268435456000"
+      ],
+      "commands": [
+        [
+          "/tmp/pre-tapereader/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-nj1y8agk/bundle/scatter_sort",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/remap-256.bin",
+          "--threads",
+          "24",
+          "--budget-bytes",
+          "210453397504",
+          "--memory-gb",
+          "196",
+          "--scratch-budget-bytes",
+          "268435456000",
+          "--scratch",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/main/waves",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/main/bands",
+          "--pending-bands",
+          "8"
+        ],
+        [
+          "/tmp/pre-tapereader/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-nj1y8agk/bundle/cross_lcp_merge",
+          "--binbwt",
+          "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/remap-256.bin",
+          "--out-prefix",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/main/merged/frag",
+          "--threads",
+          "24",
+          "--tape-bands",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/main/bands"
+        ],
+        [
+          "/tmp/pre-tapereader/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-nj1y8agk/bundle/xsa_finish",
+          "--prefix",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/main/merged/frag",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/remap-256.bin",
+          "--output",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/main/product.sxi2",
+          "--threads",
+          "24",
+          "--poll-timeout",
+          "0",
+          "--wit-ram-budget",
+          "210453397504",
+          "--lcp-bands",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/main/bands",
+          "--no-chi"
+        ]
+      ],
+      "cold": "posix_fadvise DONTNEED before arm",
+      "environment": {
+        "XSA_MEM_GUARD_MB": "200704",
+        "CROSS_V2_PIECES": "1",
+        "CROSS_V2_PIECE_WINDOW": "1100",
+        "XSA_TAPE_WAIT_S": "inf"
+      },
+      "pass_requests": []
+    },
+    {
+      "binary_sha256": "725bf0fe966c1dc924838ca8876e83de930ec25cd75476ae39bf12265321dd13",
+      "binary_source": "4a72ee18204a32c1abd197af2bc5acffdbd76518",
+      "arm": "reader",
+      "corpus_bytes": 3000000000,
+      "rows_completed": 0,
+      "wall": 183.50602317694575,
+      "producer_receipt": null,
+      "status": "VOID",
+      "exits": [
+        2,
+        75
+      ],
+      "io": {
+        "rchar": 6047421983,
+        "wchar": 9333,
+        "syscr": 2512,
+        "syscw": 105,
+        "read_bytes": 3000000512,
+        "write_bytes": 20480,
+        "cancelled_write_bytes": 0
+      },
+      "rchar_per_corpus": 2.015807327666667,
+      "flags": [
+        "--corpus",
+        "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+        "--remap",
+        "/mnt/nvme2n1/erikg/TAPEREADER/p1/remap-256.bin",
+        "--threads",
+        "24",
+        "--budget-bytes",
+        "210453397504",
+        "--memory-gb",
+        "196",
+        "--scratch-budget-bytes",
+        "268435456000"
+      ],
+      "commands": [
+        [
+          "/mnt/nvme2n1/erikg/TAPEREADER/bin/tape_sort.ledger",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/remap-256.bin",
+          "--threads",
+          "24",
+          "--budget-bytes",
+          "210453397504",
+          "--memory-gb",
+          "196",
+          "--scratch-budget-bytes",
+          "268435456000",
+          "--out-prefix",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/reader/merged/frag",
+          "--bands",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/reader/bands"
+        ],
+        [
+          "/tmp/pre-tapereader/xsa/target/release/build/xsa-2dfcfb6cbbc0de33/out/stages-nj1y8agk/bundle/xsa_finish",
+          "--prefix",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/reader/merged/frag",
+          "--corpus",
+          "/mnt/nvme2n1/erikg/KEYRADIX/c3g.txt",
+          "--remap",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/remap-256.bin",
+          "--output",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/reader/product.sxi2",
+          "--threads",
+          "24",
+          "--poll-timeout",
+          "0",
+          "--wit-ram-budget",
+          "210453397504",
+          "--lcp-bands",
+          "/mnt/nvme2n1/erikg/TAPEREADER/p1/reader/bands",
+          "--no-chi"
+        ]
+      ],
+      "cold": "posix_fadvise DONTNEED before arm",
+      "environment": {
+        "XSA_MEM_GUARD_MB": "200704",
+        "CROSS_V2_PIECES": "1",
+        "CROSS_V2_PIECE_WINDOW": "1100",
+        "XSA_TAPE_WAIT_S": "inf"
+      },
+      "pass_requests": [
+        "PASS_REQUEST pass=1 class=unit requests=40 rows_capacity=3751602845 reserved_bytes=0 round_max=0",
+        "PASS n=1 requests=40 rows=2999999977 unmatched=0 bytes=3046870395 wall=152.73 rule=one_sweep_serves_every_outstanding_request"
+      ]
+    }
+  ],
+  "main_failure": {
+    "message": "scatter row coverage != n; concat: tape bands: too many rows",
+    "bands": 1414,
+    "observed_band_rows": 3000000002
+  },
+  "reader_failure": {
+    "live_bytes": 178485790772,
+    "requested_bytes": 123424,
+    "cap_bytes": 178485867305,
+    "unit": 22,
+    "request_class": "tie-window",
+    "request_rows": 30,
+    "remaining_bytes": 76533,
+    "completed_passes": 1,
+    "tie_passes_completed": 0,
+    "phase_totals_bytes": {
+      "chunk": 82535262590,
+      "sort": 89029163830,
+      "tie-window": 6921364352
+    },
+    "ledger": [
+      {
+        "unit": 0,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 45189567,
+        "bytes": 994170474
+      },
+      {
+        "unit": 0,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 36103915,
+        "bytes": 1660780090
+      },
+      {
+        "unit": 1,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 124692098,
+        "bytes": 2743226156
+      },
+      {
+        "unit": 1,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 99587456,
+        "bytes": 4581022976
+      },
+      {
+        "unit": 2,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 75821161,
+        "bytes": 1668065542
+      },
+      {
+        "unit": 2,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 60412866,
+        "bytes": 2778991836
+      },
+      {
+        "unit": 3,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 117979598,
+        "bytes": 2595551156
+      },
+      {
+        "unit": 3,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 94723444,
+        "bytes": 4357278424
+      },
+      {
+        "unit": 4,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 106646161,
+        "bytes": 2346215542
+      },
+      {
+        "unit": 4,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 85451851,
+        "bytes": 3930785146
+      },
+      {
+        "unit": 5,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 90981473,
+        "bytes": 2001592406
+      },
+      {
+        "unit": 5,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 72486624,
+        "bytes": 3334384704
+      },
+      {
+        "unit": 6,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 107466473,
+        "bytes": 2364262406
+      },
+      {
+        "unit": 6,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 85782456,
+        "bytes": 3945992976
+      },
+      {
+        "unit": 7,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 102167014,
+        "bytes": 2247674308
+      },
+      {
+        "unit": 7,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 81681183,
+        "bytes": 3757334418
+      },
+      {
+        "unit": 8,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 118346783,
+        "bytes": 2603629226
+      },
+      {
+        "unit": 8,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 94624998,
+        "bytes": 4352749908
+      },
+      {
+        "unit": 9,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 119416168,
+        "bytes": 2627155696
+      },
+      {
+        "unit": 9,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 95480506,
+        "bytes": 4392103276
+      },
+      {
+        "unit": 10,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 120317008,
+        "bytes": 2646974176
+      },
+      {
+        "unit": 10,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 96201178,
+        "bytes": 4425254188
+      },
+      {
+        "unit": 11,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 124733348,
+        "bytes": 2744133656
+      },
+      {
+        "unit": 11,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 100167513,
+        "bytes": 4607705598
+      },
+      {
+        "unit": 12,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 84016786,
+        "bytes": 1848369292
+      },
+      {
+        "unit": 12,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 67006908,
+        "bytes": 3082317768
+      },
+      {
+        "unit": 13,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 123522294,
+        "bytes": 2717490468
+      },
+      {
+        "unit": 13,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 98765407,
+        "bytes": 4543208722
+      },
+      {
+        "unit": 14,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 98386072,
+        "bytes": 2164493584
+      },
+      {
+        "unit": 14,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 78656428,
+        "bytes": 3618195688
+      },
+      {
+        "unit": 15,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 117147098,
+        "bytes": 2577236156
+      },
+      {
+        "unit": 15,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 93586572,
+        "bytes": 4304982312
+      },
+      {
+        "unit": 16,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 106791473,
+        "bytes": 2349412406
+      },
+      {
+        "unit": 16,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 85759405,
+        "bytes": 3944932630
+      },
+      {
+        "unit": 17,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 94643348,
+        "bytes": 2082153656
+      },
+      {
+        "unit": 17,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 75303949,
+        "bytes": 3463981654
+      },
+      {
+        "unit": 18,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 108598603,
+        "bytes": 2389169266
+      },
+      {
+        "unit": 18,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 86826454,
+        "bytes": 3994016884
+      },
+      {
+        "unit": 19,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 109955556,
+        "bytes": 2419022232
+      },
+      {
+        "unit": 19,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 87912013,
+        "bytes": 4043952598
+      },
+      {
+        "unit": 20,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 117440536,
+        "bytes": 2583691792
+      },
+      {
+        "unit": 20,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 94220800,
+        "bytes": 4334156800
+      },
+      {
+        "unit": 21,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 74731786,
+        "bytes": 1644099292
+      },
+      {
+        "unit": 21,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 59719372,
+        "bytes": 2747091112
+      },
+      {
+        "unit": 22,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 21391909,
+        "bytes": 470621998
+      },
+      {
+        "unit": 22,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 17061099,
+        "bytes": 784810554
+      },
+      {
+        "unit": 22,
+        "phase": "tie-window",
+        "rows_capacity_or_max_group": 64,
+        "bytes": 6921364352
+      },
+      {
+        "unit": 23,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 109933298,
+        "bytes": 2418532556
+      },
+      {
+        "unit": 23,
+        "phase": "sort",
+        "rows_capacity_or_max_group": 87894208,
+        "bytes": 4043133568
+      },
+      {
+        "unit": 24,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 66387882,
+        "bytes": 1460533404
+      },
+      {
+        "unit": 25,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 124984598,
+        "bytes": 2749661156
+      },
+      {
+        "unit": 26,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 59350223,
+        "bytes": 1305704906
+      },
+      {
+        "unit": 27,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 122069911,
+        "bytes": 2685538042
+      },
+      {
+        "unit": 28,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 69926161,
+        "bytes": 1538375542
+      },
+      {
+        "unit": 29,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 63365428,
+        "bytes": 1394039416
+      },
+      {
+        "unit": 30,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 119221786,
+        "bytes": 2622879292
+      },
+      {
+        "unit": 31,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 43761473,
+        "bytes": 962752406
+      },
+      {
+        "unit": 32,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 122693348,
+        "bytes": 2699253656
+      },
+      {
+        "unit": 33,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 42448036,
+        "bytes": 933856792
+      },
+      {
+        "unit": 34,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 92569598,
+        "bytes": 2036531156
+      },
+      {
+        "unit": 35,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 123050536,
+        "bytes": 2707111792
+      },
+      {
+        "unit": 36,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 16405223,
+        "bytes": 360914906
+      },
+      {
+        "unit": 37,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 102469859,
+        "bytes": 2254336898
+      },
+      {
+        "unit": 38,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 124970154,
+        "bytes": 2749343388
+      },
+      {
+        "unit": 39,
+        "phase": "chunk",
+        "rows_capacity_or_max_group": 37613018,
+        "bytes": 827486396
+      }
+    ],
+    "pass_receipt": "PASS n=1 requests=40 rows=2999999977 unmatched=0 bytes=3046870395 wall=152.73 rule=one_sweep_serves_every_outstanding_request"
+  },
+  "method_limitation": "Identical resource flags and shared remap; native output plumbing differs. This is not an integrated xsa build CLI identity test.",
+  "stopped": "No tuning or P2 after this failed gate; no pile-wall projection."
+}
