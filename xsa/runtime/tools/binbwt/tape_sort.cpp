@@ -1731,8 +1731,12 @@ struct Tape {
             outLink.assign(n, 0);
             depth.assign(n, 0);
             std::vector<u32> bfs;
-            for (unsigned c = 0; c < 256; ++c)
-                if (nodes[0][c]) bfs.push_back(nodes[0][c] - 1);
+            for (unsigned c = 0; c < 256; ++c) {
+                if (nodes[0][c]) {
+                    depth[nodes[0][c] - 1] = 1;
+                    bfs.push_back(nodes[0][c] - 1);
+                }
+            }
             for (size_t h = 0; h < bfs.size(); ++h) {
                 const u32 v = bfs[h];
                 outLink[v] = !reqs[v].empty() ? v : outLink[fail[v]];
