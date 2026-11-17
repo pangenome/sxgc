@@ -2176,6 +2176,7 @@ struct PieceCutter {
 // ===========================================================================
 
 int main(int argc, char** argv) {
+    const double tMain0 = now_sec();
     // THE CHUNK ALLOCATOR POLICY (carried over): a low mmap threshold makes
     // every bin-sized allocation a mapping, so a freed plane is a munmap
     // and the RSS receipt tracks the working set.
@@ -2713,6 +2714,6 @@ int main(int argc, char** argv) {
         "SS_DONE n=%" PRIu64 " units=%" PRIu64 " passes=%" PRIu64
         " expansion_rounds=%" PRIu64 " scatter_s=%.2f run_s=%.2f total_s=%.2f\n",
         N, u64(256), u64(1), WAVE_KEY.rounds_max.load(),
-        tScatterS, now_sec() - tRun, now_sec());
+        tScatterS, now_sec() - tRun, now_sec() - tMain0);
     return 0;
 }
