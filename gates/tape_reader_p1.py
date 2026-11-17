@@ -16,8 +16,20 @@ import time
 root, corpus, baseline, reader = map(Path, sys.argv[1:5])
 corpus_bytes = corpus.stat().st_size
 assert corpus_bytes == 3_000_000_000
-common = ['--corpus', str(corpus), '--threads', '24', '--budget-bytes', str(196 << 30), '--memory-gb', '196', '--scratch-budget-bytes', str(250 << 30)]
+remap = root/'remap-256.bin'
+common = ['--corpus', str(corpus), '--remap', str(remap), '--threads', '24', '--budget-bytes', str(196 << 30), '--memory-gb', '196', '--scratch-budget-bytes', str(250 << 30)]
 root.mkdir()
+used = set()
+with corpus.open('rb') as f:
+    while chunk := f.read(8 << 20):
+        used.update(chunk)
+if len(used) == 256:
+    raise RuntimeError('all 256 bytes present: native tape consumer has no reserved END code')
+table = [0]*256
+for c, code in zip(sorted(used), range(1,len(used)+1)): table[c] = code
+for c, code in zip(sorted(set(range(256))-used), [0]+list(range(len(used)+1,256))): table[c] = code
+remap.write_bytes(bytes(table))
+print(json.dumps(dict(preparation='shared order-preserving remap', corpus_bytes=corpus_bytes, used_symbols=len(used), remap_sha256=hashlib.sha256(bytes(table)).hexdigest())), flush=True)
 receipts = []
 for arm in ('main', 'reader'):
     run = root/arm
@@ -29,10 +41,10 @@ for arm in ('main', 'reader'):
         producer = [str(baseline/'scatter_sort'), *common, '--scratch', str(run/'waves'), '--tape-bands', str(run/'bands'), '--pending-bands', '8']
     else:
         producer = [str(reader), *common, '--out-prefix', str(prefix), '--bands', str(run/'bands')]
-    finish = [str(baseline/'xsa_finish'), '--prefix', str(prefix), '--corpus', str(corpus), '--output', str(run/'product.sxi2'), '--threads', '24', '--poll-timeout', '0', '--wit-ram-budget', str(196 << 30), '--lcp-bands', str(run/'bands'), '--no-chi']
+    finish = [str(baseline/'xsa_finish'), '--prefix', str(prefix), '--corpus', str(corpus), '--remap', str(remap), '--output', str(run/'product.sxi2'), '--threads', '24', '--poll-timeout', '0', '--wit-ram-budget', str(196 << 30), '--lcp-bands', str(run/'bands'), '--no-chi']
     commands = [producer]
     if arm == 'main':
-        commands.append([str(baseline/'cross_lcp_merge'), '--binbwt', str(corpus), '--out-prefix', str(prefix), '--threads', '24', '--tape-bands', str(run/'bands')])
+        commands.append([str(baseline/'cross_lcp_merge'), '--binbwt', str(corpus), '--remap', str(remap), '--out-prefix', str(prefix), '--threads', '24', '--tape-bands', str(run/'bands')])
     commands.append(finish)
     with corpus.open('rb') as f:
         os.posix_fadvise(f.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
@@ -45,7 +57,7 @@ for arm in ('main', 'reader'):
     while any(p.poll() is None for p in ps):
         try:
             lastio = {k: int(v) for k,v in (line.split(':') for line in Path(f'/proc/{ps[0].pid}/io').read_text().splitlines())}
-        except (FileNotFoundError, ProcessLookupError):
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
             pass
         if any(p.poll() not in (None, 0) for p in ps):
             (run/'stop.requested').touch()
