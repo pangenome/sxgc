@@ -14,7 +14,7 @@ import sys
 import time
 
 root, corpus, baseline, reader = map(Path, sys.argv[1:5])
-corpus_bytes = corpus.stat().st_size()
+corpus_bytes = corpus.stat().st_size
 assert corpus_bytes == 3_000_000_000
 common = ['--corpus', str(corpus), '--threads', '24', '--budget-bytes', str(196 << 30), '--memory-gb', '196', '--scratch-budget-bytes', str(250 << 30)]
 root.mkdir()
