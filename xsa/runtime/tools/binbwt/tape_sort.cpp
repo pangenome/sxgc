@@ -1618,14 +1618,16 @@ struct Bound {
     u64 live = 0, peak = 0;
     // per-unit receipts for the die message
     struct Receipt { u64 unit; const char* phase; u64 rows; u64 bytes; };
-    std::vector<Receipt> holding;
+    std::map<std::pair<u64, std::string>, Receipt> holding;
     void add(u64 bytes, u64 unit, const char* phase, u64 rows) {
         std::unique_lock<std::mutex> lk(mu);
         if (live + bytes > cap) {
             std::string acc;
-            for (const auto& r : holding)
+            for (const auto& entry : holding) {
+                const auto& r = entry.second;
                 acc += " unit=" + std::to_string(r.unit) + " phase=" + r.phase +
                        " rows=" + std::to_string(r.rows) + " bytes=" + std::to_string(r.bytes);
+            }
             std::fprintf(stderr,
                 "TAPE_BOUND_VIOLATION live=%" PRIu64 " want=%" PRIu64 " cap=%" PRIu64
                 " unit=%" PRIu64 " phase=%s rows=%" PRIu64 "%s\n",
@@ -1636,18 +1638,23 @@ struct Bound {
         }
         live += bytes;
         if (live > peak) peak = live;
-        if (bytes) holding.push_back({unit, phase, rows, bytes});
+        if (bytes) {
+            auto& r = holding[{unit, phase}];
+            r.unit = unit; r.phase = phase; r.rows = std::max(r.rows, rows); r.bytes += bytes;
+        }
     }
-    void sub(u64 bytes) {
+    void sub(u64 bytes, u64 unit, const char* phase) {
+        if (!bytes) return;
         {
             std::lock_guard<std::mutex> lk(mu);
-            live = live >= bytes ? live - bytes : 0;
-            for (size_t i = holding.size(); i-- > 0;) {
-                if (holding[i].bytes >= bytes && holding[i].bytes == bytes) {
-                    holding.erase(holding.begin() + ptrdiff_t(i));
-                    if (!bytes) break;
-                }
-            }
+            auto it = holding.find({unit, phase});
+            if (it == holding.end() || it->second.bytes < bytes || live < bytes)
+                die("TAPE_BOUND_RELEASE: unit=" + std::to_string(unit) +
+                    " phase=" + phase + " bytes=" + std::to_string(bytes) +
+                    " live=" + std::to_string(live));
+            live -= bytes;
+            it->second.bytes -= bytes;
+            if (!it->second.bytes) holding.erase(it);
         }
         cv.notify_all();
     }
@@ -1660,7 +1667,10 @@ struct Bound {
         cv.wait(lk, [&] { return live + bytes <= cap; });
         live += bytes;
         if (live > peak) peak = live;
-        if (bytes) holding.push_back({unit, phase, rows, bytes});
+        if (bytes) {
+            auto& r = holding[{unit, phase}];
+            r.unit = unit; r.phase = phase; r.rows = std::max(r.rows, rows); r.bytes += bytes;
+        }
         (void)unit; (void)phase; (void)rows;
     }
 };
@@ -3448,7 +3458,8 @@ int main(int argc, char** argv) {
             };
             auto free_followup = [&](FollowUp& fu) {
                 TapeRequest* rq = (TapeRequest*)fu.rq;
-                bound.sub(rq->billedBytes + rq->dictBilled);
+                bound.sub(rq->billedBytes, u, rq->what);
+                bound.sub(rq->dictBilled, u, "parse-dict");
                 delete rq->chunk;
                 delete rq;
                 rq = nullptr;
@@ -3524,7 +3535,8 @@ int main(int argc, char** argv) {
             bswap_release(U.chunk->Lp);
             bswap_release(U.chunk->Tp);
             const u64 hold = emitHold * std::max<u64>(1, U.P.size()) + 16 * 1024;
-            bound.sub(U.boundWaitBytes + U.boundSortBytes);
+            bound.sub(U.boundWaitBytes, u, "chunk");
+            bound.sub(U.boundSortBytes, u, "sort");
             bound.add(hold, u, "emit-hold", U.P.size());
             U.pub.store(U.P.empty() ? 1ull : (unpack_pos(U.P.back()) + 2),
                         std::memory_order_release);
@@ -3644,7 +3656,7 @@ int main(int argc, char** argv) {
             }
             emittedRows.fetch_add(rows);
             if (rows) prevLast = unpack_pos(U.P.back());
-            bound.sub(emitHold * std::max<u64>(1, rows) + 16 * 1024);
+            bound.sub(emitHold * std::max<u64>(1, rows) + 16 * 1024, u, "emit-hold");
             U.emitted.store(true, std::memory_order_release);
             bswap_release(U.P);
             bswap_release(U.lcpv);
@@ -3675,7 +3687,7 @@ int main(int argc, char** argv) {
                 }
                 bound.live += wait;
                 if (bound.live > bound.peak) bound.peak = bound.live;
-                bound.holding.push_back({admitted, "chunk", rowsCap, wait});
+                bound.holding[{admitted, "chunk"}] = {admitted, "chunk", rowsCap, wait};
                 U.boundWaitBytes = wait;
             }
             bound.cv.notify_all();

@@ -5,6 +5,7 @@ Resource flags are identical. Output plumbing necessarily differs: main uses
 scatter_sort + concat, while tape_sort emits pieces directly. No timeout/signals.
 """
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -57,7 +58,7 @@ for arm in ('main', 'reader'):
         lastio.update({k:int(v) for k,v in re.findall(r'(rchar|read_bytes|syscr)=(\d+)',io.group())})
     fields = dict(re.findall(r'(\w+)=([\w.]+)',done.group())) if done else {}
     rchar = lastio.get('rchar',0)
-    receipt = dict(arm=arm, corpus_bytes=corpus_bytes, rows_completed=int(fields.get('n',0)), wall=time.monotonic()-started, producer_receipt=done.group() if done else None, status='COMPLETE' if done and all(p.returncode==0 for p in ps) else 'VOID', exits=[p.returncode for p in ps], io=lastio, rchar_per_corpus=rchar/corpus_bytes, flags=common, commands=commands, cold='posix_fadvise DONTNEED before arm', pass_requests=[x for x in text.splitlines() if x.startswith(('PASS_REQUEST ', 'PASS ', 'PASS_TOTAL '))])
+    receipt = dict(binary_sha256=hashlib.sha256(Path(producer[0]).read_bytes()).hexdigest(), binary_source=os.environ.get('TAPE_READER_COMMIT', 'unknown') if arm == 'reader' else 'ea90a63', arm=arm, corpus_bytes=corpus_bytes, rows_completed=int(fields.get('n',0)), wall=time.monotonic()-started, producer_receipt=done.group() if done else None, status='COMPLETE' if done and all(p.returncode==0 for p in ps) else 'VOID', exits=[p.returncode for p in ps], io=lastio, rchar_per_corpus=rchar/corpus_bytes, flags=common, commands=commands, cold='posix_fadvise DONTNEED before arm', pass_requests=[x for x in text.splitlines() if x.startswith(('PASS_REQUEST ', 'PASS ', 'PASS_TOTAL '))])
     (run/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
     receipts.append(receipt)
     print(json.dumps(receipt),flush=True)
