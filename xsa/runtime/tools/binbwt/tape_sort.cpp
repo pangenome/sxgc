@@ -1912,11 +1912,12 @@ struct Tape {
         Matcher M;
         u64 posRows = 0;
         std::vector<std::pair<u64, TapeRequest*>> posIdx;   // (position, request)
+        for (const TapeRequest* r : snap)
+            if (r->positional) posRows += r->positions.size();
+        posIdx.reserve(size_t(posRows));
         for (size_t ri = 0; ri < snap.size(); ++ri) {
             TapeRequest* r = snap[ri];
             if (r->positional) {
-                posRows += r->positions.size();
-                posIdx.reserve(posIdx.size() + r->positions.size());
                 for (u64 p : r->positions) posIdx.emplace_back(p, r);
                 continue;
             }
