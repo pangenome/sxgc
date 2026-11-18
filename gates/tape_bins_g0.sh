@@ -16,10 +16,12 @@
 # is already 2600x the corpus and any crossing is a runaway by definition.
 set -u
 BIN=${BIN:-/tmp/bins_sort}
+ENGINE=${G0_ENGINE:-reactive}   # reactive | gparse (AMENDMENT 5)
 BRUTE=${BRUTE:-/tmp/brute_sa}
 FIX=${FIX:-/tmp/tr_p3/fixtures}
 GEN=${GEN:-/tmp/parse_gate_adv}
 RD=${RD:-/mnt/nvme2n1/erikg/TAPEREADER/bins-g0}
+[ "$ENGINE" = gparse ] && RD=${RD}-gparse
 J=$RD/JOURNAL.txt
 mkdir -p "$RD"
 : > "$J"
@@ -34,8 +36,8 @@ run_one() {
   local rd="$RD/$name"
   rm -rf "$rd"; mkdir -p "$rd/bands" "$rd/merged"
   local log="$rd/bins_sort.log"
-  say "START name=$name corpus=$corpus bytes=$(stat -c %s "$corpus" 2>/dev/null)"
-  env XSA_MEM_GUARD_MB=16384 "$@" TRIE_TAP=1 XSA_WAVEKEY_VERIFY=1 \
+  say "START name=$name engine=$ENGINE corpus=$corpus bytes=$(stat -c %s "$corpus" 2>/dev/null)"
+  env XSA_ENGINE=$ENGINE XSA_MEM_GUARD_MB=16384 "$@" TRIE_TAP=1 XSA_WAVEKEY_VERIFY=1 \
     SS_LCP_SLICE_WINDOW=1048576 CROSS_V2_PIECE_WINDOW=1000000 \
     "$BIN" --corpus "$corpus" --out-prefix "$rd/merged/frag" --bands "$rd/bands" \
     --budget-bytes 16000000000 --threads 8 \

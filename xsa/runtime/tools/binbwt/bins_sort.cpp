@@ -3295,10 +3295,23 @@ int main(int argc, char** argv) {
             std::sort(keys.begin(), keys.end());
             std::vector<std::pair<u64, u64>> bandLoHi;
             {
+                // THE GREEDY PACK (the ledger must be able to honor the
+                // knob): close a band BEFORE adding a key that would
+                // cross the workspace line. A single key whose rows
+                // alone exceed the target still becomes its own band -
+                // and the ledger die is then a genuine finding (the
+                // mixed_64mb receipt: the packing overshoot made band 0
+                // 69 MB against the 64 MB knob).
                 u64 cum = 0, lo = 0;
                 for (size_t i = 0; i < keys.size(); ++i) {
-                    cum += keyRows.at(keys[i]);
+                    const u64 kr = keyRows.at(keys[i]);
                     const bool last = (i + 1 == keys.size());
+                    if (cum && cum + kr > targetRows) {
+                        bandLoHi.emplace_back(lo, keys[i]);
+                        lo = keys[i];
+                        cum = 0;
+                    }
+                    cum += kr;
                     if (cum >= targetRows || last) {
                         bandLoHi.emplace_back(
                             lo, last ? (u64(1) << (8 * DKEY)) : keys[i] + 1);
