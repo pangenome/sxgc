@@ -1389,7 +1389,15 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
         u64 B = g_parse_phrases;
         u64 spanBytes = B * (g_pfp_k + g_pfp_w) * 2 + 4096;
         u64 parseRound = 0;
-        // the class's rows, ascending (the readhead's order)
+        // the class's rows, ascending (the readhead's order). REBUILT EVERY
+        // ROUND below: each round's sort PERMUTES P's span, so the pidx of
+        // a given row CHANGES between rounds. pc.ids is keyed by the pidx
+        // the CAPTURE writes (rows[].second) and the comparator/extraction
+        // key it by the CURRENT pidx (idx[slot]-sp.first) - the two spaces
+        // must be the SAME round's, or the comparator reads crossed
+        // streams after the first permutation (the 3 GB receipt: the
+        // belt caught a deep class whose round-3 sort crossed two rows'
+        // captures 8006 bytes in).
         std::vector<std::pair<u64, u32>> rows;
         rows.reserve(size_t(m));
         for (u64 i = sp.first; i < sp.second; ++i)
@@ -1417,6 +1425,10 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
         for (;;) {
             ++parseRound;
             g_trace_round.store(parseRound);
+            rows.clear();
+            for (u64 i = sp.first; i < sp.second; ++i)
+                rows.emplace_back(unpack_pos(P[size_t(i)]), u32(i - sp.first));
+            std::sort(rows.begin(), rows.end());
             if (parseRound > g_parse_rounds + 1)
                 die("PARSE_ROUNDS: unit " + std::to_string(unit_id) +
                     " class of " + std::to_string(m) + " rows exceeded the round"
@@ -1981,7 +1993,13 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                     const u64 pa = unpack_pos(P[size_t(sp.first + i - 1)]);
                     const u64 pb = unpack_pos(P[size_t(sp.first + i)]);
                     if (suf_cmp_from(pa, pb, 0) >= 0) {
-                        auto dumpRow = [&](u64 r) {
+                        auto dumpRow = [&](u64 slot) {
+                            // slot = the SORTED position; the keying lives
+                            // at the P-INDEX idx[slot]-sp.first (the dump
+                            // once read the slot directly and printed two
+                            // unrelated rows as "identical streams")
+                            const u32 r = u32(idx[size_t(slot)] - sp.first);
+                            (void)r;
                             std::string hx;
                             for (u64 q2 = 0; q2 < B; ++q2) {
                                 const u32 id = pc.ids[size_t(r) * size_t(B) + q2];
@@ -2009,8 +2027,108 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                             " pos_a=%" PRIu64 " pos_b=%" PRIu64
                             " off0_a=%u off0_b=%u\n  A: %s\n  B: %s\n",
                             unit_id, i, pa, pb,
-                            pc.off0[size_t(i - 1)], pc.off0[size_t(i)],
+                            pc.off0[size_t(u32(idx[size_t(i - 1)] - sp.first))],
+                            pc.off0[size_t(u32(idx[size_t(i)] - sp.first))],
                             dumpRow(i - 1).c_str(), dumpRow(i).c_str());
+                        {   // the resolution context: the first id pair that
+                            // differs, both phrases' full hex, the brute LCP
+                            const u32 ra = u32(idx[size_t(i - 1)] - sp.first);
+                            const u32 rb = u32(idx[size_t(i)] - sp.first);
+                            for (u64 q2 = 0; q2 + 1 < B; ++q2) {
+                                const u32 ia2 = pc.ids[size_t(u64(ra)) * size_t(B) + q2];
+                                const u32 ib2 = pc.ids[size_t(u64(rb)) * size_t(B) + q2];
+                                if (ia2 == ib2) continue;
+                                auto hexOf = [&](u32 id) {
+                                    const auto& ph = (id & 0x80000000u)
+                                        ? pc.pdict[size_t(id & 0x7fffffffu)]
+                                        : pc.dict[size_t(id)];
+                                    std::string h;
+                                    char t[8];
+                                    for (u8 x : ph) { std::snprintf(t, sizeof t, "%02x", x); h += t; }
+                                    return h;
+                                };
+                                u64 blcp = 0;
+                                suf_cmp_lcp(pa, pb, 0, blcp);
+                                std::fprintf(stderr,
+                                    "  DIVERGE q=%" PRIu64 " ida=%u idb=%u"
+                                    " hexa=%s hexb=%s brute_lcp=%" PRIu64
+                                    " consumed_a_to_q=%" PRIu64 "\n",
+                                    q2, ia2, ib2, hexOf(ia2).c_str(),
+                                    hexOf(ib2).c_str(), blcp,
+                                    [&] { u64 c2 = 0;
+                                        const u32 i0 = pc.ids[size_t(u64(ra)) * size_t(B)];
+                                        c2 += ((i0 & 0x80000000u)
+                                            ? pc.pdict[size_t(i0 & 0x7fffffffu)]
+                                            : pc.dict[size_t(i0)]).size()
+                                            - std::min<u64>(((i0 & 0x80000000u)
+                                            ? pc.pdict[size_t(i0 & 0x7fffffffu)]
+                                            : pc.dict[size_t(i0)]).size(),
+                                            pc.off0[size_t(ra)]);
+                                        for (u64 q3 = 1; q3 < q2; ++q3) {
+                                            const u32 id3 = pc.ids[size_t(u64(ra)) * size_t(B) + q3];
+                                            if (id3 == ~0u || id3 == 0xFFFFFFFEu) break;
+                                            c2 += ((id3 & 0x80000000u)
+                                                ? pc.pdict[size_t(id3 & 0x7fffffffu)]
+                                                : pc.dict[size_t(id3)]).size();
+                                        }
+                                        return c2; }());
+                                break;
+                            }
+                            {   // reconstruct each row's byte stream from
+                                // its phrase contents and diff vs the truth
+                                u64 bl2 = 0;
+                                suf_cmp_lcp(pa, pb, 0, bl2);
+                                const u64 brute_lcp = bl2;
+                                auto dumpRecon = [&](u64 slot, const char* tag) {
+                                    const u32 r = u32(idx[size_t(slot)] - sp.first);
+                                    const u64 pos = unpack_pos(P[size_t(sp.first + slot)]);
+                                    std::string rec;
+                                    for (u64 q2 = 0; q2 < B; ++q2) {
+                                        const u32 id2 = pc.ids[size_t(u64(r)) * size_t(B) + q2];
+                                        if (id2 == ~0u || id2 == 0xFFFFFFFEu) break;
+                                        const auto& ph = (id2 & 0x80000000u)
+                                            ? pc.pdict[size_t(id2 & 0x7fffffffu)]
+                                            : pc.dict[size_t(id2)];
+                                        u64 from2 = (q2 == 0) ? std::min<u64>(pc.off0[size_t(r)], ph.size()) : 0;
+                                        rec.append(ph.begin() + from2, ph.end());
+                                        if (rec.size() > 3 * brute_lcp / 2 + 64) break;
+                                    }
+                                    u64 nErr = 0, firstErr = ~0ull;
+                                    const u64 lim = std::min<u64>(rec.size(), 3 * brute_lcp / 2 + 64);
+                                    for (u64 xi = 0; xi < lim; ++xi) {
+                                        const u8 tb = REMAP ? REMAP[T[pos + xi]] : T[pos + xi];
+                                        if (u8(rec[xi]) != tb) {
+                                            if (firstErr == ~0ull) firstErr = xi;
+                                            ++nErr;
+                                        }
+                                    }
+                                    std::string rh, th;
+                                    char t9[8];
+                                    u64 lo = (firstErr == ~0ull ? brute_lcp - 16 : firstErr > 16 ? firstErr - 16 : 0);
+                                    for (u64 xi = lo; xi < lo + 48 && xi < rec.size(); ++xi) {
+                                        std::snprintf(t9, sizeof t9, "%02x", u8(rec[xi])); rh += t9;
+                                    }
+                                    for (u64 xi = lo; xi < lo + 48; ++xi) {
+                                        std::snprintf(t9, sizeof t9, "%02x",
+                                            REMAP ? REMAP[T[pos + xi]] : T[pos + xi]); th += t9;
+                                    }
+                                    std::fprintf(stderr,
+                                        "  RECON %s slot=%llu pidx=%u pos=%llu rec_len=%llu"
+                                        " first_mismatch=%llu mismatches=%llu/%llu"
+                                        " rec[%llu..]=%s true[%llu..]=%s\n",
+                                        tag, (unsigned long long)slot, r,
+                                        (unsigned long long)pos,
+                                        (unsigned long long)rec.size(),
+                                        (unsigned long long)firstErr,
+                                        (unsigned long long)nErr,
+                                        (unsigned long long)lim,
+                                        (unsigned long long)lo, rh.c_str(),
+                                        (unsigned long long)lo, th.c_str());
+                                };
+                                dumpRecon(i - 1, "A");
+                                dumpRecon(i, "B");
+                            }
+                        }
                         die("PARSE_ORDER: the phrase-space order disagrees with the"
                             " byte order - a capture or comparator bug; refusing");
                     }
