@@ -274,3 +274,44 @@ via XSA_BAND_WORKSPACE_BYTES. The first default filled the box (a 3 GB
 build with a 196 GB budget ran ONE band at 119 GB RSS). Both shapes are
 valid measurements; the receipts must LABEL which setting each arm ran
 (the SS_PLAN line's workspace_bytes is the label of record).
+
+## AMENDMENT 5 — the global parse: bins from the PFP keys, then the sort, 2026-11-17
+
+ONE doc-aware PFP parse of the corpus replaces the reactive per-class parses
+AND the sampled census. Prior art in-repo: sA/include/pfp_iterator (the
+HPRC-era machinery). The Sawzall's no-decisions property is PRESERVED and
+strengthened — one parse up front, uniform, no trigger anywhere.
+
+THE MACHINE:
+PARSE (once)    a doc-aware PFP parse: each document parses independently
+                (the no-cross law makes documents independent parse units);
+                trigger guard at document starts; output = the dictionary of
+                distinct phrases + the phrase sequence per document.
+                Workspace ~1.2 N (parse array N/L x ~12 B + dictionary
+                ~0.2-0.4 N); disc-resident at pile scale, sliced per band.
+DICTIONARY      the distinct phrases are SORTED (byte order) — the dictionary
+                is the small text; RAM-sortable at band scale; its sort may
+                use the leaf-sort machinery recursively. Phrase ids <- byte
+                rank. (The old sA machinery's problem, solved at small scale.)
+KEYS            every suffix becomes a phrase-position row: (first phrase
+                rank, intra-phrase offset, following phrase sequence).
+                N/L rows with 4-byte first keys instead of N rows with 8-byte
+                byte keys.
+BINS            THE PARSE IS THE CENSUS: radix bins are (first-phrase-rank,
+                offset) ranges — exact, balanced by measured frequency, no
+                sampling, no plan trie. Amendment 3's band law applies
+                unchanged: workspace knob -> K bands of phrase-key ranges,
+                one band resident, filtered scans or parse-array slices.
+SORT            phrase-space leaf sort within bands; ties in phrase space
+                resolve by the byte-slide comparator at ambiguities only
+                (bounded, journaled, oracle-gated — the counterexample law
+                stands: exactness never rests on prefix-freeness).
+IDENTICAL       the output container is the same artifact; the invariance
+                gate (band-size-invariant SHA) applies to this machine too.
+
+THE COMPARISON LAW: the reactive per-class machine finishes its in-flight
+3 GB arm as the labeled comparison receipt (do not kill it; it runs
+detached at 24 threads while this is built). Both machines face the same
+gates: minis -> G0 fixtures + adversarial vs the brute oracle -> G1 cold
+-> G2 identity -> G3. The numbers choose what launches the pile; no
+opinions.
