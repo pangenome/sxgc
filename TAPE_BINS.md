@@ -206,3 +206,38 @@ than two expansion rounds would have. Accepted deliberately — CPU is the
 abundant resource (256 cores), rchar is the scarce one, and simplicity is
 the reliability strategy. The G0 adversarial shapes (single, period2, the
 collision case) remain the proof of exactness.
+
+## AMENDMENT 3 — bands: one band of workspace, ever; the output streams in key
+## order with no merge, 2026-11-17
+
+A BAND is a contiguous chunk of the FINAL OUTPUT — a key range — collected
+and sorted INDEPENDENTLY. There is no all-bins position-list artifact:
+position lists for the whole corpus never exist. Workspace = one band.
+
+PER BAND:
+  SCAN    one filtered corpus pass: collect positions whose suffix prefix is
+          in the band's key range, capturing K-byte keys via the lookahead
+          buffer as it goes. Sequential reads; only wanted positions kept.
+  SORT    the leaf sort in workspace (positions + keys + parse dictionaries
+          bounded by the no-cross law, per AMENDMENT 2 — every surviving
+          class parses).
+  EMIT    the band's chunk streams DIRECTLY to its final place in the
+          container. There is no merge step and no container staging.
+  FREE    everything; next band.
+
+BAND BOUNDARIES from AMENDMENT 1's sampled histogram, equalized so one
+band's workspace fits the budget (~200-400 GB at the pile). K (band count)
+is printed by the plan with denominators. At fixture/3GB scale K=1 — the
+G1 blade is the single-band machine; K grows only at the pile.
+
+THE HONEST TRADE: K filtered corpus scans (K x corpus sequential reads,
+a few hours at pile scale) instead of any large scratch. Sequential reads
+are the cheap currency; disc pressure and complexity are the enemies.
+
+BAND BOUNDARIES ARE COMMIT BOUNDARIES: a kill/resume restores at band
+granularity (the durability law, for free). The container is final from
+the first chunk onward — incremental, verifiable mid-run.
+
+DELETED BY THIS AMENDMENT: the all-bins position lists, the delta/Rice
+coder for them, the list lifecycle, and any scratch ceiling above one
+band's transients.
