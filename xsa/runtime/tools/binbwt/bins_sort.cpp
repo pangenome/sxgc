@@ -2571,11 +2571,15 @@ int main(int argc, char** argv) {
     u64 planTargetOverride = 0;   // debug override of the derived TARGET
     if (const char* e = ::getenv("XSA_PLAN_TARGET"))
         planTargetOverride = std::strtoull(e, nullptr, 10);
-    // ---- AMENDMENT 4: THE BAND WORKSPACE KNOB. Default = the envelope's
-    // safe number (a fraction of the declared/detected budget); the
-    // explicit override always wins. K derives from corpus/workspace and
-    // the plan prints it with denominators. ----
-    u64 workspaceBytes = capBytes;
+    // ---- AMENDMENT 4 + ITS CODICIL: THE BAND WORKSPACE KNOB, LEAN BY
+    // DEFAULT. The default is a modest workspace (~12 GB, capped at the
+    // envelope's safe number) so an ordinary build runs K in the
+    // single-to-double digits on ordinary hardware; big workspaces are
+    // OPT-IN via the explicit knob. (The first default filled the box:
+    // a 3 GB build with --memory-gb 196 ran ONE band at 119 GB RSS.)
+    // K derives from corpus/workspace and the plan prints it with
+    // denominators. ----
+    u64 workspaceBytes = std::min<u64>(12ull << 30, capBytes);
     if (const char* e = ::getenv("XSA_BAND_WORKSPACE_BYTES")) {
         workspaceBytes = std::strtoull(e, nullptr, 10);
         if (!workspaceBytes)
@@ -3059,11 +3063,14 @@ int main(int argc, char** argv) {
                 die("BAND_LIVE: band " + std::to_string(k) + " left " +
                     std::to_string(liveBytes) + " bytes of planes (" +
                     std::to_string(liveRows) + " rows) after emission - a leak");
+            u64 anonNow = 0, fileNow = 0, totNow = 0;
+            RssMonitor::sample(anonNow, fileNow, totNow);
             std::fprintf(stderr,
                 "SS_BAND_DONE band=%" PRIu64 "/%" PRIu64 " rows=%" PRIu64
-                " live_bytes=0 total_s=%.2f"
+                " live_bytes=0 rss_kb=%" PRIu64 " anon_kb=%" PRIu64
+                " total_s=%.2f"
                 " rule=workspace_is_one_band;commit_boundary_reached\n",
-                k, NB, bandRows, now_sec() - tk0);
+                k, NB, bandRows, totNow, anonNow, now_sec() - tk0);
         }
         unitCounter += 256;
     }

@@ -265,3 +265,12 @@ multi-GB, identical SHA. Band size is scheduling, never semantics.
 MEMORY IS CONTROLLED, NOT ASPIRATIONAL: the ledger honors the knob exactly
 (asserted, die-with-numbers on overrun — a bug, not a tuning question);
 post-run live == 0.
+
+CODICIL (2026-11-18, the operator's call on defaults): LEAN BY DEFAULT,
+BIG ONLY WHEN ASKED. The workspace default is a modest ~8-16 GB (capped
+at a safe fraction of detected RAM) so an ordinary build runs K in the
+single-to-double digits on ordinary hardware; a big workspace is OPT-IN
+via XSA_BAND_WORKSPACE_BYTES. The first default filled the box (a 3 GB
+build with a 196 GB budget ran ONE band at 119 GB RSS). Both shapes are
+valid measurements; the receipts must LABEL which setting each arm ran
+(the SS_PLAN line's workspace_bytes is the label of record).
