@@ -3019,13 +3019,33 @@ int main(int argc, char** argv) {
             u64 tot = 0;
             for (u64 i = lo; i < hi; ++i) tot += sampleKeys[size_t(i)].second;
             const u64 estRows = tot * S;
-            if (d < planDmax && estRows > target && hi > lo) {
+            // THE RADIX-PREFIX LAW: the root MUST split, and COMPLETELY -
+            // every one of the 256 first bytes gets a child (an empty one
+            // becomes a 0-row leaf). The machinery's radix prefix is
+            // kbase=1: the key bytes start AT byte 1, so a bin's rows MUST
+            // all share byte 0 or the leaf sort/expansion never compares
+            // it (the adversarial fixture's receipt: NB=1 ordered
+            // 'W...' before 'A...'). Foreign prefixes at depth >= 2 are
+            // safe: bytes 1..K-1 live in the captured key.
+            if (d == 0 || (d < planDmax && estRows > target && hi > lo)) {
                 const u32 node = PT.mkNode();
                 PT.est[size_t(node)] = estRows;
                 const u64 sh = 8 * (planDmax - 1 - d);
                 u64 i = lo;
-                while (i < hi) {
-                    const u64 byte = (sampleKeys[size_t(i)].first >> sh) & 0xFF;
+                for (u64 byte = 0; byte < 256; ++byte) {
+                    if (d == 0) {
+                        // every first byte: its own child, even unsampled
+                        u64 j = i;
+                        while (j < hi && ((sampleKeys[size_t(j)].first >> sh) & 0xFF)
+                                   == byte) ++j;
+                        PT.child[size_t(node)][size_t(byte)] = buildRange(i, j, d + 1);
+                        i = j;
+                        continue;
+                    }
+                    if (i >= hi) break;
+                    const u64 kb = (sampleKeys[size_t(i)].first >> sh) & 0xFF;
+                    if (kb < byte) die("PLAN_SORT: the sample is not sorted - a plan bug");
+                    if (kb > byte) continue;
                     u64 j = i;
                     while (j < hi && ((sampleKeys[size_t(j)].first >> sh) & 0xFF)
                                == byte) ++j;
