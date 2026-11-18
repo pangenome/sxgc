@@ -1249,13 +1249,28 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
             // cmp_len=9 sent shallow classes (true depth ~30 B) to a
             // parse costing 300x their whole expansion - the 'single'
             // receipt: rchar 1771x at the 64 KiB knob.
-            if (!parseRefused && roundsDone > 0 &&
-                m * (cmpLen + delta) > budgetEff) {
+            const bool widthTrip = !parseRefused && roundsDone > 0 &&
+                m * (cmpLen + delta) > budgetEff;
+            // THE DEPTH CLAUSE (TAPE_BINS.md, operator-approved): when
+            // cmp_len exceeds the parse's one-shot capture cost, the parse
+            // MUST fire - the expansion has already paid more than the
+            // parse's entire capture. The 3 GB receipt: deep-small classes
+            // (a few rows, divergence up to 262 KB) never cross the width
+            // budget (rows x cmp_len ~ 26 MB) while the expansion pays
+            // rows x 2 x depth for each of hundreds of thousands of them.
+            const u64 parseSpan = g_parse_phrases * (g_pfp_k + g_pfp_w) * 2 + 4096;
+            const bool depthTrip = !parseRefused && roundsDone > 0 &&
+                cmpLen > parseSpan;
+            if (widthTrip || depthTrip) {
                 std::fprintf(stderr,
                     "CENSUS unit=%" PRIu64 " rows=%" PRIu64 " cmp_len=%" PRIu64
                     " delta=%" PRIu64 " projected_bytes=%" PRIu64
-                    " budget=%" PRIu64 " rule=fat_class_routes_to_the_parse\n",
-                    unit_id, m, cmpLen, delta, m * (cmpLen + delta), budgetEff);
+                    " budget=%" PRIu64 " clause=%s"
+                    " expand_paid_estimate=%" PRIu64 " parse_capture_cost=%" PRIu64
+                    " rule=route_to_the_parse_whichever_way_expensive\n",
+                    unit_id, m, cmpLen, delta, m * (cmpLen + delta), budgetEff,
+                    depthTrip ? (widthTrip ? "width+depth" : "depth") : "width",
+                    m * cmpLen, m * parseSpan);
                 if (parse_class(sp, cmpLen, delta, parseRefused)) return;
                 // parse_abandoned: journaled with both costs by the slide;
                 // continue the byte expansion from the SAME cmp_len
@@ -3080,6 +3095,20 @@ int main(int argc, char** argv) {
             rchar, rb, syscr, FILE_N, N,
             FILE_N ? double(rchar) / double(FILE_N) : 0.0,
             FILE_N ? double(rb) / double(FILE_N) : 0.0, u64(1));
+        // THE EXPLICIT RCHAR BACKSTOP (carried over from the pull machine):
+        // a monotone I/O counter, never a wall deadline. A run whose asked
+        // bytes crossed the limit is VOID - die loudly with the numbers
+        // instead of finishing a wrong-shaped run.
+        if (const char* limitText = ::getenv("XSA_TAPE_RCHAR_LIMIT")) {
+            const u64 limit = std::strtoull(limitText, nullptr, 10);
+            if (limit && rchar > limit)
+                die("TAPE_RCHAR_LIMIT: rchar=" + std::to_string(rchar) +
+                    " limit=" + std::to_string(limit) +
+                    " corpus_bytes=" + std::to_string(FILE_N) +
+                    " rows_emitted=" + std::to_string(emittedRows.load()) +
+                    " bins_sorted=" + std::to_string(u64(256)) +
+                    " status=VOID");
+        }
     }
     std::fprintf(stderr,
         "parse_classes=%" PRIu64 " rows=%" PRIu64 " phrases=%" PRIu64
