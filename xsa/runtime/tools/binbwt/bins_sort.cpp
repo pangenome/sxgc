@@ -2862,10 +2862,308 @@ int main(int argc, char** argv) {
     rss.stopPath = bandsDir + "/../stop.requested";
     rss.start();
 
+    // =================================================================
+    // AMENDMENT 1 (TAPE_BINS.md): the ADAPTIVE PREFIX-RANGE PLAN. The
+    // fixed 256 first-byte bins are wrong for real text (byte skew:
+    // space ~10% of the pile, letters unequal, controls empty). Bins
+    // are PREFIX RANGES chosen by sampling: SAMPLE (one sequential
+    // pass, every S-th position, prefixes to depth D_max), PLAN (grow a
+    // prefix trie only where the sampled row estimate exceeds the
+    // per-bin TARGET; sparse regions stay depth 1, dense go deeper),
+    // SCATTER (walk <= D_max bytes through the cache-sized trie to a
+    // leaf = bin id; leaf order = lexicographic = concatenation order),
+    // WAVES (bins stream in key order in waves packed to the RAM
+    // budget; peak = one wave, not the corpus - the pile mode).
+    // =================================================================
+    u64 planDmax = 6;
+    if (const char* e = ::getenv("XSA_PLAN_DMAX"))
+        planDmax = std::strtoull(e, nullptr, 10);
+    if (planDmax < 1 || planDmax > 16)
+        die("XSA_PLAN_DMAX must be in [1,16]");
+    if (planDmax > g_wave_key_bytes)
+        die("XSA_PLAN_DMAX exceeds the key bytes: the trie would walk past the captured key");
+    u64 planStride = 0;   // 0 = auto
+    if (const char* e = ::getenv("XSA_PLAN_STRIDE"))
+        planStride = std::strtoull(e, nullptr, 10);
+    u64 planTargetOverride = 0;
+    if (const char* e = ::getenv("XSA_PLAN_TARGET"))
+        planTargetOverride = std::strtoull(e, nullptr, 10);
+    double waveResidentFraction = 0.5;
+    if (const char* e = ::getenv("XSA_WAVE_RESIDENT_FRACTION"))
+        waveResidentFraction = std::strtod(e, nullptr);
+    if (!(waveResidentFraction > 0.0 && waveResidentFraction <= 1.0))
+        die("XSA_WAVE_RESIDENT_FRACTION must be in (0,1]");
+    const bool forceSpill = ::getenv("XSA_FORCE_SPILL") != nullptr;
+
+    // ---- the trie (cache-sized: nodes exist only where the plan split) ----
+    struct PlanTrie {
+        std::vector<std::array<u32, 256>> child;   // 0 = absent (the
+            // lexicographic-successor rule covers unsampled prefixes);
+            // LEAF|bin = a leaf bin; otherwise the child node id
+        std::vector<u64> est;          // per node: the sampled row estimate
+        std::vector<u64> leafEst;      // per bin: the sampled row estimate
+        u32 nNodes = 0, nLeaves = 0;
+        u64 dMax = 6;
+        u64 satHits = 0;               // saturated sample counts (lower bounds)
+        enum : u32 { LEAF = 0x80000000u };
+        u32 mkNode() {
+            child.emplace_back();
+            child.back().fill(0);
+            est.push_back(0);
+            return nNodes++;
+        }
+    };
+    PlanTrie PT;
+    PT.dMax = planDmax;
+    u32 rootSlot = 0;
+
+    // ---- SAMPLE: one sequential pass, every S-th position ----
+    u64 nSamples = 0, satSlots = 0, planStrideUsed = 0;
+    double tSampleS = 0;
+    std::vector<std::pair<u64, u64>> sampleKeys;   // (48-bit prefix, count)
+    {
+        const double t0 = now_sec();
+        u64 S = planStride;
+        if (!S) S = std::max<u64>(1, std::min<u64>(4096, FILE_N / 2000000));
+        planStrideUsed = S;
+        // the flat counting table: 48-bit key + 16-bit count (saturating)
+        u64 cap = 1u << 14;
+        const u64 want = (KEY_N + S - 1) / S + 1;
+        while (cap < want * 2 && cap < (1ull << 28)) cap <<= 1;
+        std::vector<u64> table(size_t(cap), 0);
+        u64 used = 0;
+        auto tabPut = [&](u64 key) {
+            u64 h = (key * 0x9E3779B97F4A7C15ull) & (cap - 1);
+            for (;;) {
+                const u64 slot = table[size_t(h)];
+                if (!slot) {
+                    if (used * 4 >= cap * 3)
+                        die("SAMPLE_DENSITY: the counting table filled (capacity=" +
+                            std::to_string(cap) + " samples=" + std::to_string(nSamples) +
+                            ") - raise XSA_PLAN_STRIDE");
+                    table[size_t(h)] = key | (1ull << 48);
+                    ++used;
+                    return;
+                }
+                if ((slot & ((1ull << 48) - 1)) == key) {
+                    const u64 cnt = slot >> 48;
+                    if (cnt < 0xFFFE) table[size_t(h)] =
+                        (slot & ((1ull << 48) - 1)) | ((cnt + 1) << 48);
+                    else ++satSlots;
+                    return;
+                }
+                h = (h + 1) & (cap - 1);
+            }
+        };
+        std::vector<u8> sbuf;
+        u64 sweepSampleBytes = 0;
+        for (u64 base = 0; base < KEY_N; ) {
+            beat(1);
+            if (::access(rss.stopPath.c_str(), F_OK) == 0) ::_exit(75);
+            const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, KEY_N - base);
+            const u64 want2 = std::min<u64>(chunk + planDmax, FILE_N - base);
+            read_window(fd, base, want2, sbuf);
+            sweepSampleBytes += want2;
+            const u64 hi = base + chunk;
+            u64 p = (base + S - 1) / S * S;
+            for (; p < hi; p += S) {
+                u64 key = 0;
+                for (u64 j = 0; j < planDmax; ++j)
+                    key = (key << 8) | sbuf[size_t(p - base + j)];
+                tabPut(key);
+                ++nSamples;
+            }
+            base += chunk;
+        }
+        sampleKeys.reserve(size_t(used));
+        for (u64 i = 0; i < cap; ++i) {
+            const u64 slot = table[size_t(i)];
+            if (slot) sampleKeys.emplace_back(slot & ((1ull << 48) - 1),
+                                              slot >> 48);
+        }
+        bswap_release(table);
+        std::sort(sampleKeys.begin(), sampleKeys.end());
+        tSampleS = now_sec() - t0;
+        std::fprintf(stderr,
+            "SS_SAMPLE stride=%" PRIu64 " d_max=%" PRIu64 " samples=%" PRIu64
+            " distinct=%zu saturated_slots=%" PRIu64 " sweep_bytes=%" PRIu64
+            " sample_s=%.2f"
+            " rule=one_sequential_pass_every_Sth_position_depth_histogram\n",
+            S, planDmax, nSamples, sampleKeys.size(), satSlots,
+            sweepSampleBytes, tSampleS);
+    }
+
+    // ---- PLAN: grow the trie only where the estimate exceeds TARGET ----
+    u64 NB = 0, planTarget = 0;
+    {
+        u64 target;
+        if (planTargetOverride) target = planTargetOverride;
+        else {
+            const u64 waveBudget = u64(double(capBytes) * waveResidentFraction);
+            const u64 byWave = waveBudget / std::max<u64>(1, threads) /
+                               std::max<u64>(1, recBytes);
+            // the balance floor: enough bins to exercise the seam on small
+            // corpora, never so many the split cascade explodes (a floor of
+            // one 64KiB bin's worth of rows keeps tiny inputs ~tens of bins)
+            target = std::min<u64>(byWave, std::max<u64>(65536, N / 256));
+        }
+        if (!target) die("PLAN_TARGET collapsed to 0 - a knob error");
+        planTarget = target;
+        const u64 S = planStrideUsed;
+        // one pass over the SORTED sample: a node = a key range at a
+        // depth; the range's total x S is the row estimate. The
+        // recursion descends ONLY where the parent split, so the trie
+        // stays cache-sized however dense the sample is.
+        std::function<u32(u64, u64, u64)> buildRange =
+            [&](u64 lo, u64 hi, u64 d) -> u32 {
+            u64 tot = 0;
+            for (u64 i = lo; i < hi; ++i) tot += sampleKeys[size_t(i)].second;
+            const u64 estRows = tot * S;
+            if (d < planDmax && estRows > target && hi > lo) {
+                const u32 node = PT.mkNode();
+                PT.est[size_t(node)] = estRows;
+                const u64 sh = 8 * (planDmax - 1 - d);
+                u64 i = lo;
+                while (i < hi) {
+                    const u64 byte = (sampleKeys[size_t(i)].first >> sh) & 0xFF;
+                    u64 j = i;
+                    while (j < hi && ((sampleKeys[size_t(j)].first >> sh) & 0xFF)
+                               == byte) ++j;
+                    PT.child[size_t(node)][size_t(byte)] = buildRange(i, j, d + 1);
+                    i = j;
+                }
+                return node;
+            }
+            PT.leafEst.push_back(estRows);
+            if (PT.nLeaves >= (1u << 20))
+                die("PLAN_EXPLODED: over a million bins - TARGET too small");
+            return PlanTrie::LEAF | PT.nLeaves++;
+        };
+        rootSlot = buildRange(0, sampleKeys.size(), 0);
+        bswap_release(sampleKeys);
+        NB = PT.nLeaves;
+        if (!NB) die("PLAN_EMPTY: the sample produced no bins - a plan error");
+        // a LEAF root = the whole corpus is one bin: classify() short-circuits
+        u64 leafBytes = 0;
+        for (u64 b = 0; b < NB; ++b) leafBytes += PT.leafEst[size_t(b)] * recBytes;
+        std::fprintf(stderr,
+            "SS_PLAN target_rows=%" PRIu64 " nodes=%u bins=%" PRIu64
+            " est_rows_sum=%" PRIu64 " vs_n=%" PRIu64
+            " est_base_bytes=%" PRIu64 " saturated=%" PRIu64
+            " rule=split_only_where_sampled_estimate_exceeds_target\n",
+            planTarget, PT.nNodes, NB,
+            std::accumulate(PT.leafEst.begin(), PT.leafEst.end(), u64(0)), N,
+            leafBytes, satSlots);
+    }
+
+    // the classification walk (the scatter's hot path). A missing child
+    // is an UNSAMPLED prefix: it goes to the lexicographic SUCCESSOR's
+    // bin (the next present byte at this or an ancestor node; beyond
+    // everything sampled = the last bin). A row that runs out of bytes
+    // is an END-suffix: it sorts before every continuation, so it goes
+    // to the LEFTMOST leaf under the node.
+    auto leftmostLeaf = [&](u32 slot) -> u64 {
+        for (u64 d = 0; d <= planDmax; ++d) {
+            if (slot & PlanTrie::LEAF) return u64(slot & ~PlanTrie::LEAF);
+            u32 next = 0;
+            for (u64 c = 0; c < 256; ++c)
+                if (PT.child[size_t(slot)][size_t(c)]) { next = PT.child[size_t(slot)][size_t(c)]; break; }
+            if (!next) die("PLAN_TRIE: an internal node with no children - a plan bug");
+            slot = next;
+        }
+        die("PLAN_TRIE: the walk exceeded d_max - a plan bug");
+    };
+    // a LEAF root = the whole corpus is one bin (NB=1): no walk at all
+    const bool rootIsLeaf = (rootSlot & PlanTrie::LEAF) != 0;
+    auto classify = [&](const u8* s, u64 avail) -> u64 {
+        if (rootIsLeaf) return 0;
+        u32 slot = 0;                  // the root node id
+        u32 pathNode[17], pathByte[17];
+        for (u64 j = 0; j < planDmax; ++j) {
+            if (j >= avail) return leftmostLeaf(slot);   // END-suffix
+            const u8 c = s[j];
+            const u32 here = slot;
+            const u32 ch = PT.child[size_t(here)][c];
+            if (ch == 0) {
+                // unsampled prefix: the successor among present bytes,
+                // walking back up the path when this level has none
+                for (u64 d = j + 1; d-- > 0; ) {
+                    const u32 node = (d == j) ? here : pathNode[d];
+                    const u64 from = (d == j) ? u64(c + 1) : u64(pathByte[d] + 1);
+                    for (u64 c2 = from; c2 < 256; ++c2) {
+                        const u32 ch2 = PT.child[size_t(node)][size_t(c2)];
+                        if (ch2) return leftmostLeaf(ch2);
+                    }
+                }
+                return NB - 1;      // beyond every sampled prefix: the last bin
+            }
+            if (ch & PlanTrie::LEAF) return u64(ch & ~PlanTrie::LEAF);   // leaf bin
+            pathNode[j] = here;
+            pathByte[j] = c;
+            slot = ch;
+        }
+        return leftmostLeaf(slot);
+    };
+    // END-suffixes of the virtual END at the root: the empty suffix rides bin 0
+    // (leftmostLeaf(root) - the virtual END bucket, the leaf sort owns it).
+    std::vector<std::pair<u64, u64>> waveRanges;   // (first bin, last+1) per wave
+    size_t nWaves = 0;
+
     // ---- THE BINS: stage 0's product (all 256, in memory, ascending) ----
     double tScatterS = 0;
-    std::vector<Unit> bins(256);
-    for (unsigned b = 0; b < 256; ++b) bins[b].bin = b;
+    std::vector<Unit> bins = std::vector<Unit>(size_t(NB));
+    for (u64 b = 0; b < NB; ++b) bins[size_t(b)].bin = b;
+    // ---- WAVES (the pile mode): when the bins' base planes cannot all
+    // be resident, the scatter streams the rows to per-bin spill files
+    // and the sorter pool loads ONE WAVE at a time (key order, packed to
+    // the wave budget). Peak RAM = one wave, not the corpus. ----
+    const u64 basePlaneBytes = [&] {
+        u64 t = 0;
+        for (u64 b = 0; b < NB; ++b) t += PT.leafEst[size_t(b)] * recBytes;
+        return t;
+    }();
+    const u64 waveBudget = u64(double(capBytes) * waveResidentFraction);
+    const bool spill = forceSpill || basePlaneBytes > capBytes;
+    const std::string spillDir = bandsDir + "/spill";
+    std::vector<u64> spillRows(size_t(NB), 0);
+    if (spill && ::mkdir(spillDir.c_str(), 0777) != 0 && errno != EEXIST)
+        die("create spill dir " + spillDir);
+    // per-bin buffered spill writers (records interleaved: 8B sym + K key
+    // bytes + 4B Lp + 2B Tp)
+    struct SpillWriter {
+        std::string path; int fd = -1; std::vector<u8> buf;
+        u64 written = 0;
+        void open(const std::string& dir, u64 b) {
+            path = dir + "/bin_" + std::to_string(b);
+            fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            if (fd < 0) die("create spill " + path);
+            buf.reserve(1u << 16);
+        }
+        void put(const u8* rec, u64 len) {
+            buf.insert(buf.end(), rec, rec + len);
+            if (buf.size() >= (1u << 16)) flush();
+        }
+        void flush() {
+            if (buf.empty()) return;
+            size_t off = 0;
+            while (off < buf.size()) {
+                ssize_t w = ::write(fd, buf.data() + off, buf.size() - off);
+                if (w <= 0) die("spill write");
+                off += size_t(w);
+            }
+            written += buf.size();
+            buf.clear();
+        }
+        void close() {
+            flush();
+            if (fd >= 0 && ::close(fd)) die("spill close");
+            fd = -1;
+        }
+    };
+    std::vector<SpillWriter> spillW = std::vector<SpillWriter>(size_t(NB));
+    if (spill)
+        for (u64 b = 0; b < NB; ++b) spillW[size_t(b)].open(spillDir, b);
+    u64 spillBytesTotal = 0;
     {
         const double t0 = now_sec();
         std::vector<u8> buf;
@@ -2883,30 +3181,63 @@ int main(int argc, char** argv) {
             const u64 hi = base + chunk;
             for (u64 p = base; p < hi; ++p) {
                 const u64 o = p - from;
-                const u8 b = buf[size_t(o)];
-                Unit& U = bins[b];
-                U.P.push_back(pack_sym(p, p ? buf[size_t(o - 1)] : SENTINEL_SYMBOL));
                 const u8* kq = buf.data() + size_t(o) + 1;   // the key at kbase=1
-                for (u64 j = 0; j < K; ++j) U.Kb.push_back(kq[j]);
+                const u64 b = classify(kq - 1, planDmax);    // the trie walks
+                                                             // the suffix's
+                                                             // own bytes
                 u32 runL = 0; u16 runT = 0;
                 wavekey_run_digit(kq, FILE_N - p - 1, g_wave_run_cap, runL, runT);
-                U.Lp.push_back(runL);
-                U.Tp.push_back(runT);
+                const u64 sym = pack_sym(p, p ? buf[size_t(o - 1)] : SENTINEL_SYMBOL);
+                if (spill) {
+                    u8 rec[32];
+                    std::memcpy(rec, &sym, 8);
+                    std::memcpy(rec + 8, kq, size_t(K));
+                    std::memcpy(rec + 8 + K, &runL, 4);
+                    std::memcpy(rec + 12 + K, &runT, 2);
+                    SpillWriter& W = spillW[size_t(b)];
+                    W.put(rec, 14 + K);
+                    ++spillRows[size_t(b)];
+                } else {
+                    Unit& U = bins[size_t(b)];
+                    U.P.push_back(sym);
+                    for (u64 j = 0; j < K; ++j) U.Kb.push_back(kq[j]);
+                    U.Lp.push_back(runL);
+                    U.Tp.push_back(runT);
+                }
             }
             base += chunk;
         }
+        if (spill)
+            for (u64 b = 0; b < NB; ++b) spillW[size_t(b)].flush();
         // THE TAILS (positions [KEY_N, N)): the plan owns them. The empty
         // suffix (position FILE_N) rides bin 0 - the virtual END bucket.
         for (u64 p = KEY_N; p < N; ++p) {
-            const u8 b = p < FILE_N ? u8(REMAP ? REMAP[T[p]] : T[p]) : 0;
-            bins[b].tails.push_back(pack_sym(
+            u8 tb[17];
+            u64 avail = 0;
+            if (p < FILE_N) {
+                avail = std::min<u64>(planDmax, FILE_N - p);
+                for (u64 j = 0; j < avail; ++j)
+                    tb[j] = REMAP ? REMAP[T[p + j]] : T[p + j];
+            }
+            const u64 b = classify(tb, avail);   // END-suffixes: leftmost leaf
+            bins[size_t(b)].tails.push_back(pack_sym(
                 p, p == 0 ? SENTINEL_SYMBOL : u8(REMAP ? REMAP[T[p - 1]] : T[p - 1])));
         }
+        if (spill)
+            for (u64 b = 0; b < NB; ++b) {
+                spillW[size_t(b)].close();
+                spillBytesTotal += spillW[size_t(b)].written;
+            }
+        // NOTE: spillRows[b] stays THE SPILL FILE's row count (the wave
+        // loader reads exactly that many records); the tails ride the Unit
+        // in memory exactly as in resident mode.
         u64 rowsTotal = 0;
-        std::array<u64, 256> counts{};
-        for (unsigned b = 0; b < 256; ++b) {
-            counts[b] = bins[b].P.size() + bins[b].tails.size();
-            rowsTotal += counts[b];
+        std::vector<u64> counts(size_t(NB), 0);
+        for (u64 b = 0; b < NB; ++b) {
+            counts[size_t(b)] = spill
+                ? spillRows[size_t(b)] + bins[size_t(b)].tails.size()
+                : bins[size_t(b)].P.size() + bins[size_t(b)].tails.size();
+            rowsTotal += counts[size_t(b)];
         }
         if (rowsTotal != N)
             die("BIN_COVERAGE: the scatter produced " + std::to_string(rowsTotal) +
@@ -2914,36 +3245,107 @@ int main(int argc, char** argv) {
         tScatterS = now_sec() - t0;
         std::fprintf(stderr,
             "SS_SCATTER corpus_bytes=%" PRIu64 " sweep_bytes=%" PRIu64
-            " rows=%" PRIu64 " tails=%" PRIu64 " bins=%u"
+            " rows=%" PRIu64 " tails=%" PRIu64 " bins=%" PRIu64
+            " mode=%s spill_bytes=%" PRIu64
             " rule=one_sequential_pass_rchar_equals_corpus_exactly_once\n",
-            FILE_N, sweepBytes, rowsTotal, N - KEY_N, 256);
-        for (unsigned b = 0; b < 256; ++b)
+            FILE_N, sweepBytes, rowsTotal, N - KEY_N, NB,
+            spill ? "waves" : "resident", spillBytesTotal);
+        // ---- THE PLAN-VS-ACTUAL GATE (AMENDMENT 1): the sampled plan vs
+        // the real scatter counts, printed - a bad sample is VISIBLE,
+        // never silent. ----
+        {
+            u64 worstOver = 0; double worstRatio = 0;
+            u64 satPrinted = 0;
+            for (u64 b = 0; b < NB; ++b) {
+                const u64 est = PT.leafEst[size_t(b)];
+                const u64 act = counts[b];
+                double ratio = act && est ? double(act) / double(est) : 0.0;
+                if (ratio > worstRatio) { worstRatio = ratio; worstOver = b; }
+                std::fprintf(stderr,
+                    "PLAN_VS_ACTUAL bin=%" PRIu64 " est=%" PRIu64 " actual=%" PRIu64
+                    " ratio=%.2f\n", b, est, act, est ? ratio : 0.0);
+                if (satPrinted < 8 && est == 0 && act) ++satPrinted;
+            }
+            std::fprintf(stderr,
+                "PLAN_VS_ACTUAL_SUMMARY bins=%" PRIu64 " worst_over_bin=%" PRIu64
+                " worst_ratio=%.2f empty_est_bins_with_rows=%" PRIu64
+                " saturated_slots=%" PRIu64 " stride=%" PRIu64
+                " rule=the_sample_deviations_are_printed_not_hidden\n",
+                NB, worstOver, worstRatio, satPrinted, satSlots, planStrideUsed);
+        }
+        for (u64 b = 0; b < NB; ++b)
             if (counts[b])
-                std::fprintf(stderr, "BIN id=%u rows=%" PRIu64 "\n", b, counts[b]);
+                std::fprintf(stderr, "BIN id=%" PRIu64 " rows=%" PRIu64 "\n", b, counts[b]);
         // THE PLAN-TIME MEMORY CHECK: the bins' base planes are resident
         // for the whole run; the in-flight bins' ping-pong rides on top.
         {
-            const u64 nWorkers = std::min<u64>(threads, 256);
+            const u64 nWorkers = std::min<u64>(threads, NB);
             std::vector<u64> sizes;
-            for (unsigned b = 0; b < 256; ++b)
-                sizes.push_back((bins[b].P.size() + bins[b].tails.size()) * recBytes);
+            for (u64 b = 0; b < NB; ++b)
+                sizes.push_back(counts[size_t(b)] * recBytes);
             std::sort(sizes.begin(), sizes.end(), std::greater<u64>());
             u64 inFlight = 0;
             for (u64 i = 0; i < nWorkers && i < sizes.size(); ++i) inFlight += sizes[i];
             const u64 total = std::accumulate(sizes.begin(), sizes.end(), u64(0));
-            const u64 need = total + inFlight;
-            std::fprintf(stderr,
-                "BIN_PLAN rows=%" PRIu64 " base_bytes=%" PRIu64
-                " in_flight_ping_pong_bytes=%" PRIu64 " need_bytes=%" PRIu64
-                " cap_bytes=%" PRIu64 " workers=%" PRIu64
-                " rule=global_residency_is_the_sum_of_bins\n",
-                rowsTotal, total, inFlight, need, capBytes, nWorkers);
-            if (need > capBytes)
-                die("BIN_ENVELOPE: the bins need " + std::to_string(need) +
-                    " bytes (base " + std::to_string(total) + " + in-flight " +
-                    std::to_string(inFlight) + ") against cap " +
-                    std::to_string(capBytes) + " - a plan error, refusing with"
-                    " the numbers before any I/O");
+            if (spill) {
+                // THE WAVE MODE: peak = one wave's planes + its in-flight
+                // ping-pong, never the corpus. Wave packing (key order,
+                // greedy to the wave budget) happens after this check.
+                std::vector<std::pair<u64, u64>> wavesBin;   // (first, last+1)
+                u64 wStart = 0, wBytes = 0;
+                for (u64 b = 0; b < NB; ++b) {
+                    const u64 bb = counts[size_t(b)] * recBytes * 2;   // + ping-pong
+                    if (bb > waveBudget)
+                        die("BIN_ENVELOPE: bin " + std::to_string(b) + " alone needs " +
+                            std::to_string(bb) + " bytes (rows " +
+                            std::to_string(counts[size_t(b)]) + ") against the wave budget " +
+                            std::to_string(waveBudget) + " - raise the TARGET or the budget");
+                    if (wBytes && wBytes + bb > waveBudget) {
+                        wavesBin.emplace_back(wStart, b);
+                        wStart = b; wBytes = 0;
+                    }
+                    wBytes += bb;
+                }
+                wavesBin.emplace_back(wStart, NB);
+                u64 peak = 0;
+                for (const auto& w : wavesBin) {
+                    u64 wb2 = 0;
+                    for (u64 b = w.first; b < w.second; ++b)
+                        wb2 += counts[size_t(b)] * recBytes * 2;
+                    peak = std::max(peak, wb2);
+                }
+                nWaves = wavesBin.size();
+                waveRanges = std::move(wavesBin);
+                std::fprintf(stderr,
+                    "SS_WAVES mode=spill waves=%zu wave_budget_bytes=%" PRIu64
+                    " peak_wave_bytes=%" PRIu64 " spill_bytes=%" PRIu64
+                    " scratch_budget_bytes=%" PRIu64 " rule=peak_is_one_wave\n",
+                    waveRanges.size(), waveBudget, peak, spillBytesTotal,
+                    scratch_budget_bytes);
+                if (scratch_budget_bytes && spillBytesTotal > scratch_budget_bytes)
+                    die("SS_SCRATCH: the spill needs " + std::to_string(spillBytesTotal) +
+                        " bytes against the scratch budget " +
+                        std::to_string(scratch_budget_bytes) + " - a plan error");
+            } else {
+                const u64 need = total + inFlight;
+                std::fprintf(stderr,
+                    "BIN_PLAN rows=%" PRIu64 " base_bytes=%" PRIu64
+                    " in_flight_ping_pong_bytes=%" PRIu64 " need_bytes=%" PRIu64
+                    " cap_bytes=%" PRIu64 " workers=%" PRIu64
+                    " rule=global_residency_is_the_sum_of_bins\n",
+                    rowsTotal, total, inFlight, need, capBytes, nWorkers);
+                if (need > capBytes)
+                    die("BIN_ENVELOPE: the bins need " + std::to_string(need) +
+                        " bytes (base " + std::to_string(total) + " + in-flight " +
+                        std::to_string(inFlight) + ") against cap " +
+                        std::to_string(capBytes) + " - a plan error, refusing with"
+                        " the numbers before any I/O");
+                nWaves = 1;
+                waveRanges.assign(1, {0, NB});
+                std::fprintf(stderr,
+                    "SS_WAVES mode=resident waves=1 peak_bytes=%" PRIu64
+                    " rule=all_bins_resident\n", need);
+            }
         }
     }
     // ---- THE EMITTER THREAD (stage 4, carried over): one thread, in bin
@@ -2957,7 +3359,7 @@ int main(int argc, char** argv) {
     std::thread emitterThread([&] {
         const std::string stopFlag = bandsDir + "/../stop.requested";
         u64 prevLast = ~0ull;
-        for (u64 u = 0; u < 256; ++u) {
+        for (u64 u = 0; u < NB; ++u) {
             Unit& U = bins[size_t(u)];
             while (!U.sorted.load(std::memory_order_acquire)) {
                 if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
@@ -3067,17 +3469,29 @@ int main(int argc, char** argv) {
         }
     });
 
+    if (NB > lcpSliceWindow)
+        die("SS_LCP_SLICE_WINDOW " + std::to_string(lcpSliceWindow) +
+            " <= bins " + std::to_string(NB) + ": the slice-window handshake"
+            " needs the finish running concurrently - raise the window or run"
+            " the pipeline shape the window assumes");
     // ---- THE SORTER POOL (stages 1-3): any bin order; parallel across
     // bins, serial within one bin. The emitter's handshake orders output. ----
-    const u64 nSorters = std::max<u64>(1, std::min<u64>(threads, 256));
+    const u64 nSorters = std::max<u64>(1, std::min<u64>(threads, NB));
     std::atomic<u64> nextBin{0};
+    std::atomic<u64> pullLimit{0};   // the wave gate: bins >= this are not
+                                     // loaded yet; the scheduler raises it
+    if (!spill) pullLimit.store(NB, std::memory_order_release);
     std::vector<std::thread> sorterThreads;
     const double tRun = now_sec();
     for (u64 t = 0; t < nSorters; ++t)
         sorterThreads.emplace_back([&, t] {
             for (;;) {
                 const u64 b = nextBin.fetch_add(1, std::memory_order_relaxed);
-                if (b >= 256) break;
+                if (b >= NB) break;
+                while (b >= pullLimit.load(std::memory_order_acquire)) {
+                    if (::access(rss.stopPath.c_str(), F_OK) == 0) ::_exit(75);
+                    ::usleep(2000);   // the wave's bins are still loading
+                }
                 if (::access(rss.stopPath.c_str(), F_OK) == 0) ::_exit(75);
                 WaveKeyStats st;
                 const double ts0 = now_sec();
@@ -3096,6 +3510,54 @@ int main(int argc, char** argv) {
                 bins[size_t(b)].sorted.store(true, std::memory_order_release);
             }
         });
+    // ---- THE WAVE SCHEDULER (spill mode): load one wave, release it to
+    // the sorters, wait for its bins to be EMITTED (the emitter frees
+    // their planes), then load the next. Peak RAM = one wave. ----
+    if (spill) {
+        for (const auto& w : waveRanges) {
+            const double tw0 = now_sec();
+            for (u64 b = w.first; b < w.second; ++b) {
+                Unit& U = bins[size_t(b)];
+                const u64 rows = spillRows[size_t(b)];
+                const u64 recLen = 14 + g_wave_key_bytes;
+                std::vector<u8> raw(size_t(rows * recLen));
+                const std::string path = spillDir + "/bin_" + std::to_string(b);
+                int sf = ::open(path.c_str(), O_RDONLY);
+                if (sf < 0) die("open spill " + path);
+                size_t got = 0;
+                while (got < raw.size()) {
+                    ssize_t z = ::read(sf, raw.data() + got, raw.size() - got);
+                    if (z <= 0) die("read spill " + path);
+                    got += size_t(z);
+                }
+                ::close(sf);
+                if (::unlink(path.c_str()) != 0) die("unlink spill " + path);
+                U.P.resize(size_t(rows));
+                U.Kb.resize(size_t(rows * g_wave_key_bytes));
+                U.Lp.resize(size_t(rows));
+                U.Tp.resize(size_t(rows));
+                const u64 K = g_wave_key_bytes;
+                for (u64 i = 0; i < rows; ++i) {
+                    const u8* rec = raw.data() + size_t(i * recLen);
+                    std::memcpy(&U.P[size_t(i)], rec, 8);
+                    std::memcpy(&U.Kb[size_t(i * K)], rec + 8, size_t(K));
+                    std::memcpy(&U.Lp[size_t(i)], rec + 8 + K, 4);
+                    std::memcpy(&U.Tp[size_t(i)], rec + 12 + K, 2);
+                }
+            }
+            pullLimit.store(w.second, std::memory_order_release);
+            for (u64 b = w.first; b < w.second; ++b)
+                while (!bins[size_t(b)].emitted.load(std::memory_order_acquire)) {
+                    if (::access(rss.stopPath.c_str(), F_OK) == 0) ::_exit(75);
+                    ::usleep(10000);
+                }
+            std::fprintf(stderr,
+                "SS_WAVE bins=[%llu,%llu) loaded_s=%.2f"
+                " rule=one_wave_resident_at_a_time\n",
+                (unsigned long long)w.first, (unsigned long long)w.second,
+                now_sec() - tw0);
+        }
+    }
     for (auto& th : sorterThreads) th.join();
     emitterThread.join();
 
@@ -3167,7 +3629,7 @@ int main(int argc, char** argv) {
     if (anon_ratio > 0.90)
         die("BIN_BUDGET_VIOLATION: owned peak RSS is " + std::to_string(anon_ratio) +
             " of the envelope - the plan priced a different process than the one that ran");
-    if (lcpSlices != 256) die("lcp slices do not cover the bins");
+    if (lcpSlices != NB) die("lcp slices do not cover the bins");
     std::fprintf(stderr,
         "SS_LCP_STREAM mode=sorter-bins slices=%" PRIu64 " rows=%" PRIu64
         " escapes=%" PRIu64 " bytes=%" PRIu64 " max_live_lcp_slice_bytes=%" PRIu64
@@ -3224,7 +3686,7 @@ int main(int argc, char** argv) {
                     " limit=" + std::to_string(limit) +
                     " corpus_bytes=" + std::to_string(FILE_N) +
                     " rows_emitted=" + std::to_string(emittedRows.load()) +
-                    " bins_sorted=" + std::to_string(u64(256)) +
+                    " bins_sorted=" + std::to_string(NB) +
                     " status=VOID");
         }
     }
@@ -3239,7 +3701,7 @@ int main(int argc, char** argv) {
     std::fprintf(stderr,
         "SS_DONE n=%" PRIu64 " units=%" PRIu64 " passes=%" PRIu64
         " expansion_rounds=%" PRIu64 " scatter_s=%.2f run_s=%.2f total_s=%.2f\n",
-        N, u64(256), u64(1), WAVE_KEY.rounds_max.load(),
+        N, NB, u64(1), WAVE_KEY.rounds_max.load(),
         tScatterS, now_sec() - tRun, now_sec() - tMain0);
     return 0;
 }
