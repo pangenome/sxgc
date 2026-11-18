@@ -29,10 +29,22 @@ Stage 2 — EXPANSION ROUNDS (the bin's OWN readhead):
   are cheap; the expensive ones are exactly the fat classes of Stage 3.
 
 Stage 3 — SUB-PFP (per fat class, the compression):
-  TRIGGER (measured, not hoped): a class whose projected expansion cost exceeds its
-  bin budget — projected from the class's own census (rows still tied after round r
-  x current cmp_len growth), OR any class still unresolved when its rows x cmp_len
-  passes the budget line. The bin announces the parse and:
+  TRIGGER (measured, not hoped — ONE PRINCIPLE, two clauses: route a class to
+  the parse WHICHEVER WAY it is expensive). The parse is the compression for
+  classes the byte expansion cannot afford — expensive by WIDTH or by DEPTH:
+  - WIDTH: a class whose projected expansion cost exceeds its bin budget —
+    projected from the class's own census (rows still tied after round r
+    x current cmp_len growth), OR any class still unresolved when its
+    rows x cmp_len passes the budget line.
+  - DEPTH: a class whose cmp_len exceeds the parse's one-shot capture cost
+    (phrase_budget x (k+w) x 2 + 4096 bytes) MUST parse — at that depth the
+    expansion has already paid more than the parse's entire capture. The
+    3 GB cold receipt that forced this clause: tie classes of a few rows
+    diverging at depths up to 262 KB — rows x cmp_len = ~26 MB, far under
+    any per-class budget, so the width clauses never fired; the expansion
+    paid rows x 2 x depth for each of hundreds of thousands of them
+    (16.8 GB on 35/256 bins) while the parse costs rows x ~6 KB once.
+  The bin announces the parse and:
   - parses the class's continuations starting at the radix prefix (per-class PFP:
     dictionary of phrases from the two-sided trigger rule, per-row keys
     (phrase id, intra-phrase offset, following phrase sequence));
