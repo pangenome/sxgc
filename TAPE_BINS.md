@@ -241,3 +241,27 @@ the first chunk onward — incremental, verifiable mid-run.
 DELETED BY THIS AMENDMENT: the all-bins position lists, the delta/Rice
 coder for them, the list lifecycle, and any scratch ceiling above one
 band's transients.
+
+## AMENDMENT 4 — the workspace is a knob; any reasonably-sized system runs any
+## corpus, 2026-11-17
+
+THE BAND WORKSPACE is a first-class knob (XSA_BAND_WORKSPACE_BYTES, default
+a safe fraction of detected RAM, explicit override always wins). K (band
+count) derives from corpus size / workspace and is PRINTED by the plan with
+denominators (K, per-band rows, projected scans). The machine never assumes
+the corpus, any band, or any class fits anywhere except: one tie class's
+parse memory is bounded by ONE document (the no-cross law) — the hard floor
+that makes any system viable.
+
+GRACEFUL DEGRADATION: smaller workspace -> more bands -> more filtered
+scans. Time scales as workspace^-1; the machine never fails for lack of
+RAM, and disc never holds more than one band's transients. A 64 GB
+workstation runs the pile; only the wall changes.
+
+THE INVARIANT (a gate): the container is BAND-SIZE-INVARIANT — byte-identical
+output at any workspace setting. Prove it: same fixture, workspace 64 MB vs
+multi-GB, identical SHA. Band size is scheduling, never semantics.
+
+MEMORY IS CONTROLLED, NOT ASPIRATIONAL: the ledger honors the knob exactly
+(asserted, die-with-numbers on overrun — a bug, not a tuning question);
+post-run live == 0.
