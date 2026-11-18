@@ -3490,10 +3490,14 @@ int main(int argc, char** argv) {
     });
 
     if (NB > lcpSliceWindow)
-        die("SS_LCP_SLICE_WINDOW " + std::to_string(lcpSliceWindow) +
-            " <= bins " + std::to_string(NB) + ": the slice-window handshake"
-            " needs the finish running concurrently - raise the window or run"
-            " the pipeline shape the window assumes");
+        // NOT an error: the slice-window handshake expects the finish
+        // running concurrently (the p1 harness's pipeline shape); a
+        // standalone producer must keep window > NB or it will wait on
+        // .lcp.consumed markers nobody writes. Journaled, never fatal.
+        std::fprintf(stderr,
+            "SS_LCP_ARM lcp_source=sorter-units slices=%" PRIu64
+            " window=%" PRIu64 " note=finish_must_run_concurrently\n",
+            NB, lcpSliceWindow);
     // ---- THE SORTER POOL (stages 1-3): any bin order; parallel across
     // bins, serial within one bin. The emitter's handshake orders output. ----
     const u64 nSorters = std::max<u64>(1, std::min<u64>(threads, NB));
