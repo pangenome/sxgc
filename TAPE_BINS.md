@@ -133,3 +133,36 @@ NEVER under /mnt/nvme2n1/erikg/PILE. -j 24. Report at gate boundaries with denom
 The central tape's request queue, matcher, ledger/credit admission, cohort
 restructure, and resumable sweeps — the entire mediation stack. The proven parts are
 kept: scatter pass, leaf sort, parse layer, modality-slide comparator, oracle gates.
+
+## AMENDMENT 1 — adaptive prefix-range bins (the sampled radix plan), 2026-11-17
+
+256 fixed first-byte bins is WRONG for real text (byte skew: space ~10% of the
+pile, letters unequal, controls empty). Bins are PREFIX RANGES chosen by
+sampling, with depth varying by region:
+
+SAMPLE  one cheap pass (or reused survey stats): sample every S-th position,
+        histogram suffix prefixes to depth D_max (4-6 bytes). At the pile,
+        S=4096 gives ~320M samples — plenty. The wavekey-era survey machinery
+        (one pass, prefix cache) is the template.
+
+PLAN    grow a prefix trie ONLY where needed: a node splits when its sampled
+        row estimate exceeds the per-bin TARGET and depth < D_max. TARGET is
+        set from the wave budget: at the pile, a bin is ~5-30 GB of rows so a
+        WAVE of bins fits RAM with balance across 256 cores. Sparse regions
+        stay depth 1; dense regions ("the ", runs of spaces) go deeper —
+        the radix pre-resolves the cheap divergence levels for free.
+
+SCATTER per position, walk <= D_max bytes through the trie (it is cache-sized)
+        to a leaf = bin id. Leaf order = lexicographic = concatenation order;
+        every downstream mechanism (readheads, leaf sort, expansion rounds,
+        census+parse, modality slide, guards) is UNCHANGED.
+
+WAVES   bins stream in key order in waves packed to the RAM budget; multiple
+        bins sort concurrently per wave. Peak RAM = one wave, not the corpus.
+        This is the pile mode: 1.31 TB cannot be resident; the bins make it
+        a sequence of independent, balanced, key-ordered problems.
+
+G1 with fixed 256 bins (the in-flight run) is the BASELINE datapoint: it
+validates the mechanisms (depth clause, guards, rchar) independent of the
+partition. The adaptive plan is then implemented and G1 re-run: the partition
+change is isolated, its effect measured.
