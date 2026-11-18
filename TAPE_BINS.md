@@ -166,3 +166,43 @@ G1 with fixed 256 bins (the in-flight run) is the BASELINE datapoint: it
 validates the mechanisms (depth clause, guards, rchar) independent of the
 partition. The adaptive plan is then implemented and G1 re-run: the partition
 change is isolated, its effect measured.
+
+## AMENDMENT 2 — the Sawzall law: one blade, every stroke, 2026-11-17
+
+No routing decisions. No triggers. A machine that decides has decision bugs;
+this session's every failure was one (automaton routing, cohort admission,
+census mis-trigger). The blade is uniform:
+
+STROKE 1  scatter (one pass, rchar = corpus once) + K-byte keys + the
+          in-memory leaf sort. Rows that resolve here are done. (Not a
+          decision: rows with no tie have no work to do.)
+STROKE 2  EVERY surviving tie class PARSES. Uniformly. No census, no width
+          clause, no depth clause, no "fat bin" trigger, no expansion
+          rounds. The parse IS the tie resolution: capture the class's
+          span (read exactly once), dictionary, (phrase id, offset) keys.
+STROKE 3  phrase-space sort with the byte-slide comparator (the slide is
+          part of the blade, not a failure mode: ambiguity -> walk bytes).
+STROKE 4  concatenate in key order.
+
+WHY THIS IS BOUNDED (and the guards mostly evaporate): the no-cross law
+bounds every class's span by ONE document. Per-class memory = span (<= max
+document) + rows x keys — bounded BY CONSTRUCTION, not by a guard. Uniform
+parse also reads each span exactly ONCE (expansion paid ~2x by delta
+doubling): the Sawzall is optimal on rchar, not merely simple.
+
+WHAT IS DELETED: the census and its clauses, the expansion path (delta
+doubling), the reverse slide (there is nothing to slide back to — bytes
+live inside the comparator). The parse's internal widening rounds (x8 then
+LCP residual) remain — within-stroke machinery.
+
+WHAT REMAINS, as fuses not failure modes: step counters on every loop (a
+Sawzall still has a fuse; a spin dies with numbers in seconds, not hours),
+the per-class span assertion (span <= document length — an invariant of
+the boundary law, violated only by a bug), the rchar backstop (journal),
+post-run live == 0. These are ASSERTIONS of invariants, not decisions.
+
+THE ACCEPTED COST: parsing the millions of small classes costs more CPU
+than two expansion rounds would have. Accepted deliberately — CPU is the
+abundant resource (256 cores), rchar is the scarce one, and simplicity is
+the reliability strategy. The G0 adversarial shapes (single, period2, the
+collision case) remain the proof of exactness.
