@@ -1,48 +1,38 @@
-// bins_sort.cpp - THE PER-BIN MACHINE (TAPE_BINS.md, frozen 2026-11-17).
+// bins_sort.cpp - THE PER-BIN MACHINE (TAPE_BINS.md, frozen 2026-11-17,
+// AMENDMENTS 1 + 2: the adaptive prefix-range bins + the Sawzall law).
 //
-// THE LAW: every row's bytes are read at most once per expansion need; no
-// central reader mediates; no match crosses a document boundary; no signals
-// ever (files + exit codes); a run without SS_DONE is VOID; our guards fire
+// THE LAW: every row's bytes are read at most once per need; no central
+// reader mediates; no match crosses a document boundary; no signals ever
+// (files + exit codes); a run without SS_DONE is VOID; our guards fire
 // before the OS's.
 //
-//   STAGE 0  RADIX SCATTER (shared, exactly once): one sequential pass over
-//            the corpus; every suffix position is bucketed into one of 256
-//            first-byte bins; each bin receives (position, K-byte key) rows,
-//            positions ascending by construction. rchar = corpus, once.
-//   STAGE 1  PER-BIN SORT (parallel, in memory): the PROVEN leaf sort (8-bit
-//            MSD, virtual END = bucket 0, run-length digit). Rows tying
-//            beyond the radix prefix form tie classes with per-row state
-//            (position, cmp_len).
-//   STAGE 2  EXPANSION ROUNDS (the bin's OWN readhead): the bin walks ITS
-//            OWN ascending position list and reads [pos+cmp_len,
-//            pos+cmp_len+delta) with gap-merged ascending preads. Only the
-//            wanted bytes are billed. Compare, partition, repeat for
-//            survivors; cmp_len grows only for rows still tied.
-//   STAGE 3  SUB-PFP (per fat class, the compression): a class whose
-//            projected expansion cost (census-measured: rows still tied x
-//            cmp_len growth) exceeds the bin budget parses its continuations
-//            into (phrase id, intra-phrase offset) keys; the deep shared
-//            bytes exist ONCE in the class dictionary. Sorted in phrase
-//            space with the MODALITY-SLIDE comparator; the REVERSE SLIDE
-//            abandons a pathological parse back to byte expansion.
-//   STAGE 4  CONCATENATION: bins concatenate in key order. The
-//            concatenation IS the merge. No global merge step exists.
-//
-// Deleted vs tape_sort.cpp (the pull machine): the central tape's request
-// queue, matcher/automaton, ledger/credit admission, cohorts, and resumable
-// sweeps - the entire mediation stack. If an implementation of this design
-// reintroduces a request queue or a per-prefix automaton, it is wrong -
-// re-read TAPE_BINS.md.
+//   STROKE 1  SCATTER (AMENDMENT 1: one pass over the corpus through the
+//          sampled prefix-trie plan, rchar = corpus once) + K-byte keys +
+//          the in-memory leaf sort. Rows that resolve here are done.
+//   STROKE 2  EVERY surviving tie class parses - uniformly (AMENDMENT 2,
+//          the Sawzall law: no routing decisions, one blade, every
+//          stroke). The parse IS the tie resolution: capture the class's
+//          span (read exactly once), dictionary, (id, offset) keys.
+//   STROKE 3  phrase-space sort with the byte-slide comparator (the slide
+//          is part of the blade: ambiguity -> walk bytes); the widening
+//          rounds (x8) then the LCE residual are within-stroke machinery.
+//   STROKE 4  concatenation in key order (the emitter's piece/band
+//          contracts unchanged; POST_RUN_LIVE == 0).
 //
 // Kept (all proven): the scatter discipline, the leaf sort (order-identity
 // green at 44M rows), the parse layer (two-sided trigger dictionary,
 // (phrase id, intra-phrase offset) keys), the modality-slide comparator
 // (byte-walking at prefix ambiguity, widening rounds, LCE residual), and
 // the oracle gates. No text is materialized to disc; the corpus file is the
-// only text, read through windowed preads (stage 0) and the bin readheads
-// (stages 2-3), plus the mmap'd comparison core for the seams, tails and
-// the residual.
-// with a plan-time refusal (numbers, no I/O) for a unit that cannot fit.
+// only text, read through windowed preads (the sample and scatter passes)
+// and the parse readheads, plus the mmap'd comparison core for the seams,
+// tails and the residual.
+//
+// DELETED by AMENDMENT 2 (the session's every failure was a routing
+// decision): the census and its clauses (width, depth), the expansion path
+// (delta doubling), the reverse slide. Guards demoted to fuses: step
+// counters, the ids-plane invariant, the rchar backstop, post-run live
+// == 0.
 
 #include <algorithm>
 #include <numeric>
@@ -1090,305 +1080,36 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
     }
 
     // =========================================================================
-    // STAGE 2 + 3: every surviving class expands through the bin's OWN
-    // readhead; the census routes fat classes to the parse. The class loop
-    // is depth-first per span (the span's rows are contiguous in P).
+    // STROKE 2 + 3 (AMENDMENT 2, the Sawzall law): EVERY surviving tie
+    // class parses - uniformly. No census, no width clause, no depth
+    // clause, no expansion rounds, no reverse slide: the parse IS the
+    // tie resolution, its widening rounds (x8) and the LCE residual are
+    // within-stroke machinery, and the comparator byte-walks ambiguity.
+    // What remains are FUSES (step counters, the ids-plane invariant, the
+    // rchar backstop, post-run live == 0) - assertions, never decisions.
     // =========================================================================
-    BinWork w;
-    ReadHead rh;
-    rh.fd = fd;
-
-    // the divergence-jumping window radix over the class's fetched window
-    // plane (ported: one scatter per ACTUAL split; a level every row shares
-    // is skipped by a direct scan).
-    auto radixWindow = [&](std::pair<u64, u64> sp, u64 cmpLen, u64 delta,
-                           std::vector<u8>& plane, std::vector<u32>& slot,
-                           std::vector<std::pair<u64, u64>>& deepOut,
-                           std::vector<std::pair<u64, u64>>& smallOut) {
-        const auto digkAt = [&](u64 i, u64 lvl) -> unsigned {
-            if (rem_of(P[size_t(i)]) <= cmpLen + lvl) return 0u;
-            return unsigned(plane[size_t(slot[size_t(i)]) * size_t(delta) +
-                                        size_t(lvl)]) + 1u;
-        };
-        std::vector<std::pair<std::pair<u64, u64>, u64>> work;   // (span, level)
-        work.emplace_back(sp, 0);
-        while (!work.empty()) {
-            beat(3);
-            const auto s2l = work.back();
-            work.pop_back();
-            const u64 lo = s2l.first.first, hi = s2l.first.second;
-            u64 lvl = s2l.second;
-            if (hi - lo <= 1) continue;
-            if (hi - lo <= SS_WAVE_SMALL_ROWS) { smallOut.push_back(s2l.first); continue; }
-            u64 tA = ~0ull, tB = ~0ull;
-            if (g_expand_trace.load())
-                for (u64 i = lo; i < hi; ++i) {
-                    const u64 pp = unpack_pos(P[size_t(i)]);
-                    if (pp == g_etrace_a.load()) tA = i;
-                    if (pp == g_etrace_b.load()) tB = i;
-                }
-            u64 splitLvl = ~0ull;
-            for (u64 L = lvl; L < delta; ++L) {
-                const unsigned d0 = digkAt(lo, L);
-                bool same = true;
-                for (u64 i = lo + 1; i < hi; ++i) {
-                    if (digkAt(i, L) != d0) { same = false; break; }
-                }
-                if (!same) { splitLvl = L; break; }
-            }
-            if (splitLvl == ~0ull) {
-                deepOut.push_back(s2l.first);   // survived the whole window
-                continue;
-            }
-            if (tA != ~0ull && tB != ~0ull) {
-                std::fprintf(stderr,
-                    "  SPLIT unit=%llu span=[%llu,%llu) lvl_from=%llu"
-                    " split_lvl=%llu posA=%llu rowA=%llu digA=%u winA=%02x"
-                    " posB=%llu rowB=%llu digB=%u winB=%02x remA=%llu remB=%llu\n",
-                    (unsigned long long)unit_id, (unsigned long long)lo,
-                    (unsigned long long)hi, (unsigned long long)lvl,
-                    (unsigned long long)splitLvl,
-                    (unsigned long long)g_etrace_a.load(), (unsigned long long)tA,
-                    digkAt(tA, splitLvl),
-                    plane[size_t(slot[size_t(tA)]) * size_t(delta) + size_t(splitLvl)],
-                    (unsigned long long)g_etrace_b.load(), (unsigned long long)tB,
-                    digkAt(tB, splitLvl),
-                    plane[size_t(slot[size_t(tB)]) * size_t(delta) + size_t(splitLvl)],
-                    (unsigned long long)(FILE_N - g_etrace_a.load()),
-                    (unsigned long long)(FILE_N - g_etrace_b.load()));
-            }
-            const u64 m = hi - lo;
-            w.sDig.resize(size_t(m));
-            w.starts.assign(SS_WAVE_BUCKETS + 1, 0);
-            for (u64 i = 0; i < m; ++i) {
-                w.sDig[size_t(i)] = digkAt(lo + i, splitLvl);
-                ++w.starts[size_t(w.sDig[size_t(i)]) + 1];
-            }
-            for (unsigned b = 0; b < SS_WAVE_BUCKETS; ++b) w.starts[b + 1] += w.starts[b];
-            w.sCur.assign(w.starts.begin(), w.starts.end() - 1);
-            w.sP.resize(size_t(m));
-            w.sS.resize(size_t(m));
-            for (u64 i = 0; i < m; ++i) {
-                const u64 at = w.sCur[size_t(w.sDig[size_t(i)])]++;
-                w.sP[size_t(at)] = P[size_t(lo + i)];
-                w.sS[size_t(at)] = slot[size_t(lo + i)];
-            }
-            for (u64 i = 0; i < m; ++i) {
-                P[size_t(lo + i)] = w.sP[size_t(i)];
-                slot[size_t(lo + i)] = w.sS[size_t(i)];
-            }
-            check_perm("window-scatter", splitLvl, 1);
-            for (unsigned b = 0; b < SS_WAVE_BUCKETS; ++b) {
-                const u64 s = w.starts[b], e = w.starts[b + 1];
-                if (e > s + 1) work.emplace_back(std::make_pair(lo + s, lo + e),
-                                                  splitLvl + 1);
-                if (s > 0 && e > s) U.lcpv[size_t(lo + s)] = cmpLen + splitLvl;
-            }
-        }
-    };
-
-    // (defined below the capture/parse pieces; forward use via lambda)
-    // refused: set by the reverse slide - a class the parse abandoned
-    // never re-triggers it (no modality can trap the machine)
-    std::function<bool(std::pair<u64, u64>, u64, u64, bool&)> parse_class;
-
-    // STAGE 2: the expansion rounds for one class. The class's rows are
-    // contiguous in P; the readhead walks THEIR ascending positions. All
-    // survivor spans grew cmp_len by the same delta (they tied through the
-    // whole window): the first continues in place, the rest expand
-    // independently from the SHARED depth (never from the radix start).
-    {
-        const char* es = ::getenv("XSA_EXPAND_TRACE");
-        if (es) {
-            u64 ea = 0, eb = 0;
-            if (std::sscanf(es, "%" SCNu64 ",%" SCNu64, &ea, &eb) == 2) {
-                g_etrace_a.store(ea); g_etrace_b.store(eb);
-                g_expand_trace.store(true);
-            }
-        }
-    }
-    std::function<void(std::pair<u64, u64>, u64)> expand_class =
-    [&](std::pair<u64, u64> sp0, u64 startCmp) {
-        std::pair<u64, u64> sp = sp0;
-        u64 cmpLen = startCmp;
-        u64 delta = g_expand_delta_start;
-        bool parseRefused = false;
-        std::vector<std::pair<u64, u32>> rows;
-        std::vector<u32> slot;   // ABSOLUTE P index -> the row's window index
-        std::vector<u8> plane;
-        std::vector<std::pair<u64, u64>> deep, smallS, rest;
-        u64 steps = 0, roundsDone = 0;
-        for (;;) {
-            const u64 m = sp.second - sp.first;
-            if (m < 2) return;
-            if (++steps > (1ull << 20))
-                die("EXPAND_STEPS: unit " + std::to_string(unit_id) +
-                    " class [" + std::to_string(sp.first) + "," +
-                    std::to_string(sp.second) + ") exceeded " +
-                    std::to_string(steps) + " expansion rounds at cmp_len=" +
-                    std::to_string(cmpLen) + " - refusing with the numbers");
-            beat(2);
-            ++st.rounds;
-            // THE CENSUS (measured, not hoped): the projected cost of the
-            // NEXT round is rows_still_tied x (cmp_len + delta); a class
-            // whose projection exceeds the bin budget is FAT - the parse's
-            // trigger population. A class the reverse slide refused never
-            // re-triggers (no modality can trap it).
-            // THE CLASS BUDGET = max(knob, rows x 16): the floor is the
-            // minimum window plane the class must be able to hold in EITHER
-            // modality (expansion m x 16; parse keying m x 8). Without it a
-            // small knob made big classes unservable (the plane guard died
-            // on the 'single' fixture's 36k-row classes at 64 KiB) - with
-            // it the knob triggers SMALL classes early while every class
-            // still fits somewhere.
-            const u64 budgetEff = std::max(g_parse_plane_max, m * 16);
-            // THE CENSUS FIRES ON THE TRAJECTORY, never at round 0
-            // (TAPE_BINS.md: "rows still tied AFTER ROUND r x cmp_len
-            // growth"). A class that will resolve in its first expansion
-            // round must pay only that round: routing every big class at
-            // cmp_len=9 sent shallow classes (true depth ~30 B) to a
-            // parse costing 300x their whole expansion - the 'single'
-            // receipt: rchar 1771x at the 64 KiB knob.
-            const bool widthTrip = !parseRefused && roundsDone > 0 &&
-                m * (cmpLen + delta) > budgetEff;
-            // THE DEPTH CLAUSE (TAPE_BINS.md, operator-approved): when
-            // cmp_len exceeds the parse's one-shot capture cost, the parse
-            // MUST fire - the expansion has already paid more than the
-            // parse's entire capture. The 3 GB receipt: deep-small classes
-            // (a few rows, divergence up to 262 KB) never cross the width
-            // budget (rows x cmp_len ~ 26 MB) while the expansion pays
-            // rows x 2 x depth for each of hundreds of thousands of them.
-            const u64 parseSpan = g_parse_phrases * (g_pfp_k + g_pfp_w) * 2 + 4096;
-            const bool depthTrip = !parseRefused && roundsDone > 0 &&
-                cmpLen > parseSpan;
-            if (widthTrip || depthTrip) {
-                std::fprintf(stderr,
-                    "CENSUS unit=%" PRIu64 " rows=%" PRIu64 " cmp_len=%" PRIu64
-                    " delta=%" PRIu64 " projected_bytes=%" PRIu64
-                    " budget=%" PRIu64 " clause=%s"
-                    " expand_paid_estimate=%" PRIu64 " parse_capture_cost=%" PRIu64
-                    " rule=route_to_the_parse_whichever_way_expensive\n",
-                    unit_id, m, cmpLen, delta, m * (cmpLen + delta), budgetEff,
-                    depthTrip ? (widthTrip ? "width+depth" : "depth") : "width",
-                    m * cmpLen, m * parseSpan);
-                if (parse_class(sp, cmpLen, delta, parseRefused)) return;
-                // parse_abandoned: journaled with both costs by the slide;
-                // continue the byte expansion from the SAME cmp_len
-            }
-            // ---- THE WINDOW-PLANE GUARD (TAPE_BINS.md: the bin budget caps
-            // EVERY term - chunk, keys, expansion buffers, dictionary). A
-            // class the parse refused still cannot balloon its window
-            // plane: delta shrinks to fit the budget (the same total
-            // bytes over more rounds), and a class too big even at the
-            // minimum delta is a plan error: DIE WITH THE NUMBERS (bin id,
-            // rows by term, bytes by term) - never the OS OOM killer.
-            const u64 delta_eff = std::max<u64>(16u,
-                std::min(delta, budgetEff / std::max<u64>(1, m)));
-            if (m * delta_eff > budgetEff) {
-                const u64 baseP = U.P.size() * 8, baseKb = U.Kb.size(),
-                         baseLp = U.Lp.size() * 4, baseTp = U.Tp.size() * 2;
-                std::fprintf(stderr,
-                    "EXPAND_PLANE_REFUSED unit=%" PRIu64 " bin_rows=%" PRIu64
-                    " class=[%" PRIu64 ",%" PRIu64 ") class_rows=%" PRIu64
-                    " cmp_len=%" PRIu64 " delta=%" PRIu64 " delta_eff=%" PRIu64
-                    " plane_bytes=%" PRIu64 " budget=%" PRIu64
-                    " bin_base_bytes=P:%" PRIu64 "+Kb:%" PRIu64
-                    "+Lp:%" PRIu64 "+Tp:%" PRIu64
-                    " rule=class_too_big_even_at_min_delta_is_a_plan_error\n",
-                    unit_id, U.P.size(), sp.first, sp.second, m,
-                    cmpLen, delta, delta_eff, m * delta_eff, g_parse_plane_max,
-                    baseP, baseKb, baseLp, baseTp);
-                die("EXPAND_PLANE: the class's window plane cannot fit the"
-                    " bin budget at any delta - refusing with the numbers"
-                    " before the memory does damage");
-            }
-            // ---- the readhead: only the wanted bytes are billed ----
-            const double tr0 = now_sec();
-            rows.clear();
-            for (u64 i = sp.first; i < sp.second; ++i)
-                rows.emplace_back(unpack_pos(P[size_t(i)]), u32(i - sp.first));
-            std::sort(rows.begin(), rows.end());
-            rh.fetch(rows, cmpLen, delta_eff);
-            st.bytes_read += rh.wantedBytes;
-            // ---- the window plane: row-major m x delta_eff, END-padded ----
-            plane.assign(size_t(m) * size_t(delta_eff), SENTINEL_SYMBOL);
-            for (u64 i = 0; i < m; ++i) {
-                const auto& rw = rh.rowWin[size_t(i)];
-                if (!rw.len) continue;
-                if (rw.off + rw.len > rh.buf.size())
-                    die("readhead window overflow: row " + std::to_string(i) +
-                        " off=" + std::to_string(rw.off) + " len=" +
-                        std::to_string(rw.len) + " buf=" +
-                        std::to_string(rh.buf.size()));
-                std::memcpy(&plane[size_t(i) * size_t(delta_eff)],
-                            rh.buf.data() + size_t(rw.off), size_t(rw.len));
-            }
-            // ABSOLUTE indexing: settle_small (mode 1) addresses the slot
-            // plane by the class's P indices; a class-local plane would be
-            // indexed out of bounds (the ASan receipt on the smoke corpus)
-            slot.assign(size_t(sp.second), 0u);
-            for (u64 i = sp.first; i < sp.second; ++i)
-                slot[size_t(i)] = u32(i - sp.first);
-            wk_keys = &plane; wk_slot = &slot; wk_kk = delta_eff; kbase_off = cmpLen;
-            deep.clear(); smallS.clear();
-            radixWindow(std::make_pair(sp.first, sp.second), cmpLen, delta_eff,
-                        plane, slot, deep, smallS);
-            if (!smallS.empty()) {
-                settle_small(smallS, 1, carry);
-                for (const auto& s2 : carry) deep.push_back(s2);
-                carry.clear();
-            }
-            st.t_extract += now_sec() - tr0;
-            std::fprintf(stderr,
-                "EXPAND unit=%" PRIu64 " rows=%" PRIu64 " cmp_len=%" PRIu64
-                " delta=%" PRIu64 " delta_eff=%" PRIu64
-                " wanted_bytes=%" PRIu64 " skipped_bytes=%" PRIu64
-                " segments=%" PRIu64 " survivors=%zu"
-                " plane_bytes=%" PRIu64
-                " rule=readhead_bills_wanted_bytes_only;plane_is_a_budgeted_term\n",
-                unit_id, m, cmpLen, delta, delta_eff, rh.wantedBytes,
-                rh.skippedBytes, rh.segments, deep.size(), m * delta_eff);
-            if (deep.empty()) return;   // the class is fully ordered
-            ++roundsDone;
-            // every survivor span tied through the WHOLE COMPARED WINDOW
-            // (delta_eff, NOT the raw delta: the plane guard clamps the
-            // round to the budget, and growing past uncomparered bytes
-            // skipped divergences - the 'single' receipt: a 37173-row
-            // class at delta_eff=16 'grew' to cmp_len=265 while the pair
-            // diverged at byte 27, unseen)
-            const u64 grownCmp = cmpLen + delta_eff;
-            rest.clear();
-            for (size_t di = 1; di < deep.size(); ++di) rest.push_back(deep[di]);
-            sp = deep[0];
-            cmpLen = grownCmp;
-            delta = std::min(delta * 2, g_expand_delta_cap);
-            for (const auto& r2 : rest) expand_class(r2, grownCmp);
-        }
-    };
-
-
     // =====================================================================
-    // STAGE 3: the sub-PFP parse for one fat class. THE READHEAD FETCHES
-    // THE CLASS'S SHARED REGION: rows ascending, one growing buffer + one
-    // frontier for clustered rows (the gap-merge discipline); a distant row
-    // resets both (each row's classification is self-consistent: the off0
-    // alignment makes the pre-position bytes irrelevant to the order, as
-    // proven on the tape's capture - the compared bytes start AT the row).
-    // Returns true when the class is fully ordered in phrase space (with
-    // the LCE residual for what the round cap left), false when the REVERSE
-    // SLIDE abandons the parse (dictionary cost > pure byte-expansion cost,
-    // journaled with both numbers; the expansion continues from cmp_len).
+    // STROKE 3: the sub-PFP parse for one tie class - now the ONLY tie
+    // resolution (AMENDMENT 2). The readhead fetches the class's shared
+    // region: rows ascending, one growing buffer + one frontier for
+    // clustered rows (the gap-merge discipline); a distant row resets
+    // both (each row's classification is self-consistent: the off0
+    // alignment makes the pre-position bytes irrelevant to the order).
+    // The widening rounds (x8) and the LCE residual are within-stroke
+    // machinery. There is no reverse slide and no return to bytes: the
+    // class resolves here or the fuses die with the numbers.
     // =====================================================================
     std::vector<u8> pbuf;          // the parse reader's buffer (remapped)
     u64 pbufBase = ~0ull;
     std::vector<std::pair<std::pair<u64, u64>, u64>> residual;   // (span, proven depth)
-    parse_class = [&](std::pair<u64, u64> sp, u64 cmpLen, u64 delta,
-                      bool& refused) -> bool {
+    std::function<void(std::pair<u64, u64>, u64, u64)> parse_class;
+    parse_class = [&](std::pair<u64, u64> sp, u64 cmpLen, u64 delta) -> void {
         const u64 m = sp.second - sp.first;
         beat(4);
         u64 B = g_parse_phrases;
         u64 spanBytes = B * (g_pfp_k + g_pfp_w) * 2 + 4096;
         u64 parseRound = 0;
+        (void)delta;   // the Sawzall: no routing uses the trajectory anymore
         // the class's rows, ascending (the readhead's order). REBUILT EVERY
         // ROUND below: each round's sort PERMUTES P's span, so the pidx of
         // a given row CHANGES between rounds. pc.ids is keyed by the pidx
@@ -1403,7 +1124,6 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
         for (u64 i = sp.first; i < sp.second; ++i)
             rows.emplace_back(unpack_pos(P[size_t(i)]), u32(i - sp.first));
         std::sort(rows.begin(), rows.end());
-        const u64 byteCost = m * (cmpLen + delta);   // one more expansion round
         const char* traceSpec = ::getenv("XSA_PARSE_TRACE");
         if (traceSpec) {
             u64 ta = 0, tb = 0;
@@ -1433,27 +1153,20 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                 die("PARSE_ROUNDS: unit " + std::to_string(unit_id) +
                     " class of " + std::to_string(m) + " rows exceeded the round"
                     " machinery - refusing with the numbers");
-            // ---- THE IDS-PLANE GUARD + THE MANDATORY CENSUS
-            // (TAPE_BINS.md: the bin budget caps EVERY term - AND the
-            // census's routing is MANDATORY, not advisory). When the
-            // census sends a class here, the parse MUST fire: shrink the
-            // phrase budget so the keying planes fit (B >= 1 phrase per
-            // row; the widening grows it back under the same guard). The
-            // receipt that forced this: the 'single' fixture - one giant
-            // tie class, the parse refused on its ids plane, and the
-            // expansion read the corpus 264x. Only a class too big even
-            // at B=1 (rows x 8 > budget) is a plan error: die with the
-            // numbers, never a ballooning allocation.
+            // ---- THE IDS-PLANE INVARIANT (a fuse, not a decision):
+            // every class parses, so the keying must fit - B shrinks to
+            // B >= 1 phrase per row and the widening grows it back under
+            // the same invariant. Only rows x 8 > budget lands in the
+            // die, which the no-cross law makes unreachable.
             const u64 budgetEff = std::max(g_parse_plane_max, m * 8);
-            if (m * 8 > budgetEff) {   // unreachable with the floor; kept as the structural belt
-                std::fprintf(stderr,
-                    "PARSE_REFUSED unit=%" PRIu64 " class_rows=%" PRIu64
-                    " budget=%" PRIu64 " ids_at_B1_bytes=%" PRIu64
-                    " cmp_len=%" PRIu64
-                    " rule=class_too_big_for_any_keying_is_a_plan_error\n",
-                    unit_id, m, budgetEff, m * 8, cmpLen);
-                refused = true;
-                return false;
+            if (m * 8 > budgetEff) {   // unreachable with the floor; an
+                // INVARIANT of the Sawzall (the no-cross law bounds the
+                // class; only a bug lands here)
+                die("IDS_PLANE_INVARIANT: unit " + std::to_string(unit_id) +
+                    " class of " + std::to_string(m) + " rows needs " +
+                    std::to_string(m * 8) + " keying bytes against budget " +
+                    std::to_string(budgetEff) + " - the boundary law is"
+                    " violated, this is a bug not a plan shape");
             }
             const u64 off0Bytes = m * 4;
             {
@@ -1669,26 +1382,6 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                     const Frontier::Ent& e = F.ents[size_t(entIdx)];
                     idOut[i] = intern(F.arena.data() + e.off, e.len, e.h, false);
                     prev = e.end;
-                }
-                // THE MID-CAPTURE REVERSE SLIDE (the dictionary is a
-                // budgeted term like any other): a hostile class can grow
-                // the dictionary past the class's pure byte-expansion cost
-                // DURING the capture - refusing only at round end would
-                // let the balloon happen first. Check periodically; on the
-                // crossing, abandon immediately with both costs.
-                if ((ri & 0xff) == 0xff) {
-                    const u64 dNow = pc.dictBytes();
-                    if (dNow > byteCost) {
-                        PARSE_ABANDONED.fetch_add(1);
-                        std::fprintf(stderr,
-                            "PARSE_ABANDONED unit=%" PRIu64 " rows=%" PRIu64
-                            " dict_bytes=%" PRIu64 " byte_expansion_cost=%" PRIu64
-                            " round=%" PRIu64 " mid_capture=row:%" PRIu64
-                            " rule=reverse_slide_no_class_traps_a_modality\n",
-                            unit_id, m, dNow, byteCost, parseRound, ri);
-                        refused = true;
-                        return false;
-                    }
                 }
                 // bound the frontier: no future row of this class lands in
                 // a phrase that ended below the next row's position
@@ -2171,22 +1864,7 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                     std::fprintf(stderr, "  PDICT id=%zu len=%zu\n", di2,
                                  pc.pdict[di2].size());
             }
-            if (ties.empty()) return true;   // fully ordered in phrase space
-            // ---- THE REVERSE SLIDE: a class whose dictionary outgrows its
-            // pure byte-expansion cost abandons the parse for this class
-            // (journaled with both costs) and returns to byte expansion.
-            // The decision is FINAL for the class: no modality can trap it.
-            const u64 dictB = pc.dictBytes();
-            if (dictB > byteCost) {
-                PARSE_ABANDONED.fetch_add(1);
-                std::fprintf(stderr,
-                    "PARSE_ABANDONED unit=%" PRIu64 " rows=%" PRIu64
-                    " dict_bytes=%" PRIu64 " byte_expansion_cost=%" PRIu64
-                    " round=%" PRIu64 " rule=reverse_slide_no_class_traps_a_modality\n",
-                    unit_id, m, dictB, byteCost, parseRound);
-                refused = true;
-                return false;
-            }
+            if (ties.empty()) return;   // fully ordered in phrase space
             if (parseRound >= g_parse_rounds) {
                 // THE ROUND CAP: the byte-exact LCE residual owns the
                 // WHOLE CLASS from depth 0. Per-span residuals with a
@@ -2204,7 +1882,7 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                     " round=%" PRIu64 " reason=round_cap"
                     " rule=whole_class_brute_from_zero\n",
                     unit_id, m, parseRound);
-                return true;   // the residual below finishes it
+                return;   // the residual below finishes it
             }
             // WIDEN x 8: more phrases per row AND a longer span - but
             // only while the NEXT round's keying fits the bin budget; a
@@ -2225,7 +1903,7 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                     " budget_next=%" PRIu64 " phrase_budget_next=%" PRIu64
                     " rule=whole_class_brute_from_zero\n",
                     unit_id, m, m * Bnext * 4 + off0Bytes, Bnext);
-                return true;   // the residual below finishes it
+                return;   // the residual below finishes it
             }
             B = Bnext;
             spanBytes *= 8;
@@ -2234,10 +1912,11 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
     };
 
 
-    // ---- drive every surviving class through the expansion/parse ----
+    // ---- STROKE 2 (the Sawzall): every surviving class parses.
+    // Uniformly - no census, no routing, no expansion rounds. ----
     {
         const std::vector<std::pair<u64, u64>> stage1(spans);
-        for (const auto& sp : stage1) expand_class(sp, kbase + K);
+        for (const auto& sp : stage1) parse_class(sp, kbase + K, 0);
     }
 
     // ---- THE RESIDUAL (carried over): what the parse's round cap left,
