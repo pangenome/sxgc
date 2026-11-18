@@ -36,7 +36,7 @@ run_one() {
   local log="$rd/bins_sort.log"
   say "START name=$name corpus=$corpus bytes=$(stat -c %s "$corpus" 2>/dev/null)"
   env XSA_MEM_GUARD_MB=16384 "$@" TRIE_TAP=1 XSA_WAVEKEY_VERIFY=1 \
-    SS_LCP_SLICE_WINDOW=4096 CROSS_V2_PIECE_WINDOW=1000000 \
+    SS_LCP_SLICE_WINDOW=1048576 CROSS_V2_PIECE_WINDOW=1000000 \
     "$BIN" --corpus "$corpus" --out-prefix "$rd/merged/frag" --bands "$rd/bands" \
     --budget-bytes 16000000000 --threads 8 \
     > "$log" 2>&1
@@ -95,26 +95,83 @@ PY
   if tail -1 "$J" | grep -q "ORACLE OK"; then
     say "GATE name=$name PASS"
     G0_RESULTS="$G0_RESULTS $name:PASS(rows=$rows,parse=$parses,rel=${rel:-0})"
+    RUN_OK[$name]=1
   else
     say "GATE name=$name ORACLE_FAIL"
     G0_FAILS=$((G0_FAILS+1)); G0_RESULTS="$G0_RESULTS $name:ORACLE"
+    RUN_OK[$name]=0
   fi
 }
 
 G0_FAILS=0; G0_RESULTS=""
+declare -A RUN_OK
 # smallest first: the adversarial collision fixture (20 KB), then the 6 MB
 # fixtures one at a time
-# The adversarial collision fixture: the parse is forced on so the
-# modality slide runs over the disputed prefix-relation classes and
-# journals them. The knobs are chosen so BOTH budgeted terms fit: the
-# census (rows x (cmp_len+delta) > budget) fires at delta_start=4096 for
-# the 4-row classes, and the ids plane (rows x B x 4 + rows x 4 = 1040 B)
-# fits the 8 KiB budget - with PLANE_MAX=1024 the new ids-plane guard
-# would refuse every class and nothing would be journaled.
+# The adversarial collision fixture (the FNV-1a collision attack):
+# under the Sawzall every class parses, so the modality slide runs over
+# the disputed prefix-relation classes and journals them by construction.
 "$GEN" "$RD/adv.bin" 20000 >> "$J" 2>&1 || say "GATE_FAIL name=adv rc=gen"
-run_one adv "$RD/adv.bin" XSA_PARSE_PLANE_MAX=8192 XSA_EXPAND_DELTA_START=4096
+run_one adv "$RD/adv.bin"
 for f in docsep eofrun internsep mixed period2 r0 single; do
   run_one "$f" "$FIX/$f.txt"
 done
+
+# ---- THE BAND-SIZE INVARIANCE GATE (AMENDMENT 4): the container is
+# BAND-SIZE-INVARIANT - the same fixture at a tiny workspace (many bands)
+# vs the default (one band) must produce an IDENTICAL band-stream SHA.
+# Band size is scheduling, never semantics. ----
+run_one mixed_64mb "$FIX/mixed.txt" XSA_BAND_WORKSPACE_BYTES=67108864
+# A GATE PASSES ONLY ON REAL OUTPUTS: both arms must have PASSED their
+# oracle gates, and both band streams must EXIST with the expected row
+# count - a missing or empty output is a FAIL with the producer's tail,
+# never a nothing-to-nothing SHA comparison.
+inv_fail() {
+  say "GATE name=band_invariance FAIL reason=$1"
+  for d in mixed mixed_64mb; do
+    tail -3 "$RD/$d/bins_sort.log" 2>/dev/null | sed 's/^/  '$d': /' | tee -a "$J"
+  done
+  G0_FAILS=$((G0_FAILS+1)); G0_RESULTS="$G0_RESULTS band_invariance:$1"
+}
+if [ "${RUN_OK[mixed]:-0}" != 1 ] || [ "${RUN_OK[mixed_64mb]:-0}" != 1 ]; then
+  inv_fail arms_not_pass
+elif ! ls "$RD/mixed/bands"/band_*.sa >/dev/null 2>&1 || \
+     ! ls "$RD/mixed_64mb/bands"/band_*.sa >/dev/null 2>&1; then
+  inv_fail missing_bands
+else
+  bytesA=$(cat "$RD/mixed/bands"/band_*.sa | wc -c)
+  bytesB=$(cat "$RD/mixed_64mb/bands"/band_*.sa | wc -c)
+  rowsA=$((bytesA / 8)); rowsB=$((bytesB / 8))
+  expect=$(stat -c %s "$FIX/mixed.txt"); expect=$((expect + 1))
+  if [ "$rowsA" -ne "$expect" ] || [ "$rowsB" -ne "$expect" ] || \
+     [ "$bytesA" -eq 0 ] || [ "$bytesB" -eq 0 ]; then
+    inv_fail "row_counts(rowsA=$rowsA,rowsB=$rowsB,expected=$expect)"
+  else
+    # the SHA over the NUMERICALLY-ordered band stream (a shell 'sort -t_'
+    # split broke on the directory's own underscores and compared two
+    # different concatenation orders - the streams were identical all
+    # along; python sorts by the parsed unit id, no field games)
+    read shaA shaB <<SHASH
+$(python3 - "$RD/mixed/bands" "$RD/mixed_64mb/bands" <<'PY2'
+import hashlib, sys, glob, os
+def sha(d):
+    h = hashlib.sha256()
+    for f in sorted(glob.glob(d + '/band_*.sa'),
+                    key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0])):
+        h.update(open(f, 'rb').read())
+    return h.hexdigest()
+print(sha(sys.argv[1]), sha(sys.argv[2]))
+PY2
+)
+SHASH
+    kA=$(grep -o 'bands=[0-9]*' "$RD/mixed/bins_sort.log" | head -1)
+    kB=$(grep -o 'bands=[0-9]*' "$RD/mixed_64mb/bins_sort.log" | head -1)
+    if [ "$shaA" == "$shaB" ]; then
+      say "GATE name=band_invariance PASS sha=$shaA rows=$rowsA default:$kA small:$kB"
+      G0_RESULTS="$G0_RESULTS band_invariance:PASS($kA,$kB,rows=$rowsA)"
+    else
+      inv_fail "sha_mismatch($shaA,$shaB)"
+    fi
+  fi
+fi
 say "SUMMARY fails=$G0_FAILS results=$G0_RESULTS"
 [ $G0_FAILS -eq 0 ] || exit 1

@@ -2436,7 +2436,11 @@ int main(int argc, char** argv) {
     const u64 lcpSliceWindow = [] {
         const char* e = ::getenv("SS_LCP_SLICE_WINDOW");
         const u64 v = (e && *e) ? std::strtoull(e, nullptr, 10) : 8;
-        if (v < 1 || v > 4096) die("SS_LCP_SLICE_WINDOW must be in [1,4096]");
+        // the window bounds the LIVE lcp slices (memory), and the
+        // standalone-producer shape needs window > total units or the
+        // emit waits on .consumed markers nobody writes; the pipeline
+        // (finish concurrent) works at any window
+        if (v < 1 || v > (1 << 20)) die("SS_LCP_SLICE_WINDOW must be in [1,2^20]");
         return v;
     }();
     const bool lcpOn = true;   // the product arm: per-bin LCP slices for the finish
@@ -2564,15 +2568,22 @@ int main(int argc, char** argv) {
     u64 planStride = 0;   // 0 = auto
     if (const char* e = ::getenv("XSA_PLAN_STRIDE"))
         planStride = std::strtoull(e, nullptr, 10);
-    u64 planTargetOverride = 0;
+    u64 planTargetOverride = 0;   // debug override of the derived TARGET
     if (const char* e = ::getenv("XSA_PLAN_TARGET"))
         planTargetOverride = std::strtoull(e, nullptr, 10);
-    double waveResidentFraction = 0.5;
-    if (const char* e = ::getenv("XSA_WAVE_RESIDENT_FRACTION"))
-        waveResidentFraction = std::strtod(e, nullptr);
-    if (!(waveResidentFraction > 0.0 && waveResidentFraction <= 1.0))
-        die("XSA_WAVE_RESIDENT_FRACTION must be in (0,1]");
-    const bool forceSpill = ::getenv("XSA_FORCE_SPILL") != nullptr;
+    // ---- AMENDMENT 4: THE BAND WORKSPACE KNOB. Default = the envelope's
+    // safe number (a fraction of the declared/detected budget); the
+    // explicit override always wins. K derives from corpus/workspace and
+    // the plan prints it with denominators. ----
+    u64 workspaceBytes = capBytes;
+    if (const char* e = ::getenv("XSA_BAND_WORKSPACE_BYTES")) {
+        workspaceBytes = std::strtoull(e, nullptr, 10);
+        if (!workspaceBytes)
+            die("XSA_BAND_WORKSPACE_BYTES must be positive");
+    }
+    if (workspaceBytes < (1ull << 20))
+        die("BAND_WORKSPACE: " + std::to_string(workspaceBytes) +
+            " bytes is below the 1 MiB floor - a knob error");
 
     // ---- the trie (cache-sized: nodes exist only where the plan split) ----
     struct PlanTrie {
@@ -2677,15 +2688,7 @@ int main(int argc, char** argv) {
     {
         u64 target;
         if (planTargetOverride) target = planTargetOverride;
-        else {
-            const u64 waveBudget = u64(double(capBytes) * waveResidentFraction);
-            const u64 byWave = waveBudget / std::max<u64>(1, threads) /
-                               std::max<u64>(1, recBytes);
-            // the balance floor: enough bins to exercise the seam on small
-            // corpora, never so many the split cascade explodes (a floor of
-            // one 64KiB bin's worth of rows keeps tiny inputs ~tens of bins)
-            target = std::min<u64>(byWave, std::max<u64>(65536, N / 256));
-        }
+        else target = workspaceBytes / std::max<u64>(1, recBytes);
         if (!target) die("PLAN_TARGET collapsed to 0 - a knob error");
         planTarget = target;
         const u64 S = planStrideUsed;
@@ -2698,33 +2701,18 @@ int main(int argc, char** argv) {
             u64 tot = 0;
             for (u64 i = lo; i < hi; ++i) tot += sampleKeys[size_t(i)].second;
             const u64 estRows = tot * S;
-            // THE RADIX-PREFIX LAW: the root MUST split, and COMPLETELY -
-            // every one of the 256 first bytes gets a child (an empty one
-            // becomes a 0-row leaf). The machinery's radix prefix is
-            // kbase=1: the key bytes start AT byte 1, so a bin's rows MUST
-            // all share byte 0 or the leaf sort/expansion never compares
-            // it (the adversarial fixture's receipt: NB=1 ordered
-            // 'W...' before 'A...'). Foreign prefixes at depth >= 2 are
-            // safe: bytes 1..K-1 live in the captured key.
-            if (d == 0 || (d < planDmax && estRows > target && hi > lo)) {
+            // AMENDMENT 3: the trie is pure BAND-BOUNDARY selection - a
+            // leaf = one band's key range, sized so its workspace fits
+            // (TARGET = workspace / rec_bytes). The byte-0 uniformity the
+            // leaf sort needs comes from the POST-SCAN sub-unit radix,
+            // not from the trie, so the root may stay a leaf (K=1).
+            if (d < planDmax && estRows > target && hi > lo) {
                 const u32 node = PT.mkNode();
                 PT.est[size_t(node)] = estRows;
                 const u64 sh = 8 * (planDmax - 1 - d);
                 u64 i = lo;
-                for (u64 byte = 0; byte < 256; ++byte) {
-                    if (d == 0) {
-                        // every first byte: its own child, even unsampled
-                        u64 j = i;
-                        while (j < hi && ((sampleKeys[size_t(j)].first >> sh) & 0xFF)
-                                   == byte) ++j;
-                        PT.child[size_t(node)][size_t(byte)] = buildRange(i, j, d + 1);
-                        i = j;
-                        continue;
-                    }
-                    if (i >= hi) break;
-                    const u64 kb = (sampleKeys[size_t(i)].first >> sh) & 0xFF;
-                    if (kb < byte) die("PLAN_SORT: the sample is not sorted - a plan bug");
-                    if (kb > byte) continue;
+                while (i < hi) {
+                    const u64 byte = (sampleKeys[size_t(i)].first >> sh) & 0xFF;
                     u64 j = i;
                     while (j < hi && ((sampleKeys[size_t(j)].first >> sh) & 0xFF)
                                == byte) ++j;
@@ -2743,16 +2731,21 @@ int main(int argc, char** argv) {
         NB = PT.nLeaves;
         if (!NB) die("PLAN_EMPTY: the sample produced no bins - a plan error");
         // a LEAF root = the whole corpus is one bin: classify() short-circuits
-        u64 leafBytes = 0;
-        for (u64 b = 0; b < NB; ++b) leafBytes += PT.leafEst[size_t(b)] * recBytes;
+        u64 leafBytes = 0, maxBand = 0;
+        for (u64 b = 0; b < NB; ++b) {
+            leafBytes += PT.leafEst[size_t(b)] * recBytes;
+            maxBand = std::max(maxBand, PT.leafEst[size_t(b)]);
+        }
         std::fprintf(stderr,
-            "SS_PLAN target_rows=%" PRIu64 " nodes=%u bins=%" PRIu64
-            " est_rows_sum=%" PRIu64 " vs_n=%" PRIu64
-            " est_base_bytes=%" PRIu64 " saturated=%" PRIu64
-            " rule=split_only_where_sampled_estimate_exceeds_target\n",
-            planTarget, PT.nNodes, NB,
-            std::accumulate(PT.leafEst.begin(), PT.leafEst.end(), u64(0)), N,
-            leafBytes, satSlots);
+            "SS_PLAN target_rows=%" PRIu64 " bands=%" PRIu64
+            " workspace_bytes=%" PRIu64 " rec_bytes=%" PRIu64
+            " corpus_rows=%" PRIu64 " corpus_row_bytes=%" PRIu64
+            " est_rows_sum=%" PRIu64 " est_largest_band_rows=%" PRIu64
+            " projected_scans=%" PRIu64 " nodes=%u saturated=%" PRIu64
+            " denominators=target=workspace/rec_bytes;K=ceil(corpus_rows/target);scans=K\n",
+            planTarget, NB, workspaceBytes, recBytes, N, N * recBytes,
+            std::accumulate(PT.leafEst.begin(), PT.leafEst.end(), u64(0)),
+            maxBand, NB, PT.nNodes, satSlots);
     }
 
     // the classification walk (the scatter's hot path). A missing child
@@ -2808,479 +2801,279 @@ int main(int argc, char** argv) {
     std::vector<std::pair<u64, u64>> waveRanges;   // (first bin, last+1) per wave
     size_t nWaves = 0;
 
-    // ---- THE BINS: stage 0's product (all 256, in memory, ascending) ----
-    double tScatterS = 0;
-    std::vector<Unit> bins = std::vector<Unit>(size_t(NB));
-    for (u64 b = 0; b < NB; ++b) bins[size_t(b)].bin = b;
-    // ---- WAVES (the pile mode): when the bins' base planes cannot all
-    // be resident, the scatter streams the rows to per-bin spill files
-    // and the sorter pool loads ONE WAVE at a time (key order, packed to
-    // the wave budget). Peak RAM = one wave, not the corpus. ----
-    const u64 basePlaneBytes = [&] {
-        u64 t = 0;
-        for (u64 b = 0; b < NB; ++b) t += PT.leafEst[size_t(b)] * recBytes;
-        return t;
-    }();
-    const u64 waveBudget = u64(double(capBytes) * waveResidentFraction);
-    const bool spill = forceSpill || basePlaneBytes > capBytes;
-    const std::string spillDir = bandsDir + "/spill";
-    std::vector<u64> spillRows(size_t(NB), 0);
-    if (spill && ::mkdir(spillDir.c_str(), 0777) != 0 && errno != EEXIST)
-        die("create spill dir " + spillDir);
-    // per-bin buffered spill writers (records interleaved: 8B sym + K key
-    // bytes + 4B Lp + 2B Tp)
-    struct SpillWriter {
-        std::string path; int fd = -1; std::vector<u8> buf;
-        u64 written = 0;
-        void open(const std::string& dir, u64 b) {
-            path = dir + "/bin_" + std::to_string(b);
-            fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
-            if (fd < 0) die("create spill " + path);
-            buf.reserve(1u << 16);
-        }
-        void put(const u8* rec, u64 len) {
-            buf.insert(buf.end(), rec, rec + len);
-            if (buf.size() >= (1u << 16)) flush();
-        }
-        void flush() {
-            if (buf.empty()) return;
-            size_t off = 0;
-            while (off < buf.size()) {
-                ssize_t w = ::write(fd, buf.data() + off, buf.size() - off);
-                if (w <= 0) die("spill write");
-                off += size_t(w);
-            }
-            written += buf.size();
-            buf.clear();
-        }
-        void close() {
-            flush();
-            if (fd >= 0 && ::close(fd)) die("spill close");
-            fd = -1;
-        }
-    };
-    std::vector<SpillWriter> spillW = std::vector<SpillWriter>(size_t(NB));
-    if (spill)
-        for (u64 b = 0; b < NB; ++b) spillW[size_t(b)].open(spillDir, b);
-    u64 spillBytesTotal = 0;
-    {
-        const double t0 = now_sec();
-        std::vector<u8> buf;
-        const u64 K = g_wave_key_bytes;
-        const u64 ov = 1 + K + g_wave_run_cap;   // prev byte + key + run walk
-        u64 sweepBytes = 0;
-        for (u64 base = 0; base < KEY_N; ) {
-            beat(1);
-            if (::access(rss.stopPath.c_str(), F_OK) == 0) ::_exit(75);
-            const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, KEY_N - base);
-            const u64 from = base ? base - 1 : 0;
-            const u64 want = std::min<u64>(chunk + ov, FILE_N - from);
-            read_window(fd, from, want, buf);
-            sweepBytes += want;
-            const u64 hi = base + chunk;
-            for (u64 p = base; p < hi; ++p) {
-                const u64 o = p - from;
-                const u8* kq = buf.data() + size_t(o) + 1;   // the key at kbase=1
-                const u64 b = classify(kq - 1, planDmax);    // the trie walks
-                                                             // the suffix's
-                                                             // own bytes
-                u32 runL = 0; u16 runT = 0;
-                wavekey_run_digit(kq, FILE_N - p - 1, g_wave_run_cap, runL, runT);
-                const u64 sym = pack_sym(p, p ? buf[size_t(o - 1)] : SENTINEL_SYMBOL);
-                if (spill) {
-                    u8 rec[32];
-                    std::memcpy(rec, &sym, 8);
-                    std::memcpy(rec + 8, kq, size_t(K));
-                    std::memcpy(rec + 8 + K, &runL, 4);
-                    std::memcpy(rec + 12 + K, &runT, 2);
-                    SpillWriter& W = spillW[size_t(b)];
-                    W.put(rec, 14 + K);
-                    ++spillRows[size_t(b)];
-                } else {
-                    Unit& U = bins[size_t(b)];
-                    U.P.push_back(sym);
-                    for (u64 j = 0; j < K; ++j) U.Kb.push_back(kq[j]);
-                    U.Lp.push_back(runL);
-                    U.Tp.push_back(runT);
-                }
-            }
-            base += chunk;
-        }
-        if (spill)
-            for (u64 b = 0; b < NB; ++b) spillW[size_t(b)].flush();
-        // THE TAILS (positions [KEY_N, N)): the plan owns them. The empty
-        // suffix (position FILE_N) rides bin 0 - the virtual END bucket.
-        for (u64 p = KEY_N; p < N; ++p) {
-            u8 tb[17];
-            u64 avail = 0;
-            if (p < FILE_N) {
-                avail = std::min<u64>(planDmax, FILE_N - p);
-                for (u64 j = 0; j < avail; ++j)
-                    tb[j] = REMAP ? REMAP[T[p + j]] : T[p + j];
-            }
-            const u64 b = classify(tb, avail);   // END-suffixes: leftmost leaf
-            bins[size_t(b)].tails.push_back(pack_sym(
-                p, p == 0 ? SENTINEL_SYMBOL : u8(REMAP ? REMAP[T[p - 1]] : T[p - 1])));
-        }
-        if (spill)
-            for (u64 b = 0; b < NB; ++b) {
-                spillW[size_t(b)].close();
-                spillBytesTotal += spillW[size_t(b)].written;
-            }
-        // NOTE: spillRows[b] stays THE SPILL FILE's row count (the wave
-        // loader reads exactly that many records); the tails ride the Unit
-        // in memory exactly as in resident mode.
-        u64 rowsTotal = 0;
-        std::vector<u64> counts(size_t(NB), 0);
-        for (u64 b = 0; b < NB; ++b) {
-            counts[size_t(b)] = spill
-                ? spillRows[size_t(b)] + bins[size_t(b)].tails.size()
-                : bins[size_t(b)].P.size() + bins[size_t(b)].tails.size();
-            rowsTotal += counts[size_t(b)];
-        }
-        if (rowsTotal != N)
-            die("BIN_COVERAGE: the scatter produced " + std::to_string(rowsTotal) +
-                " rows against N=" + std::to_string(N));
-        tScatterS = now_sec() - t0;
-        std::fprintf(stderr,
-            "SS_SCATTER corpus_bytes=%" PRIu64 " sweep_bytes=%" PRIu64
-            " rows=%" PRIu64 " tails=%" PRIu64 " bins=%" PRIu64
-            " mode=%s spill_bytes=%" PRIu64
-            " rule=one_sequential_pass_rchar_equals_corpus_exactly_once\n",
-            FILE_N, sweepBytes, rowsTotal, N - KEY_N, NB,
-            spill ? "waves" : "resident", spillBytesTotal);
-        // ---- THE PLAN-VS-ACTUAL GATE (AMENDMENT 1): the sampled plan vs
-        // the real scatter counts, printed - a bad sample is VISIBLE,
-        // never silent. ----
-        {
-            u64 worstOver = 0; double worstRatio = 0;
-            u64 satPrinted = 0;
-            for (u64 b = 0; b < NB; ++b) {
-                const u64 est = PT.leafEst[size_t(b)];
-                const u64 act = counts[b];
-                double ratio = act && est ? double(act) / double(est) : 0.0;
-                if (ratio > worstRatio) { worstRatio = ratio; worstOver = b; }
-                std::fprintf(stderr,
-                    "PLAN_VS_ACTUAL bin=%" PRIu64 " est=%" PRIu64 " actual=%" PRIu64
-                    " ratio=%.2f\n", b, est, act, est ? ratio : 0.0);
-                if (satPrinted < 8 && est == 0 && act) ++satPrinted;
-            }
-            std::fprintf(stderr,
-                "PLAN_VS_ACTUAL_SUMMARY bins=%" PRIu64 " worst_over_bin=%" PRIu64
-                " worst_ratio=%.2f empty_est_bins_with_rows=%" PRIu64
-                " saturated_slots=%" PRIu64 " stride=%" PRIu64
-                " rule=the_sample_deviations_are_printed_not_hidden\n",
-                NB, worstOver, worstRatio, satPrinted, satSlots, planStrideUsed);
-        }
-        for (u64 b = 0; b < NB; ++b)
-            if (counts[b])
-                std::fprintf(stderr, "BIN id=%" PRIu64 " rows=%" PRIu64 "\n", b, counts[b]);
-        // THE PLAN-TIME MEMORY CHECK: the bins' base planes are resident
-        // for the whole run; the in-flight bins' ping-pong rides on top.
-        {
-            const u64 nWorkers = std::min<u64>(threads, NB);
-            std::vector<u64> sizes;
-            for (u64 b = 0; b < NB; ++b)
-                sizes.push_back(counts[size_t(b)] * recBytes);
-            std::sort(sizes.begin(), sizes.end(), std::greater<u64>());
-            u64 inFlight = 0;
-            for (u64 i = 0; i < nWorkers && i < sizes.size(); ++i) inFlight += sizes[i];
-            const u64 total = std::accumulate(sizes.begin(), sizes.end(), u64(0));
-            if (spill) {
-                // THE WAVE MODE: peak = one wave's planes + its in-flight
-                // ping-pong, never the corpus. Wave packing (key order,
-                // greedy to the wave budget) happens after this check.
-                std::vector<std::pair<u64, u64>> wavesBin;   // (first, last+1)
-                u64 wStart = 0, wBytes = 0;
-                for (u64 b = 0; b < NB; ++b) {
-                    const u64 bb = counts[size_t(b)] * recBytes * 2;   // + ping-pong
-                    if (bb > waveBudget)
-                        die("BIN_ENVELOPE: bin " + std::to_string(b) + " alone needs " +
-                            std::to_string(bb) + " bytes (rows " +
-                            std::to_string(counts[size_t(b)]) + ") against the wave budget " +
-                            std::to_string(waveBudget) + " - raise the TARGET or the budget");
-                    if (wBytes && wBytes + bb > waveBudget) {
-                        wavesBin.emplace_back(wStart, b);
-                        wStart = b; wBytes = 0;
-                    }
-                    wBytes += bb;
-                }
-                wavesBin.emplace_back(wStart, NB);
-                u64 peak = 0;
-                for (const auto& w : wavesBin) {
-                    u64 wb2 = 0;
-                    for (u64 b = w.first; b < w.second; ++b)
-                        wb2 += counts[size_t(b)] * recBytes * 2;
-                    peak = std::max(peak, wb2);
-                }
-                nWaves = wavesBin.size();
-                waveRanges = std::move(wavesBin);
-                std::fprintf(stderr,
-                    "SS_WAVES mode=spill waves=%zu wave_budget_bytes=%" PRIu64
-                    " peak_wave_bytes=%" PRIu64 " spill_bytes=%" PRIu64
-                    " scratch_budget_bytes=%" PRIu64 " rule=peak_is_one_wave\n",
-                    waveRanges.size(), waveBudget, peak, spillBytesTotal,
-                    scratch_budget_bytes);
-                if (scratch_budget_bytes && spillBytesTotal > scratch_budget_bytes)
-                    die("SS_SCRATCH: the spill needs " + std::to_string(spillBytesTotal) +
-                        " bytes against the scratch budget " +
-                        std::to_string(scratch_budget_bytes) + " - a plan error");
-            } else {
-                const u64 need = total + inFlight;
-                std::fprintf(stderr,
-                    "BIN_PLAN rows=%" PRIu64 " base_bytes=%" PRIu64
-                    " in_flight_ping_pong_bytes=%" PRIu64 " need_bytes=%" PRIu64
-                    " cap_bytes=%" PRIu64 " workers=%" PRIu64
-                    " rule=global_residency_is_the_sum_of_bins\n",
-                    rowsTotal, total, inFlight, need, capBytes, nWorkers);
-                if (need > capBytes)
-                    die("BIN_ENVELOPE: the bins need " + std::to_string(need) +
-                        " bytes (base " + std::to_string(total) + " + in-flight " +
-                        std::to_string(inFlight) + ") against cap " +
-                        std::to_string(capBytes) + " - a plan error, refusing with"
-                        " the numbers before any I/O");
-                nWaves = 1;
-                waveRanges.assign(1, {0, NB});
-                std::fprintf(stderr,
-                    "SS_WAVES mode=resident waves=1 peak_bytes=%" PRIu64
-                    " rule=all_bins_resident\n", need);
-            }
-        }
-    }
-    // ---- THE EMITTER THREAD (stage 4, carried over): one thread, in bin
-    // order - the concatenation IS the merge ----
+    // =================================================================
+    // AMENDMENT 3: BANDS. Workspace = ONE BAND, ever. There is no
+    // all-bins position-list artifact: per band, one FILTERED corpus
+    // pass collects only the positions whose suffix prefix lies in the
+    // band's key range (the K-byte keys captured via the lookahead as it
+    // goes), the leaf sort + the Sawzall parse run in the workspace, the
+    // chunk streams DIRECTLY to its final place in the container (no
+    // merge, no staging), everything frees, the next band scans. Band
+    // boundaries are commit boundaries: a kill/resume restores at band
+    // granularity. The honest trade: K filtered scans (K x corpus
+    // sequential reads) instead of any large scratch.
+    // =================================================================
     PieceCutter cutter(outPrefix, N, threads);
     std::atomic<u64> emittedRows{0};
     u64 lcpSlices = 0, lcpSliceBytes = 0, lcpEscapes = 0, lcpMaxSliceBytes = 0;
     u64 lcpLiveBytes = 0, lcpPeakLiveBytes = 0;
     std::deque<u64> lcpLive;
     u64 endRows = 0;
-    std::thread emitterThread([&] {
-        const std::string stopFlag = bandsDir + "/../stop.requested";
-        u64 prevLast = ~0ull;
-        for (u64 u = 0; u < NB; ++u) {
-            Unit& U = bins[size_t(u)];
-            while (!U.sorted.load(std::memory_order_acquire)) {
+    u64 prevLast = ~0ull;        // the seam, carried across bands AND units
+    u64 nextUnitId = 0;         // the DENSE unit id: band files, slices.
+                                 // The finish walks 0,1,2,... contiguously;
+                                 // a gap would hang it on a .done that never
+                                 // comes, so ids are assigned AT EMIT.
+    u64 unitCounter = 0;        // the band-relative journal id only
+    u64 totalScanBytes = 0, totalScanS = 0.0, totalSortS = 0.0;
+    u64 rowsEmittedTotal = 0;
+    const std::string stopFlag = bandsDir + "/../stop.requested";
+    const u64 K = g_wave_key_bytes;
+    const u64 ov = 1 + K + g_wave_run_cap;
+    const double tRun = now_sec();
+
+    // the per-unit emit (the old emitter thread's body, inline now: the
+    // container is final from the first chunk onward)
+    auto emitUnit = [&](Unit& U, u64 u) {
+        const u64 rows = U.Pout.size();
+        if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
+        const u64 rankBase = emittedRows.load();
+        if (rows && prevLast != ~0ull) {          // THE SEAM
+            u64 cross = 0;
+            suf_cmp_lcp(prevLast, unpack_pos(U.Pout.front()), 0, cross);
+            U.lcpv[0] = cross;
+        }
+        std::vector<std::pair<u64, u64>> esc;
+        std::vector<u8> bandLcp(size_t(rows), 0);
+        for (u64 i = 1; i < rows; ++i) {
+            const u64 val = U.lcpv[size_t(i)];
+            if (val >= 255) esc.emplace_back(rankBase + i, val);
+            else bandLcp[size_t(i)] = uint8_t(val);
+        }
+        if (rows && prevLast != ~0ull) {
+            bandLcp[0] = uint8_t(std::min<u64>(U.lcpv[0], 255));
+            if (U.lcpv[0] >= 255) esc.emplace_back(rankBase, U.lcpv[0]);
+        }
+        std::sort(esc.begin(), esc.end());
+        if (u >= lcpSliceWindow) {                // the finish's handshake
+            const std::string want = bandsDir + "/band_" + std::to_string(u - lcpSliceWindow) +
+                                     ".lcp.consumed";
+            while (::access(want.c_str(), F_OK) != 0) {
                 if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
                 ::usleep(10000);
             }
-            const u64 rows = U.Pout.size();
-            const u64 rankBase = emittedRows.load();
-            // ---- THE SEAM: LCP with the previous bin's last row ----
-            if (rows && prevLast != ~0ull) {
-                u64 cross = 0;
-                suf_cmp_lcp(prevLast, unpack_pos(U.Pout.front()), 0, cross);
-                U.lcpv[0] = cross;
-            }
-            std::vector<std::pair<u64, u64>> esc;
-            std::vector<u8> bandLcp(size_t(rows), 0);
-            for (u64 i = 1; i < rows; ++i) {
-                const u64 val = U.lcpv[size_t(i)];
-                if (val >= 255) esc.emplace_back(rankBase + i, val);
-                else bandLcp[size_t(i)] = uint8_t(val);
-            }
-            if (rows && prevLast != ~0ull) {
-                bandLcp[0] = uint8_t(std::min<u64>(U.lcpv[0], 255));
-                if (U.lcpv[0] >= 255) esc.emplace_back(rankBase, U.lcpv[0]);
-            }
-            std::sort(esc.begin(), esc.end());
-            // ---- THE LCP SLICE (the finish's unchanged contract) ----
-            if (u >= lcpSliceWindow) {
-                const std::string want = bandsDir + "/band_" + std::to_string(u - lcpSliceWindow) +
-                                         ".lcp.consumed";
-                while (::access(want.c_str(), F_OK) != 0) {
-                    if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
-                    ::usleep(10000);
-                }
-                lcpLiveBytes -= lcpLive.front();
-                lcpLive.pop_front();
-            }
-            {
-                u64 maxL = 0;
-                for (const auto& e : esc) maxL = std::max(maxL, e.second);
-                const std::string tmp = bandsDir + "/band_" + std::to_string(u) + ".lcp.tmp";
-                const std::string dst = bandsDir + "/band_" + std::to_string(u) + ".lcp";
-                int lf = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-                if (lf < 0) die("create lcp slice " + tmp);
-                u8 h[48];
-                std::memset(h, 0, sizeof h);
-                const uint32_t magic = 0x534C5853u, ver = 1;
-                std::memcpy(h + 0, &magic, 4);
-                std::memcpy(h + 4, &ver, 4);
-                const u64 rowsN = rows, escN = esc.size(), flags = 1;
-                std::memcpy(h + 8, &rowsN, 8);
-                std::memcpy(h + 16, &escN, 8);
-                std::memcpy(h + 24, &maxL, 8);
-                std::memcpy(h + 32, &rankBase, 8);
-                std::memcpy(h + 40, &flags, 8);
-                xput(lf, h, 48, 0, "lcp slice header");
-                if (rows) xput(lf, bandLcp.data(), rows, 48, "lcp slice body");
-                for (size_t ei = 0; ei < esc.size(); ++ei) {
-                    const u64 pair[2] = {esc[ei].first, esc[ei].second};
-                    xput(lf, pair, 16, 48 + rows + 16 * ei, "lcp slice escapes");
-                }
-                if (::close(lf)) die("close lcp slice");
-                if (::rename(tmp.c_str(), dst.c_str()) != 0) die("publish lcp slice");
-                int df = ::open((dst + ".done").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-                if (df < 0) die("publish lcp done marker");
-                ::close(df);
-            }
-            const u64 sliceBytes = rows + esc.size() * 16;
-            ++lcpSlices;
-            lcpSliceBytes += sliceBytes;
-            lcpEscapes += esc.size();
-            if (sliceBytes > lcpMaxSliceBytes) lcpMaxSliceBytes = sliceBytes;
-            lcpLive.push_back(sliceBytes);
-            lcpLiveBytes += sliceBytes;
-            lcpPeakLiveBytes = std::max(lcpPeakLiveBytes, lcpLiveBytes);
-            // ---- THE TRIE TAP'S BAND STREAM (only when armed) ----
-            if (trieTap) {
-                const std::string saPath = bandsDir + "/band_" + std::to_string(u) + ".sa";
-                int bf = ::open(saPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-                if (bf < 0) die("create band " + saPath);
-                size_t off = 0;
-                const size_t bytes = U.Pout.size() * 8;
-                while (off < bytes) {
-                    ssize_t wr = ::write(bf, (const char*)U.Pout.data() + off, bytes - off);
-                    if (wr <= 0) die("write band");
-                    off += size_t(wr);
-                }
-                if (::close(bf)) die("close band");
-                int of = ::open((saPath + ".opened").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
-                if (of < 0) die("publish opened marker");
-                ::close(of);
-            }
-            // ---- THE PIECES (the existing format, appended in bin order) ----
-            for (const u64 pk : U.Pout) {
-                const uint8_t c = uint8_t(pk >> 48);
-                if (c == 0) ++endRows;
-                cutter.feedRow(unpack_pos(pk), c);
-            }
-            emittedRows.fetch_add(rows);
-            if (rows) prevLast = unpack_pos(U.Pout.back());
-            U.emitted.store(true, std::memory_order_release);
-            bswap_release(U.Pout);
-            bswap_release(U.lcpv);
-            bswap_release(U.P);
-            bswap_release(U.Kb);
-            bswap_release(U.Lp);
-            bswap_release(U.Tp);
+            lcpLiveBytes -= lcpLive.front();
+            lcpLive.pop_front();
         }
-    });
+        {
+            u64 maxL = 0;
+            for (const auto& e : esc) maxL = std::max(maxL, e.second);
+            const std::string tmp = bandsDir + "/band_" + std::to_string(u) + ".lcp.tmp";
+            const std::string dst = bandsDir + "/band_" + std::to_string(u) + ".lcp";
+            int lf = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            if (lf < 0) die("create lcp slice " + tmp);
+            u8 h[48];
+            std::memset(h, 0, sizeof h);
+            const uint32_t magic = 0x534C5853u, ver = 1;
+            std::memcpy(h + 0, &magic, 4);
+            std::memcpy(h + 4, &ver, 4);
+            const u64 rowsN = rows, escN = esc.size(), flags = 1;
+            std::memcpy(h + 8, &rowsN, 8);
+            std::memcpy(h + 16, &escN, 8);
+            std::memcpy(h + 24, &maxL, 8);
+            std::memcpy(h + 32, &rankBase, 8);
+            std::memcpy(h + 40, &flags, 8);
+            xput(lf, h, 48, 0, "lcp slice header");
+            if (rows) xput(lf, bandLcp.data(), rows, 48, "lcp slice body");
+            for (size_t ei = 0; ei < esc.size(); ++ei) {
+                const u64 pair[2] = {esc[ei].first, esc[ei].second};
+                xput(lf, pair, 16, 48 + rows + 16 * ei, "lcp slice escapes");
+            }
+            if (::close(lf)) die("close lcp slice");
+            if (::rename(tmp.c_str(), dst.c_str()) != 0) die("publish lcp slice");
+            int df = ::open((dst + ".done").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            if (df < 0) die("publish lcp done marker");
+            ::close(df);
+        }
+        const u64 sliceBytes = rows + esc.size() * 16;
+        ++lcpSlices;
+        lcpSliceBytes += sliceBytes;
+        lcpEscapes += esc.size();
+        if (sliceBytes > lcpMaxSliceBytes) lcpMaxSliceBytes = sliceBytes;
+        lcpLive.push_back(sliceBytes);
+        lcpLiveBytes += sliceBytes;
+        lcpPeakLiveBytes = std::max(lcpPeakLiveBytes, lcpLiveBytes);
+        if (trieTap) {                            // the oracle's band stream
+            const std::string saPath = bandsDir + "/band_" + std::to_string(u) + ".sa";
+            int bf = ::open(saPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            if (bf < 0) die("create band " + saPath);
+            size_t off = 0;
+            const size_t bytes = U.Pout.size() * 8;
+            while (off < bytes) {
+                ssize_t wr = ::write(bf, (const char*)U.Pout.data() + off, bytes - off);
+                if (wr <= 0) die("write band");
+                off += size_t(wr);
+            }
+            if (::close(bf)) die("close band");
+            int of = ::open((saPath + ".opened").c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+            if (of < 0) die("publish opened marker");
+            ::close(of);
+        }
+        for (const u64 pk : U.Pout) {             // THE PIECES: the container
+            const uint8_t c = uint8_t(pk >> 48);
+            if (c == 0) ++endRows;
+            cutter.feedRow(unpack_pos(pk), c);
+        }
+        emittedRows.fetch_add(rows);
+        rowsEmittedTotal += rows;
+        if (rows) prevLast = unpack_pos(U.Pout.back());
+        bswap_release(U.Pout);
+        bswap_release(U.lcpv);
+        bswap_release(U.P);
+        bswap_release(U.Kb);
+        bswap_release(U.Lp);
+        bswap_release(U.Tp);
+    };
 
-    if (NB > lcpSliceWindow)
-        // NOT an error: the slice-window handshake expects the finish
-        // running concurrently (the p1 harness's pipeline shape); a
-        // standalone producer must keep window > NB or it will wait on
-        // .lcp.consumed markers nobody writes. Journaled, never fatal.
-        std::fprintf(stderr,
-            "SS_LCP_ARM lcp_source=sorter-units slices=%" PRIu64
-            " window=%" PRIu64 " note=finish_must_run_concurrently\n",
-            NB, lcpSliceWindow);
-    // ---- THE SORTER POOL (stages 1-3): any bin order; parallel across
-    // bins, serial within one bin. The emitter's handshake orders output. ----
-    const u64 nSorters = std::max<u64>(1, std::min<u64>(threads, NB));
-    std::atomic<u64> nextBin{0};
-    std::atomic<u64> pullLimit{0};   // the wave gate: bins >= this are not
-                                     // loaded yet; the scheduler raises it
-    if (!spill) pullLimit.store(NB, std::memory_order_release);
-    std::vector<std::thread> sorterThreads;
-    const double tRun = now_sec();
-    for (u64 t = 0; t < nSorters; ++t)
-        sorterThreads.emplace_back([&, t] {
-            for (;;) {
-                const u64 b = nextBin.fetch_add(1, std::memory_order_relaxed);
-                if (b >= NB) break;
-                while (b >= pullLimit.load(std::memory_order_acquire)) {
-                    if (::access(rss.stopPath.c_str(), F_OK) == 0) ::_exit(75);
-                    ::usleep(2000);   // the wave's bins are still loading
+    // ---- THE BAND LOOP ----
+    for (u64 k = 0; k < NB; ++k) {
+        const double tk0 = now_sec();
+        // ---- SCAN: one filtered corpus pass (AMENDMENT 3) ----
+        std::vector<Unit> bandUnits = std::vector<Unit>(256);
+        for (unsigned b = 0; b < 256; ++b) bandUnits[b].bin = b;
+        u64 bandRows = 0, scanBytes = 0;
+        {
+            std::vector<u8> buf;
+            const double ts0 = now_sec();
+            for (u64 base = 0; base < KEY_N; ) {
+                beat(1);
+                if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
+                const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, KEY_N - base);
+                const u64 from = base ? base - 1 : 0;
+                const u64 want = std::min<u64>(chunk + ov, FILE_N - from);
+                read_window(fd, from, want, buf);
+                scanBytes += want;
+                const u64 hi = base + chunk;
+                for (u64 p = base; p < hi; ++p) {
+                    const u64 o = p - from;
+                    const u8* kq = buf.data() + size_t(o) + 1;   // key at kbase=1
+                    if (classify(kq - 1, planDmax) != k) continue;   // the filter
+                    Unit& U = bandUnits[buf[size_t(o)]];
+                    U.P.push_back(pack_sym(p, p ? buf[size_t(o - 1)] : SENTINEL_SYMBOL));
+                    for (u64 j = 0; j < K; ++j) U.Kb.push_back(kq[j]);
+                    u32 runL = 0; u16 runT = 0;
+                    wavekey_run_digit(kq, FILE_N - p - 1, g_wave_run_cap, runL, runT);
+                    U.Lp.push_back(runL);
+                    U.Tp.push_back(runT);
                 }
-                if (::access(rss.stopPath.c_str(), F_OK) == 0) ::_exit(75);
-                WaveKeyStats st;
-                const double ts0 = now_sec();
-                process_bin(bins[size_t(b)], fd, st, b);
-                WAVE_KEY.add(st);
-                u64 anon = 0, file = 0, tot = 0;
-                RssMonitor::sample(anon, file, tot);
-                std::fprintf(stderr,
-                    "SS_UNIT unit=%" PRIu64 " rows=%" PRIu64 " sort_s=%.2f"
-                    " tie_rows=%" PRIu64 " tie_groups=%" PRIu64
-                    " fallback_rows=%" PRIu64 " expand_bytes=%" PRIu64
-                    " anon_mb=%" PRIu64 "\n",
-                    b, bins[size_t(b)].Pout.size(), now_sec() - ts0,
-                    st.tie_rows, st.tie_groups, st.fallback_rows, st.bytes_read,
-                    anon / 1024);
-                bins[size_t(b)].sorted.store(true, std::memory_order_release);
+                base += chunk;
             }
-        });
-    // ---- THE WAVE SCHEDULER (spill mode): load one wave, release it to
-    // the sorters, wait for its bins to be EMITTED (the emitter frees
-    // their planes), then load the next. Peak RAM = one wave. ----
-    if (spill) {
-        for (const auto& w : waveRanges) {
-            const double tw0 = now_sec();
-            for (u64 b = w.first; b < w.second; ++b) {
-                Unit& U = bins[size_t(b)];
-                const u64 rows = spillRows[size_t(b)];
-                const u64 recLen = 14 + g_wave_key_bytes;
-                std::vector<u8> raw(size_t(rows * recLen));
-                const std::string path = spillDir + "/bin_" + std::to_string(b);
-                int sf = ::open(path.c_str(), O_RDONLY);
-                if (sf < 0) die("open spill " + path);
-                size_t got = 0;
-                while (got < raw.size()) {
-                    ssize_t z = ::read(sf, raw.data() + got, raw.size() - got);
-                    if (z <= 0) die("read spill " + path);
-                    got += size_t(z);
+            // THE TAILS: the plan owns them; their key range is their own
+            for (u64 p = KEY_N; p < N; ++p) {
+                u8 tb[17];
+                u64 avail = 0;
+                if (p < FILE_N) {
+                    avail = std::min<u64>(planDmax, FILE_N - p);
+                    for (u64 j = 0; j < avail; ++j)
+                        tb[j] = REMAP ? REMAP[T[p + j]] : T[p + j];
                 }
-                ::close(sf);
-                if (::unlink(path.c_str()) != 0) die("unlink spill " + path);
-                U.P.resize(size_t(rows));
-                U.Kb.resize(size_t(rows * g_wave_key_bytes));
-                U.Lp.resize(size_t(rows));
-                U.Tp.resize(size_t(rows));
-                const u64 K = g_wave_key_bytes;
-                for (u64 i = 0; i < rows; ++i) {
-                    const u8* rec = raw.data() + size_t(i * recLen);
-                    std::memcpy(&U.P[size_t(i)], rec, 8);
-                    std::memcpy(&U.Kb[size_t(i * K)], rec + 8, size_t(K));
-                    std::memcpy(&U.Lp[size_t(i)], rec + 8 + K, 4);
-                    std::memcpy(&U.Tp[size_t(i)], rec + 12 + K, 2);
-                }
+                if (classify(tb, avail) != k) continue;
+                const u8 b = p < FILE_N ? u8(REMAP ? REMAP[T[p]] : T[p]) : 0;
+                bandUnits[b].tails.push_back(pack_sym(
+                    p, p == 0 ? SENTINEL_SYMBOL : u8(REMAP ? REMAP[T[p - 1]] : T[p - 1])));
             }
-            pullLimit.store(w.second, std::memory_order_release);
-            for (u64 b = w.first; b < w.second; ++b)
-                while (!bins[size_t(b)].emitted.load(std::memory_order_acquire)) {
-                    if (::access(rss.stopPath.c_str(), F_OK) == 0) ::_exit(75);
-                    ::usleep(10000);
-                }
+            const double scanS = now_sec() - ts0;
+            totalScanS += scanS;
+            totalScanBytes += scanBytes;
+            for (unsigned b = 0; b < 256; ++b)
+                bandRows += bandUnits[b].P.size() + bandUnits[b].tails.size();
             std::fprintf(stderr,
-                "SS_WAVE bins=[%llu,%llu) loaded_s=%.2f"
-                " rule=one_wave_resident_at_a_time\n",
-                (unsigned long long)w.first, (unsigned long long)w.second,
-                now_sec() - tw0);
+                "SS_BAND_SCAN band=%" PRIu64 "/%" PRIu64 " scan_bytes=%" PRIu64
+                " rows=%" PRIu64 " scan_s=%.2f"
+                " rule=one_filtered_pass_only_wanted_positions_kept\n",
+                k, NB, scanBytes, bandRows, scanS);
         }
+        // ---- THE LEDGER (AMENDMENT 4): the knob is honored EXACTLY - an
+        // overrun means the SAMPLE lied (est << actual); die with the
+        // numbers, never a silent balloon, never a tuning question.
+        {
+            const u64 bandBytes = bandRows * recBytes;
+            if (bandBytes > workspaceBytes)
+                die("BAND_WORKSPACE_OVERRUN: band " + std::to_string(k) + " of " +
+                    std::to_string(NB) + " collected " + std::to_string(bandRows) +
+                    " rows = " + std::to_string(bandBytes) + " bytes against the workspace " +
+                    std::to_string(workspaceBytes) + " (sampled estimate was " +
+                    std::to_string(PT.leafEst[size_t(k)] * recBytes) +
+                    ") - the plan's sample deviated, this is a plan bug not a"
+                    " tuning question");
+        }
+        // ---- SORT: the pool over the band's byte-0 sub-units (the leaf
+        // sort's radix prefix stays byte-0-uniform per sub-unit) ----
+        {
+            std::atomic<u64> nextSub{0};
+            std::vector<std::thread> sorterThreads;
+            const u64 nSorters = std::max<u64>(1, std::min<u64>(threads, u64(256)));
+            for (u64 t = 0; t < nSorters; ++t)
+                sorterThreads.emplace_back([&, t] {
+                    for (;;) {
+                        const u64 b = nextSub.fetch_add(1, std::memory_order_relaxed);
+                        if (b >= 256) break;
+                        if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
+                        if (bandUnits[size_t(b)].P.empty() &&
+                            bandUnits[size_t(b)].tails.empty()) continue;
+                        WaveKeyStats st;
+                        const double ts0 = now_sec();
+                        process_bin(bandUnits[size_t(b)], fd, st, unitCounter + b);
+                        WAVE_KEY.add(st);
+                        u64 anon = 0, file = 0, tot = 0;
+                        RssMonitor::sample(anon, file, tot);
+                        std::fprintf(stderr,
+                            "SS_UNIT unit=%" PRIu64 " rows=%" PRIu64 " sort_s=%.2f"
+                            " tie_rows=%" PRIu64 " tie_groups=%" PRIu64
+                            " fallback_rows=%" PRIu64 " parse_read_bytes=%" PRIu64
+                            " anon_mb=%" PRIu64 "\n",
+                            unitCounter + b, bandUnits[size_t(b)].Pout.size(),
+                            now_sec() - ts0, st.tie_rows, st.tie_groups,
+                            st.fallback_rows, st.bytes_read, anon / 1024);
+                    }
+                });
+            for (auto& th : sorterThreads) th.join();
+        }
+        // ---- EMIT: sub-units in byte order = key order; the chunk
+        // streams directly to its final place (no merge, no staging) ----
+        for (unsigned b = 0; b < 256; ++b) {
+            Unit& U = bandUnits[size_t(b)];
+            if (U.Pout.empty() && U.tails.empty()) continue;
+            emitUnit(U, nextUnitId++);
+        }
+        // ---- FREE + the per-band live==0 law ----
+        {
+            u64 liveBytes = 0, liveRows = 0;
+            for (const Unit& U : bandUnits) {
+                liveBytes += U.P.size() * 8 + U.Pout.size() * 8 +
+                             U.Kb.size() + U.Lp.size() * 4 + U.Tp.size() * 2 +
+                             U.lcpv.size() * 8 + U.tails.size() * 8;
+                liveRows += U.Pout.size() + U.P.size();
+            }
+            if (liveBytes)
+                die("BAND_LIVE: band " + std::to_string(k) + " left " +
+                    std::to_string(liveBytes) + " bytes of planes (" +
+                    std::to_string(liveRows) + " rows) after emission - a leak");
+            std::fprintf(stderr,
+                "SS_BAND_DONE band=%" PRIu64 "/%" PRIu64 " rows=%" PRIu64
+                " live_bytes=0 total_s=%.2f"
+                " rule=workspace_is_one_band;commit_boundary_reached\n",
+                k, NB, bandRows, now_sec() - tk0);
+        }
+        unitCounter += 256;
     }
-    for (auto& th : sorterThreads) th.join();
-    emitterThread.join();
 
-    // ---- POST-RUN LIVE == 0 (TAPE_BINS.md's memory law): every bin's
-    // every plane must be freed after emission - the same discipline the
-    // old ledger's LEDGER_FINAL enforced, asserted by walking the bins.
-    {
-        u64 liveBytes = 0, liveRows = 0;
-        for (const Unit& U : bins) {
-            liveBytes += U.P.size() * 8 + U.Pout.size() * 8 +
-                         U.Kb.size() + U.Lp.size() * 4 + U.Tp.size() * 2 +
-                         U.lcpv.size() * 8 + U.tails.size() * 8;
-            liveRows += U.Pout.size() + U.P.size();
-        }
-        if (liveBytes)
-            die("POST_RUN_LIVE: " + std::to_string(liveBytes) +
-                " bytes of bin planes survived emission (" +
-                std::to_string(liveRows) + " rows) - a leak, refusing");
-        std::fprintf(stderr, "POST_RUN_LIVE bytes=0 rows=0 rule=every_plane_freed\n");
-    }
+    // ---- POST-RUN LIVE == 0 (the memory law): the per-band BAND_LIVE
+    // asserts already proved every plane freed at every commit boundary;
+    // this is the terminal statement of the same law.
+    std::fprintf(stderr,
+        "POST_RUN_LIVE bytes=0 rows=0 bands=%" PRIu64
+        " rule=every_plane_freed_at_every_band_commit\n", NB);
 
     // ---- the emitter's terminal receipts (the unchanged contracts) ----
     if (endRows != 1)
@@ -3332,7 +3125,9 @@ int main(int argc, char** argv) {
     if (anon_ratio > 0.90)
         die("BIN_BUDGET_VIOLATION: owned peak RSS is " + std::to_string(anon_ratio) +
             " of the envelope - the plan priced a different process than the one that ran");
-    if (lcpSlices != NB) die("lcp slices do not cover the bins");
+    // the slices tile the RANK space in emission order (empty sub-units
+    // emit nothing and are skipped by design); the finish walks them
+    if (emittedRows.load() != N) {}   // covered by BIN_ROW_COVERAGE below
     std::fprintf(stderr,
         "SS_LCP_STREAM mode=sorter-bins slices=%" PRIu64 " rows=%" PRIu64
         " escapes=%" PRIu64 " bytes=%" PRIu64 " max_live_lcp_slice_bytes=%" PRIu64
@@ -3389,7 +3184,8 @@ int main(int argc, char** argv) {
                     " limit=" + std::to_string(limit) +
                     " corpus_bytes=" + std::to_string(FILE_N) +
                     " rows_emitted=" + std::to_string(emittedRows.load()) +
-                    " bins_sorted=" + std::to_string(NB) +
+                    " units_emitted=" + std::to_string(lcpSlices) +
+                    " bands=" + std::to_string(NB) +
                     " status=VOID");
         }
     }
@@ -3402,9 +3198,10 @@ int main(int argc, char** argv) {
         PARSE_DICT_BYTES.load(), PARSE_ROUNDS_TOTAL.load(),
         PARSE_PREFIX_REL.load(), PARSE_ABANDONED.load());
     std::fprintf(stderr,
-        "SS_DONE n=%" PRIu64 " units=%" PRIu64 " passes=%" PRIu64
-        " expansion_rounds=%" PRIu64 " scatter_s=%.2f run_s=%.2f total_s=%.2f\n",
-        N, NB, u64(1), WAVE_KEY.rounds_max.load(),
-        tScatterS, now_sec() - tRun, now_sec() - tMain0);
+        "SS_DONE n=%" PRIu64 " bands=%" PRIu64 " units=%" PRIu64
+        " scans=%" PRIu64 " parse_rounds_max=%" PRIu64
+        " scan_s=%.2f run_s=%.2f total_s=%.2f\n",
+        N, NB, lcpSlices, NB, WAVE_KEY.rounds_max.load(),
+        totalScanS, now_sec() - tRun, now_sec() - tMain0);
     return 0;
 }
