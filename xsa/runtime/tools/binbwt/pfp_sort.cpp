@@ -2776,10 +2776,10 @@ int main(int argc, char** argv) {
             closePhrase(FILE_N);
             const double tParseS = now_sec() - tg0;
             std::fprintf(stderr,
-                "SS_GPARSE_PASS phrases=%zu distinct=%zu dict_bytes=%zu"
+                "SS_GPARSE_PASS threads=%" PRIu64 " phrases=%zu distinct=%zu dict_bytes=%zu"
                 " avg_len=%.2f forced_splits=%" PRIu64 " parse_bytes=%" PRIu64
                 " parse_s=%.2f rule=one_doc_aware_pfp_pass_trigger_rule_carried_over\n",
-                PA.size(), dictEnt.size(), dictArena.size(),
+                threads, PA.size(), dictEnt.size(), dictArena.size(),
                 double(FILE_N) / double(std::max<size_t>(1, PA.size())),
                 forcedSplits, parseBytes, tParseS);
         }
@@ -3007,15 +3007,33 @@ int main(int argc, char** argv) {
                 const u64 keyHi = bandLoHi[size_t(k)].second;
                 std::vector<u64> rows;
                 u64 bandRows = 0;
-                for (size_t i = 0; i < PA.size(); ++i) {
-                    beat(1);
-                    if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
-                    const u32 v = PA[size_t(i)];
-                    const u32 len = dictEnt[size_t(v)].second;
-                    for (u32 o = 0; o < len; ++o) {
-                        const u64 key = rowKey(i, o);
-                        if (key < keyLo || key >= keyHi) continue;
-                        rows.push_back((u64(i) << 16) | o);
+                {
+                    // THE COLLECT BY A POOL: slices of the parse array,
+                    // per-thread row vectors, ordered concatenation (the
+                    // MSD re-orders everything anyway)
+                    const u64 nPool = std::max<u64>(1, std::min<u64>(threads, u64(64)));
+                    const u64 slice = (PA.size() + nPool - 1) / nPool;
+                    std::vector<std::vector<u64>> parts = std::vector<std::vector<u64>>(size_t(nPool));
+                    std::vector<std::thread> cpool;
+                    for (u64 t = 0; t < nPool; ++t)
+                        cpool.emplace_back([&, t] {
+                            const u64 lo3 = t * slice;
+                            const u64 hi3 = std::min<u64>(PA.size(), lo3 + slice);
+                            for (u64 i = lo3; i < hi3; ++i) {
+                                if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
+                                const u32 v = PA[size_t(i)];
+                                const u32 len = dictEnt[size_t(v)].second;
+                                for (u32 o = 0; o < len; ++o) {
+                                    const u64 key = rowKey(i, o);
+                                    if (key < keyLo || key >= keyHi) continue;
+                                    parts[size_t(t)].push_back((i << 16) | o);
+                                }
+                            }
+                        });
+                    for (auto& th : cpool) th.join();
+                    for (auto& p : parts) {
+                        rows.insert(rows.end(), p.begin(), p.end());
+                        std::vector<u64>().swap(p);
                     }
                 }
                 const bool firstBand = (k == 0);
@@ -3083,9 +3101,12 @@ int main(int argc, char** argv) {
                     }
                 }
                 bswap_release(alt);
-                // the D-key groups
+                // ---- THE D-KEY GROUPS, SORTED BY A POOL (the run7 receipt:
+                // the groups are independent - the serial loop was a thread-
+                // engagement regression, one core through hours at 3 GB) ----
                 u64 groupsSorted = 0, groupRowsMax = 0;
                 {
+                    std::vector<std::pair<u64, u64>> gspans;
                     u64 i = 0;
                     while (i < rows.size()) {
                         const u64 rowI = rows[size_t(i)];
@@ -3098,27 +3119,55 @@ int main(int argc, char** argv) {
                             if (rowKey(rowJ >> 16, u32(rowJ & 0xFFFF)) != keyI) break;
                             ++j;
                         }
-                        if (j - i > 1) {
-                            std::sort(rows.begin() + size_t(i), rows.begin() + size_t(j),
-                                      [&](u64 a, u64 b) { return streamCmpG(a, b) < 0; });
-                            ++groupsSorted;
-                            groupRowsMax = std::max(groupRowsMax, j - i);
-                            // THE BELT: a sorted group's adjacent pairs must
-                            // agree with the brute byte order - exactness
-                            // never rests on prefix-freeness
-                            if (j - i <= 4096)
-                                for (u64 q2 = i + 1; q2 < j; ++q2)
-                                    if (suf_cmp_from(rowPos(rows[size_t(q2 - 1)]),
-                                                     rowPos(rows[size_t(q2)]), 0) >= 0) {
-                                        const u64 rA = rows[size_t(q2 - 1)], rB = rows[size_t(q2)];
-                                        die("GPARSE_ORDER: band " + std::to_string(k) +
-                                            " group [" + std::to_string(i) + "," +
-                                            std::to_string(j) + ") disagrees with the"
-                                            " byte order - a comparator or parse bug");
-                                    }
-                        }
+                        if (j - i > 1) gspans.emplace_back(i, j);
                         i = j;
                     }
+                    groupsSorted = gspans.size();
+                    for (const auto& g : gspans)
+                        groupRowsMax = std::max(groupRowsMax, g.second - g.first);
+                    std::atomic<u64> nextGroup{0};
+                    std::vector<std::thread> pool;
+                    const u64 nPool = std::max<u64>(1, std::min<u64>(threads,
+                        gspans.size() ? gspans.size() : u64(1)));
+                    std::vector<int> thrFail(size_t(nPool), 0);
+                    for (u64 t = 0; t < nPool; ++t)
+                        pool.emplace_back([&, t] {
+                            for (;;) {
+                                if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
+                                const u64 g = nextGroup.fetch_add(1, std::memory_order_relaxed);
+                                if (g >= gspans.size()) break;
+                                const u64 gi = gspans[size_t(g)].first;
+                                const u64 gj = gspans[size_t(g)].second;
+                                std::sort(rows.begin() + size_t(gi), rows.begin() + size_t(gj),
+                                          [&](u64 x, u64 y) { return streamCmpG(x, y) < 0; });
+                                // THE BELT: a sorted group's adjacent pairs
+                                // must agree with the brute byte order -
+                                // exactness never rests on prefix-freeness
+                                if (gj - gi <= 4096)
+                                    for (u64 q2 = gi + 1; q2 < gj; ++q2)
+                                        if (suf_cmp_from(rowPos(rows[size_t(q2 - 1)]),
+                                                         rowPos(rows[size_t(q2)]), 0) >= 0) {
+                                            const u64 rA = rows[size_t(q2 - 1)],
+                                                     rB = rows[size_t(q2)];
+                                            std::fprintf(stderr,
+                                                "GPARSE_ORDER_FAIL band=%" PRIu64
+                                                " group=[%" PRIu64 ",%" PRIu64 ")"
+                                                " rowA=%" PRIu64 " posA=%" PRIu64
+                                                " rowB=%" PRIu64 " posB=%" PRIu64
+                                                " cmp=%d brute=%d\n",
+                                                k, gi, gj, rA, rowPos(rA), rB, rowPos(rB),
+                                                streamCmpG(rA, rB),
+                                                suf_cmp_from(rowPos(rA), rowPos(rB), 0));
+                                            thrFail[size_t(t)] = 1;
+                                            return;
+                                        }
+                            }
+                        });
+                    for (auto& th : pool) th.join();
+                    for (int f : thrFail)
+                        if (f) die("GPARSE_ORDER: band " + std::to_string(k) +
+                                   " a sorted group disagrees with the byte order -"
+                                   " a comparator or parse bug");
                 }
                 // ---- THE LCP COLUMN: the honest brute walks (the total
                 // is the band's lcp mass - measured, not guessed) ----
@@ -3126,12 +3175,25 @@ int main(int argc, char** argv) {
                     rows.insert(rows.begin(), ~0ull >> 16);   // the virtual
                         // END row sorts before every real suffix
                 std::vector<u64> lcpv2 = std::vector<u64>(size_t(bandRows), 0);
-                for (u64 i2 = 1; i2 < rows.size(); ++i2) {
-                    const u64 rowA = rows[size_t(i2 - 1)], rowB = rows[size_t(i2)];
-                    if (rowA == (~0ull >> 16) || rowB == (~0ull >> 16)) continue;
-                    u64 lcpTrue = 0;
-                    suf_cmp_lcp(rowPos(rowA), rowPos(rowB), 0, lcpTrue);
-                    lcpv2[size_t(i2)] = lcpTrue;
+                {
+                    // THE LCP WALKS BY A POOL: the adjacent pairs are
+                    // independent; the serial walk was the same regression
+                    std::atomic<u64> nextPair{1};
+                    std::vector<std::thread> lpool;
+                    const u64 nPool = std::max<u64>(1, std::min<u64>(threads, u64(64)));
+                    for (u64 t = 0; t < nPool; ++t)
+                        lpool.emplace_back([&] {
+                            for (;;) {
+                                const u64 i2 = nextPair.fetch_add(1, std::memory_order_relaxed);
+                                if (i2 >= rows.size()) break;
+                                const u64 rowA = rows[size_t(i2 - 1)], rowB = rows[size_t(i2)];
+                                if (rowA == (~0ull >> 16) || rowB == (~0ull >> 16)) continue;
+                                u64 lcpTrue = 0;
+                                suf_cmp_lcp(rowPos(rowA), rowPos(rowB), 0, lcpTrue);
+                                lcpv2[size_t(i2)] = lcpTrue;
+                            }
+                        });
+                    for (auto& th : lpool) th.join();
                 }
                 // ---- EMIT ----
                 Unit U;
@@ -3153,6 +3215,13 @@ int main(int argc, char** argv) {
                     " rule=msd_dkey_then_stream_with_byte_slide\n",
                     k, NB, bandRows, groupsSorted, groupRowsMax,
                     streamSteps, slideFires, now_sec() - tk0);
+                std::fprintf(stderr,
+                    "SS_THREADS phase=group_sort band=%" PRIu64 "/%" PRIu64
+                    " threads_spawned=%" PRIu64 " threads_requested=%" PRIu64
+                    " groups=%" PRIu64 " rule=pool_over_independent_groups\n",
+                    k, NB,
+                    std::min<u64>(threads, groupsSorted ? groupsSorted : u64(1)),
+                    threads, groupsSorted);
                 emitUnit(U, nextUnitId++);
                 u64 anonNow = 0, fileNow = 0, totNow = 0;
                 RssMonitor::sample(anonNow, fileNow, totNow);
