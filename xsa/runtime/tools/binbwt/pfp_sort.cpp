@@ -2901,6 +2901,34 @@ int main(int argc, char** argv) {
         std::vector<u32> parseSA = std::vector<u32>(size_t(M), 0);
         std::vector<u32> parseRank = std::vector<u32>(size_t(M), 0);
         u64 slideFires = 0, parseIntSteps = 0;
+        // THE AMBIGUITY ORACLE: a segment tree over the adjacent
+        // dictionary lcps - ambiguous(lo,hi) IFF min(dictLcpNext[lo..hi))
+        // >= len(phrase(lo)). Exact for EVERY gap width (the wide-gap
+        // branch of the walk test once ASSUMED the prefix relation and
+        // the mini2 belt caught it comparing lcp=0 phrases through the
+        // walk state - PARSE_SORT_FAIL ia=17387 ib=4776). O(log) per
+        // divergence, O(dictN) memory.
+        std::vector<u32> ambTree;
+        {
+            const u64 segN = dictN > 1 ? dictN - 1 : 1;
+            ambTree.assign(size_t(2 * segN), 0xFFFFFFFFu);
+            for (u64 j = 0; j + 1 < dictN; ++j)
+                ambTree[size_t(segN + j)] = dictLcpNext[size_t(j)];
+            for (u64 j = segN; j-- > 1; )
+                ambTree[size_t(j)] = std::min(ambTree[size_t(2 * j)],
+                                              ambTree[size_t(2 * j + 1)]);
+        }
+        auto ambMin = [&](u64 lo2, u64 hi2) -> u32 {   // min over [lo2, hi2)
+            const u64 segN = dictN > 1 ? dictN - 1 : 1;
+            u32 best = 0xFFFFFFFFu;
+            u64 l = lo2 + segN, r = hi2 + segN;
+            while (l < r) {
+                if (l & 1) best = std::min(best, ambTree[size_t(l++)]);
+                if (r & 1) best = std::min(best, ambTree[size_t(--r)]);
+                l >>= 1; r >>= 1;
+            }
+            return best;
+        };
         {
             const double tps0 = now_sec();
             // THE PARSE COMPARATOR: integer rank sequences; the divergence
@@ -2925,21 +2953,67 @@ int main(int argc, char** argv) {
                         // mark answers the chain-cover case in O(1); the
                         // walk is exact for the cross-break cases; the
                         // unbounded gap slides (correct, rare).
-                        bool ambiguous;
-                        if (dictPrefixRun[size_t(lo2)] >= hi2 - lo2)
-                            ambiguous = true;
-                        else if (hi2 - lo2 <= 4096) {
-                            ambiguous = true;
-                            const u32 lenLo = rankLen[size_t(lo2)];
-                            for (u64 j2 = lo2; j2 < hi2; ++j2)
-                                if (dictLcpNext[size_t(j2)] < lenLo) {
-                                    ambiguous = false; break;
-                                }
-                        } else ambiguous = true;   // unbounded walk: slide
+                        const bool ambiguous =
+                            (hi2 - lo2 <= 1)
+                                ? dictPrefixRun[size_t(lo2)] >= hi2 - lo2
+                                : u64(ambMin(lo2, hi2)) >= u64(rankLen[size_t(lo2)]);
                         if (ambiguous) {
+                            // THE POSITION WALK: the ambiguity resolution
+                            // lives at THE PARSE'S ARRAYS (PA + the dict
+                            // arena, RAM-resident) - NOT the brute text
+                            // walk. The ranks this sort is building do
+                            // not exist yet; the walk advances parse
+                            // positions instead of jumping ranks. The
+                            // lo side's phrase is a prefix of the hi
+                            // side's: the lo continues at its next parse
+                            // position, the hi continues mid-phrase.
                             ++slideFires;
-                            return suf_cmp_from(PStart_[size_t(i)],
-                                                PStart_[size_t(j)], 0);
+                            u64 ia2 = i, jb2 = j;
+                            u32 oA2 = 0, oB2 = 0;
+                            if (rA < rB) {   // A's phrase is the prefix:
+                                ia2 = i + 1;         // A continues at its
+                                oB2 = rankLen[size_t(rA)];   // next position;
+                            } else {                  // B mid-phrase
+                                jb2 = j + 1;
+                                oA2 = rankLen[size_t(rB)];
+                            }
+                            const bool traceOn = ::getenv("WALK_TRACE") != nullptr;
+                            for (;;) {
+                                if (traceOn)
+                                    std::fprintf(stderr,
+                                        "WALK ia2=%" PRIu64 " oA2=%u jb2=%" PRIu64
+                                        " oB2=%u vA=%u vB=%u\n",
+                                        ia2, oA2, jb2, oB2,
+                                        ia2 < M ? PA[size_t(ia2)] : 0u,
+                                        jb2 < M ? PA[size_t(jb2)] : 0u);
+                                const bool endA2 = (ia2 >= M), endB2 = (jb2 >= M);
+                                if (endA2 && endB2)
+                                    return suf_cmp_from(PStart_[size_t(i)],
+                                                        PStart_[size_t(j)], 0);
+                                if (endA2) return -1;   // the END first
+                                if (endB2) return +1;
+                                const u32 vA2 = PA[size_t(ia2)],
+                                         vB2 = PA[size_t(jb2)];
+                                const u32 lA2 = dictEnt[size_t(vA2)].second - oA2,
+                                         lB2 = dictEnt[size_t(vB2)].second - oB2;
+                                const u64 c2 = std::min<u32>(lA2, lB2);
+                                if (c2) {
+                                    const int m2 = std::memcmp(
+                                        &dictArena[size_t(dictEnt[size_t(vA2)].first + oA2)],
+                                        &dictArena[size_t(dictEnt[size_t(vB2)].first + oB2)],
+                                        size_t(c2));
+                                    if (m2) return m2 < 0 ? -1 : +1;
+                                }
+                                if (lA2 < lB2) {   // A exhausted: B keeps
+                                    ++ia2; oA2 = 0;         // its place -
+                                    oB2 += u32(c2);         // the consumed
+                                } else if (lB2 < lA2) {     // bytes ADVANCE
+                                    ++jb2; oB2 = 0;         // B's offset (the
+                                    oA2 += u32(c2);         // offset-loss bug
+                                } else {                    // the mini2 belt
+                                    ++ia2; oA2 = 0; ++jb2; oB2 = 0;   // caught)
+                                }
+                            }
                         }
                         return rA < rB ? -1 : +1;
                     }
@@ -3006,17 +3080,106 @@ int main(int argc, char** argv) {
                 " slide_fires=%" PRIu64 " threads=%" PRIu64 " sort_s=%.2f"
                 " rule=integer_rank_sequences;the_aligned_order\n",
                 M, parseIntSteps, slideFires, threads, now_sec() - tps0);
+            // THE FULL BRUTE VERIFY (mini scale, env-guarded): the sort
+            // can order two rows transitively without ever comparing
+            // them directly - a victim pair proves nothing about the
+            // culprit. This sorts the aligned rows by the BRUTE and
+            // reports the first mismatch with parseCmp's verdict.
+            if (::getenv("XSA_PARSE_SORT_FULL_VERIFY")) {
+                const double tv0 = now_sec();
+                std::vector<u32> ref(parseSA);
+                std::sort(ref.begin(), ref.end(),
+                          [&](u32 x, u32 y) {
+                              return suf_cmp_from(PStart_[size_t(x)],
+                                                  PStart_[size_t(y)], 0) < 0;
+                          });
+                for (u64 i2 = 0; i2 < M; ++i2)
+                    if (ref[size_t(i2)] != parseSA[size_t(i2)]) {
+                        const u32 pa = ref[size_t(i2)], pb = parseSA[size_t(i2)];
+                        {   // the pair's structure + the walk trace
+                            const u64 rA2 = rankOf[size_t(PA[size_t(pa)])];
+                            const u64 rB2 = rankOf[size_t(PA[size_t(pb)])];
+                            const u64 lo2 = std::min(rA2, rB2), hi2 = std::max(rA2, rB2);
+                            u64 ia2 = pa, jb2 = pb; u32 oA2 = 0, oB2 = 0;
+                            if (rA2 < rB2) { ia2 = pa + 1; oB2 = rankLen[size_t(rA2)]; }
+                            else { jb2 = pb + 1; oA2 = rankLen[size_t(rB2)]; }
+                            u64 L = 0;
+                            { const u64 a = dictEnt[size_t(PA[size_t(pa)])].first,
+                                  b = dictEnt[size_t(PA[size_t(pb)])].first;
+                              const u64 la = dictEnt[size_t(PA[size_t(pa)])].second,
+                                    lb = dictEnt[size_t(PA[size_t(pb)])].second;
+                              while (L < la && L < lb &&
+                                     dictArena[size_t(a + L)] == dictArena[size_t(b + L)]) ++L; }
+                            std::fprintf(stderr,
+                                "PAIR vA=%u rA=%" PRIu64 " lenA=%u vB=%u rB=%" PRIu64
+                                " lenB=%u lcp=%" PRIu64 " ambMin=%u lenLo=%u"
+                                " walk_init ia2=%" PRIu64 " oA2=%u jb2=%" PRIu64
+                                " oB2=%u\n",
+                                PA[size_t(pa)], rA2,
+                                dictEnt[size_t(PA[size_t(pa)])].second,
+                                PA[size_t(pb)], rB2,
+                                dictEnt[size_t(PA[size_t(pb)])].second, L,
+                                hi2 > lo2 ? ambMin(lo2, hi2) : 0u,
+                                rankLen[size_t(lo2)], ia2, oA2, jb2, oB2);
+                        }
+                        std::fprintf(stderr,
+                            "PARSE_SORT_MISMATCH at %" PRIu64 " ref=%u got=%u"
+                            " posRef=%" PRIu64 " posGot=%" PRIu64
+                            " brute(ref,got)=%d parseCmp(ref,got)=%d\n",
+                            i2, pa, pb, PStart_[size_t(pa)], PStart_[size_t(pb)],
+                            suf_cmp_from(PStart_[size_t(pa)], PStart_[size_t(pb)], 0),
+                            parseCmp(pa, pb));
+                        break;
+                    }
+                std::fprintf(stderr,
+                    "PARSE_SORT_FULL_VERIFY sort_s=%.2f rows=%" PRIu64 "\n",
+                    now_sec() - tv0, M);
+            }
             // THE SEED BELT: the aligned order must agree with the brute
             // byte order on a spot-sample of adjacent seeds
             {
                 const u64 step = std::max<u64>(1, M / 4096);
                 for (u64 i = step; i < M; i += step)
                     if (suf_cmp_from(PStart_[size_t(parseSA[size_t(i - step)])],
-                                     PStart_[size_t(parseSA[size_t(i)])], 0) >= 0)
+                                     PStart_[size_t(parseSA[size_t(i)])], 0) >= 0) {
+                        const u32 pa = parseSA[size_t(i - step)],
+                                 pb = parseSA[size_t(i)];
+                        {   // THE DIRECT VERDICT + the walk trace
+                            const u64 rA2 = rankOf[size_t(PA[size_t(pa)])];
+                            const u64 rB2 = rankOf[size_t(PA[size_t(pb)])];
+                            const u64 lo2 = std::min(rA2, rB2), hi2 = std::max(rA2, rB2);
+                            u64 ia2 = pa, jb2 = pb; u32 oA2 = 0, oB2 = 0;
+                            if (rA2 < rB2) { ia2 = pa + 1; oB2 = rankLen[size_t(rA2)]; }
+                            else { jb2 = pb + 1; oA2 = rankLen[size_t(rB2)]; }
+                            std::fprintf(stderr,
+                                "DIRECT cmp=%d ambMin=%u lenLo=%u walk_init"
+                                " ia2=%" PRIu64 " oA2=%u jb2=%" PRIu64 " oB2=%u\n",
+                                parseCmp(pa, pb), hi2 > lo2 ? ambMin(lo2, hi2) : 0u,
+                                rankLen[size_t(lo2)], ia2, oA2, jb2, oB2);
+                        }
+                        std::fprintf(stderr,
+                            "PARSE_SORT_FAIL ia=%u ib=%u posA=%" PRIu64
+                            " posB=%" PRIu64 " vA=%u rA=%" PRIu64
+                            " lenA=%u vB=%u rB=%" PRIu64 " lenB=%u"
+                            " lcpAB=%" PRIu64 " brute=%d\n",
+                            pa, pb, PStart_[size_t(pa)], PStart_[size_t(pb)],
+                            PA[size_t(pa)], rankOf[size_t(PA[size_t(pa)])],
+                            dictEnt[size_t(PA[size_t(pa)])].second,
+                            PA[size_t(pb)], rankOf[size_t(PA[size_t(pb)])],
+                            dictEnt[size_t(PA[size_t(pb)])].second,
+                            [&] { u64 L = 0; const u64 a = dictEnt[size_t(PA[size_t(pa)])].first,
+                                  b = dictEnt[size_t(PA[size_t(pb)])].first;
+                                  const u64 la = dictEnt[size_t(PA[size_t(pa)])].second,
+                                        lb = dictEnt[size_t(PA[size_t(pb)])].second;
+                                  while (L < la && L < lb &&
+                                         dictArena[size_t(a + L)] == dictArena[size_t(b + L)]) ++L;
+                                  return L; }(),
+                            suf_cmp_from(PStart_[size_t(pa)], PStart_[size_t(pb)], 0));
                         die("PARSE_SORT_ORDER: the aligned seeds [" +
                             std::to_string(i - step) + "," + std::to_string(i) +
                             ") disagree with the brute byte order - a parse"
                             " comparator bug");
+                    }
             }
         }
 
@@ -3065,7 +3228,7 @@ int main(int argc, char** argv) {
                     for (u64 b = 0; b < 65536; ++b)
                         hist[size_t(b)] += parts2[size_t(t)][size_t(b)];
             }
-            const u64 targetRows = std::max<u64>(1, workspaceBytes / 40);
+            const u64 targetRows = std::max<u64>(1, workspaceBytes / 48);
             u64 cum = 0, lo = 0, censusRows = 1;   // + the empty suffix
             for (u64 key = 0; key < 65536; ++key) {
                 const u64 kr = hist[size_t(key)];
@@ -3085,7 +3248,7 @@ int main(int argc, char** argv) {
             NB = bandBytes.size();
             std::fprintf(stderr,
                 "SS_PLAN target_rows=%" PRIu64 " bands=%" PRIu64
-                " workspace_bytes=%" PRIu64 " row_footprint_bytes=40"
+                " workspace_bytes=%" PRIu64 " row_footprint_bytes=48"
                 " census_rows=%" PRIu64 " corpus_rows=%" PRIu64
                 " projected_scans=%" PRIu64 " max_phrase_len=%" PRIu64
                 " denominators=target=workspace/40;K=byte_range_bands"
@@ -3109,45 +3272,46 @@ int main(int argc, char** argv) {
         // O(1) integer compare of the continuation ranks; a single-
         // sided exhaustion RANK-JUMPS into the aligned order. ZERO
         // dictionary byte-streaming - the stream comparator is gone. ----
-        auto rowPos = [&](u64 row) -> u64 {
-            return PStart_[size_t(row >> 32)] + (row & 0xFFFFFFFFull);
+        // ---- THE ROW (AMENDMENT 6's law: the walking happens over
+        // THE PARSE'S ARRAYS): 16 bytes - (occ:o), the continuation's
+        // ALIGNED RANK (parseRank[occ+1]+1; 0 = the END), and the
+        // continuation's first 4 text bytes - all computed ONCE at the
+        // collect (sequential parse locality). The sort's comparisons
+        // resolve in registers; the rank-jump WALK is the last resort
+        // for the deep 16+-byte ties only. ----
+        struct BandRow {
+            u64 occ_o;   // (occ << 32) | o
+            u32 nrank;   // the continuation's aligned rank; 0 = the END
+            u32 cont4;   // the continuation's first 4 bytes (LE; 0 = the END)
         };
-        std::atomic<u64> sliceSteps{0}, rankJumps{0};
-        auto inducedCmp = [&](u64 ra, u64 rb) -> int {
-            if (ra == rb) return 0;
-            u64 occA = ra >> 32, occB = rb >> 32;
-            u32 oA = u32(ra & 0xFFFFFFFFull), oB = u32(rb & 0xFFFFFFFFull);
-            u32 vA = PA[size_t(occA)], vB = PA[size_t(occB)];
-            // the continuation ranks; the END (rank 0) sorts first
-            u64 rankA = (occA + 1 < M) ? u64(parseRank[size_t(occA + 1)]) + 1 : 0;
-            u64 rankB = (occB + 1 < M) ? u64(parseRank[size_t(occB + 1)]) + 1 : 0;
-            const u8* pA = &dictArena[size_t(dictEnt[size_t(vA)].first + oA)];
-            const u8* eA = pA + (dictEnt[size_t(vA)].second - oA);
-            const u8* pB = &dictArena[size_t(dictEnt[size_t(vB)].first + oB)];
-            const u8* eB = pB + (dictEnt[size_t(vB)].second - oB);
+        auto rowPos = [&](const BandRow& r) -> u64 {
+            return PStart_[size_t(r.occ_o >> 32)] + (r.occ_o & 0xFFFFFFFFull);
+        };
+        std::atomic<u64> fastBytes{0}, slowJumps{0}, slowBytes{0},
+            samePhraseHits{0}, contHits{0}, rankHits{0};
+        // THE WALK: the induced rank-jump loop over the RAM-resident
+        // arrays (the dict arena + parseSA/parseRank). Returns 2 for
+        // the equal-continuation structural impossibility (the caller
+        // falls to the brute and the belt fails loud).
+        auto walk = [&](const u8* pA, const u8* eA, u64 rankA,
+                        const u8* pB, const u8* eB, u64 rankB) -> int {
             for (;;) {
-                const u64 remA = u64(eA - pA), remB = u64(eB - pB);
-                const u64 common = std::min(remA, remB);
+                const u64 remA = u64(eA - pA), remB2 = u64(eB - pB);
+                const u64 common = std::min(remA, remB2);
                 if (common) {
-                    sliceSteps.fetch_add(common, std::memory_order_relaxed);
+                    slowBytes.fetch_add(common, std::memory_order_relaxed);
                     const int c = std::memcmp(pA, pB, size_t(common));
                     if (c) return c < 0 ? -1 : +1;
                     pA += common; pB += common;
                 }
-                const bool doneA = (pA == eA), doneB = (pB == eB);
-                if (doneA && doneB) {
+                const bool dA = (pA == eA), dB = (pB == eB);
+                if (dA && dB) {
                     if (rankA != rankB) return rankA < rankB ? -1 : +1;
-                    // equal continuations for distinct rows is a
-                    // structural impossibility; the brute answers and
-                    // the belt fails loud if it ever happens
-                    return suf_cmp_from(rowPos(ra), rowPos(rb), 0);
+                    return 2;
                 }
-                if (doneA) {   // RANK-JUMP: the continuation is the
-                    // aligned suffix with that rank; the END rank (0)
-                    // is the EMPTY continuation - it loses against any
-                    // remaining bytes (the other side is still live)
-                    if (rankA == 0) return -1;
-                    ++rankJumps;
+                if (dA) {   // RANK-JUMP into the aligned order; the END
+                    if (rankA == 0) return -1;   // rank loses vs live bytes
+                    slowJumps.fetch_add(1, std::memory_order_relaxed);
                     const u64 pos = parseSA[size_t(rankA - 1)];
                     const u32 v = PA[size_t(pos)];
                     pA = &dictArena[size_t(dictEnt[size_t(v)].first)];
@@ -3155,7 +3319,7 @@ int main(int argc, char** argv) {
                     rankA = (pos + 1 < M) ? u64(parseRank[size_t(pos + 1)]) + 1 : 0;
                 } else {
                     if (rankB == 0) return +1;
-                    ++rankJumps;
+                    slowJumps.fetch_add(1, std::memory_order_relaxed);
                     const u64 pos = parseSA[size_t(rankB - 1)];
                     const u32 v = PA[size_t(pos)];
                     pB = &dictArena[size_t(dictEnt[size_t(v)].first)];
@@ -3164,11 +3328,101 @@ int main(int argc, char** argv) {
                 }
             }
         };
+        auto inducedCmp = [&](const BandRow& A, const BandRow& B) -> int {
+            if (A.occ_o == B.occ_o) return 0;
+            const u64 occA = A.occ_o >> 32, occB = B.occ_o >> 32;
+            const u32 oA = u32(A.occ_o), oB = u32(B.occ_o);
+            const u32 vA = PA[size_t(occA)], vB = PA[size_t(occB)];
+            const u8* pA = &dictArena[size_t(dictEnt[size_t(vA)].first + oA)];
+            const u64 rA = dictEnt[size_t(vA)].second - oA;
+            const u8* pB = &dictArena[size_t(dictEnt[size_t(vB)].first + oB)];
+            const u64 rB = dictEnt[size_t(vB)].second - oB;
+            if (vA == vB) {   // THE SAME PHRASE: registers only
+                samePhraseHits.fetch_add(1, std::memory_order_relaxed);
+                if (oA == oB)   // the same (P,o): the continuation ranks
+                    return A.nrank < B.nrank ? -1 : (A.nrank > B.nrank ? +1 : 0);
+                const u64 c = std::min(rA, rB);
+                if (c) {
+                    const int m = std::memcmp(pA, pB, size_t(c));
+                    if (m) return m < 0 ? -1 : +1;
+                }
+                // one tail is a prefix of the other (the periodic
+                // phrase): the walk from the true state
+                if (rA < rB) {
+                    if (A.nrank == 0) return -1;
+                    const int w = walk(pA, pA, u64(A.nrank),
+                                       pB + c, pB + rB, u64(B.nrank));
+                    return w == 2 ? suf_cmp_from(rowPos(A), rowPos(B), 0) : w;
+                }
+                if (B.nrank == 0) return +1;
+                {
+                    const int w = walk(pA + c, pA + rA, u64(A.nrank),
+                                       pB, pB, u64(B.nrank));
+                    return w == 2 ? suf_cmp_from(rowPos(A), rowPos(B), 0) : w;
+                }
+            }
+            // DIFFERENT PHRASES: the 16-byte fast path
+            {
+                const u64 c0 = std::min(std::min(rA, rB), u64(16));
+                fastBytes.fetch_add(c0, std::memory_order_relaxed);
+                if (c0) {
+                    const int m = std::memcmp(pA, pB, size_t(c0));
+                    if (m) return m < 0 ? -1 : +1;
+                }
+                if (rA > 16 || rB > 16)   // a slice outlasts the window:
+                    return walk(pA, pA + rA, u64(A.nrank),   // the deep tie
+                                pB, pB + rB, u64(B.nrank));
+                // both slices end within 16 bytes
+                if (rA == rB) {   // both continuations start at offset 0
+                    if (A.cont4 != B.cont4) {
+                        contHits.fetch_add(1, std::memory_order_relaxed);
+                        return A.cont4 < B.cont4 ? -1 : +1;
+                    }
+                    if (A.nrank != B.nrank) {   // the continuations ARE
+                        rankHits.fetch_add(1, std::memory_order_relaxed);
+                        return A.nrank < B.nrank ? -1 : +1;   // aligned suffixes
+                    }
+                    // equal slices + equal continuations: one occurrence,
+                    // one phrase - structurally impossible: fail loud
+                    return suf_cmp_from(rowPos(A), rowPos(B), 0);
+                }
+                if (rA < rB) {   // A's slice ends first
+                    if (A.nrank == 0) return -1;   // the END loses; B is live
+                    const u8* q = pB + rA;
+                    const u64 remB = rB - rA;
+                    const u64 c1 = std::min(remB, u64(4));
+                    for (u64 j = 0; j < c1; ++j) {
+                        const u8 xa = u8(A.cont4 >> (8 * (3 - j)));
+                        if (xa != q[j]) {   // the 0-pad beyond the true
+                            contHits.fetch_add(1, std::memory_order_relaxed);
+                            return xa < q[j] ? -1 : +1;   // continuation = the END byte
+                        }
+                    }
+                    // the window ties: the walk from scratch (the
+                    // continuation offsets differ; the ranks forbidden)
+                    return walk(pA, pA + rA, u64(A.nrank), pB, pB + rB, u64(B.nrank));
+                }
+                if (B.nrank == 0) return +1;
+                {
+                    const u8* q = pA + rB;
+                    const u64 remA = rA - rB;
+                    const u64 c1 = std::min(remA, u64(4));
+                    for (u64 j = 0; j < c1; ++j) {
+                        const u8 xb = u8(B.cont4 >> (8 * (3 - j)));
+                        if (xb != q[j]) {
+                            contHits.fetch_add(1, std::memory_order_relaxed);
+                            return q[j] < xb ? -1 : +1;
+                        }
+                    }
+                    return walk(pA, pA + rA, u64(A.nrank), pB, pB + rB, u64(B.nrank));
+                }
+            }
+        };
         // the MSD digits: the slice's actual text bytes (walking into
         // the continuation phrases across 1-byte phrases; the END = 0)
-        auto digByte = [&](u64 row, u32 which) -> u32 {
-            u64 occ = row >> 32;
-            u32 o = u32(row & 0xFFFFFFFFull) + which;
+        auto digByte = [&](const BandRow& row, u32 which) -> u32 {
+            u64 occ = row.occ_o >> 32;
+            u32 o = u32(row.occ_o) + which;
             for (;;) {
                 const u32 v = PA[size_t(occ)];
                 const u32 len = dictEnt[size_t(v)].second;
@@ -3181,7 +3435,8 @@ int main(int argc, char** argv) {
 
             // ---- THE BAND LOOP (AMENDMENT 6): the bands are the
             // first-slice-BYTE ranges of the plan; the rows enumerate
-            // from the parse; the sort is the induced comparator ----
+            // from the parse; the sort resolves in registers and walks
+            // only the deep residual ties ----
             u64 prevBandLastPos = ~0ull;   // the SEAM LCP state: the
             // container contract (the scatter_sort arm is the trusted
             // shape): the LCP column is TRUE in SA order across the
@@ -3191,15 +3446,17 @@ int main(int argc, char** argv) {
                 const double tk0 = now_sec();
                 const u32 keyLo = bandBytes[size_t(k)].first;
                 const u32 keyHi = bandBytes[size_t(k)].second;
-                std::vector<u64> rows;
+                std::vector<BandRow> rows;
                 u64 bandRows = 0;
                 {
                     // THE COLLECT BY A POOL: slices of the parse array;
-                    // the byte test reads the dict arena (cache-local)
+                    // the continuation rank + the first-4-bytes are
+                    // computed ONCE per parse position (sequential
+                    // locality), shared by the position's offsets
                     const u64 nPool = std::max<u64>(1, std::min<u64>(threads, u64(64)));
                     const u64 slice = (M + nPool - 1) / nPool;
-                    std::vector<std::vector<u64>> parts =
-                        std::vector<std::vector<u64>>(size_t(nPool));
+                    std::vector<std::vector<BandRow>> parts =
+                        std::vector<std::vector<BandRow>>(size_t(nPool));
                     for (u64 t = 0; t < nPool; ++t)
                         parts[size_t(t)].reserve(size_t(1 << 16));
                     std::vector<std::thread> cpool;
@@ -3212,6 +3469,27 @@ int main(int argc, char** argv) {
                                 const u32 v = PA[size_t(i)];
                                 const u64 off = dictEnt[size_t(v)].first;
                                 const u32 len = dictEnt[size_t(v)].second;
+                                // the continuation state, once per position
+                                const u32 nr = (i + 1 < M)
+                                    ? u32(parseRank[size_t(i + 1)]) + 1 : 0;
+                                u32 c4 = 0;   // the first 4 bytes after
+                                {            // this phrase (the END = 0)
+                                    u64 j = i + 1; u32 got = 0;
+                                    while (got < 4) {
+                                        if (j >= M) break;
+                                        const u32 v2 = PA[size_t(j)];
+                                        const u32 len2 = dictEnt[size_t(v2)].second;
+                                        const u64 off2 = dictEnt[size_t(v2)].first;
+                                        const u32 take = std::min<u32>(len2, 4 - got);
+                                        for (u32 q2 = 0; q2 < take; ++q2)
+                                            c4 = (c4 << 8) | u32(dictArena[size_t(off2 + q2)]);
+                                        got += take;   // BIG-ENDIAN: the u32
+                                        // compare IS the byte order (the LE packing
+                                        // compared the FOURTH byte first - the
+                                        // mini2 belt caught it)
+                                        ++j;
+                                    }
+                                }
                                 u32 nxt0 = 0;
                                 if (i + 1 < M)
                                     nxt0 = dictArena[size_t(dictEnt[size_t(PA[size_t(i + 1)])].first)];
@@ -3221,7 +3499,11 @@ int main(int argc, char** argv) {
                                         ? dictArena[size_t(off + o + 1)] : nxt0;
                                     const u32 key = (b0 << 8) | b1;
                                     if (key < keyLo || key >= keyHi) continue;
-                                    parts[size_t(t)].push_back((i << 32) | o);
+                                    BandRow r;
+                                    r.occ_o = (i << 32) | o;
+                                    r.nrank = nr;
+                                    r.cont4 = c4;
+                                    parts[size_t(t)].push_back(r);
                                 }
                             }
                         });
@@ -3231,7 +3513,7 @@ int main(int argc, char** argv) {
                     rows.reserve(size_t(tot));
                     for (auto& p : parts) {
                         rows.insert(rows.end(), p.begin(), p.end());
-                        std::vector<u64>().swap(p);
+                        std::vector<BandRow>().swap(p);
                     }
                 }
                 const bool firstBand = (k == 0);
@@ -3240,16 +3522,16 @@ int main(int argc, char** argv) {
                     "SS_BAND_SCAN band=%" PRIu64 "/%" PRIu64
                     " key_range=[%" PRIu64 ",%" PRIu64 ") rows=%" PRIu64
                     " collect_s=%.2f"
-                    " rule=parse_enumeration;slice_bytes_local\n",
+                    " rule=parse_enumeration;ranks_and_cont4_at_the_collect\n",
                     k, NB, u64(keyLo), u64(keyHi), bandRows, now_sec() - tk0);
-                if (bandRows * 40 > workspaceBytes)
+                if (bandRows * 48 > workspaceBytes)
                     die("BAND_WORKSPACE_OVERRUN: band " + std::to_string(k) +
                         " of " + std::to_string(NB) + " collected " +
-                        std::to_string(bandRows) + " rows x 40B against the workspace " +
+                        std::to_string(bandRows) + " rows x 48B against the workspace " +
                         std::to_string(workspaceBytes) + " - refusing with the numbers");
                 // ---- SORT: the MSD over the slice's first two bytes,
                 // then a pool of std::sorts with the induced comparator ----
-                std::vector<u64> alt = std::vector<u64>(rows.size());
+                std::vector<BandRow> alt = std::vector<BandRow>(rows.size());
                 {
                     std::vector<std::pair<u64, u64>> work;
                     work.emplace_back(0, rows.size());
@@ -3269,7 +3551,7 @@ int main(int argc, char** argv) {
                                     digByte(rows[size_t(i)], u32(lvl)))]++)] =
                                     rows[size_t(i)];
                             std::memcpy(&rows[size_t(sp2.first)], &alt[size_t(sp2.first)],
-                                        size_t(sp2.second - sp2.first) * 8);
+                                        size_t(sp2.second - sp2.first) * 16);
                             for (u64 b = 0; b < 256; ++b) {
                                 const u64 s2 = sp2.first + bnd[size_t(b)];
                                 const u64 e2 = sp2.first + bnd[size_t(b + 1)];
@@ -3293,7 +3575,8 @@ int main(int argc, char** argv) {
                                 const u64 gi = work[size_t(g)].first;
                                 const u64 gj = work[size_t(g)].second;
                                 std::sort(rows.begin() + size_t(gi), rows.begin() + size_t(gj),
-                                          [&](u64 x, u64 y) { return inducedCmp(x, y) < 0; });
+                                          [&](const BandRow& x, const BandRow& y) {
+                                              return inducedCmp(x, y) < 0; });
                                 // THE BELT: the sorted bucket's adjacent
                                 // pairs must agree with the brute byte
                                 // order - exactness never rests on
@@ -3302,33 +3585,25 @@ int main(int argc, char** argv) {
                                 for (u64 q2 = gi + 1; q2 < gj; q2 += step)
                                     if (suf_cmp_from(rowPos(rows[size_t(q2 - 1)]),
                                                      rowPos(rows[size_t(q2)]), 0) >= 0) {
-                                        const u64 rA = rows[size_t(q2 - 1)],
-                                                 rB = rows[size_t(q2)];
+                                        const BandRow rA = rows[size_t(q2 - 1)],
+                                                     rB = rows[size_t(q2)];
                                         std::fprintf(stderr,
                                             "GPARSE_ORDER_FAIL band=%" PRIu64
                                             " bucket=[%" PRIu64 ",%" PRIu64 ")"
-                                            " rowA=%" PRIu64 " posA=%" PRIu64
-                                            " rowB=%" PRIu64 " posB=%" PRIu64
-                                            " induced=%d brute=%d"
-                                            " occA=%" PRIu64 " oA=%" PRIu64
-                                            " occB=%" PRIu64 " oB=%" PRIu64
-                                            " vA=%" PRIu64 " lenA=%" PRIu64
-                                            " vB=%" PRIu64 " lenB=%" PRIu64
-                                            " rankA_next=%" PRIu64
-                                            " rankB_next=%" PRIu64 "\n",
-                                            k, gi, gj, rA, rowPos(rA), rB, rowPos(rB),
+                                            " occA=%" PRIu64 " oA=%u occB=%" PRIu64
+                                            " oB=%u posA=%" PRIu64 " posB=%" PRIu64
+                                            " vA=%u vB=%u nrankA=%u nrankB=%u"
+                                            " cont4A=%08x cont4B=%08x"
+                                            " induced=%d brute=%d\n",
+                                            k, gi, gj,
+                                            rA.occ_o >> 32, u32(rA.occ_o),
+                                            rB.occ_o >> 32, u32(rB.occ_o),
+                                            rowPos(rA), rowPos(rB),
+                                            PA[size_t(rA.occ_o >> 32)],
+                                            PA[size_t(rB.occ_o >> 32)],
+                                            rA.nrank, rB.nrank, rA.cont4, rB.cont4,
                                             inducedCmp(rA, rB),
-                                            suf_cmp_from(rowPos(rA), rowPos(rB), 0),
-                                            rA >> 32, rA & 0xFFFFFFFFull,
-                                            rB >> 32, rB & 0xFFFFFFFFull,
-                                            u64(PA[size_t(rA >> 32)]),
-                                            u64(dictEnt[size_t(PA[size_t(rA >> 32)])].second),
-                                            u64(PA[size_t(rB >> 32)]),
-                                            u64(dictEnt[size_t(PA[size_t(rB >> 32)])].second),
-                                            (rA >> 32) + 1 < M
-                                                ? u64(parseRank[size_t((rA >> 32) + 1)]) : u64(~0),
-                                            (rB >> 32) + 1 < M
-                                                ? u64(parseRank[size_t((rB >> 32) + 1)]) : u64(~0));
+                                            suf_cmp_from(rowPos(rA), rowPos(rB), 0));
                                         thrFail[size_t(t)] = 1;
                                         return;
                                     }
@@ -3343,9 +3618,11 @@ int main(int argc, char** argv) {
                 bswap_release(alt);
                 // ---- THE LCP COLUMN: the honest brute walks (the total
                 // is the band's lcp mass - measured, not guessed) ----
-                if (firstBand)
-                    rows.insert(rows.begin(), 0xFFFFFFFF00000000ull);   // the virtual
-                        // END row sorts before every real suffix
+                if (firstBand) {
+                    BandRow vr; vr.occ_o = 0xFFFFFFFF00000000ull;
+                    vr.nrank = 0; vr.cont4 = 0;
+                    rows.insert(rows.begin(), vr);   // the virtual END row
+                }
                 std::vector<u64> lcpv2 = std::vector<u64>(size_t(bandRows), 0);
                 if (prevBandLastPos != ~0ull) {   // THE SEAM LCP: true,
                     // never 0 (the container contract; the scatter_sort
@@ -3356,8 +3633,8 @@ int main(int argc, char** argv) {
                     lcpv2[size_t(0)] = lcpSeam;
                 }
                 if (!rows.empty())
-                    prevBandLastPos = (rows[size_t(rows.size() - 1)]
-                                       == 0xFFFFFFFF00000000ull)
+                    prevBandLastPos = (rows[size_t(rows.size() - 1)].occ_o
+                                      == 0xFFFFFFFF00000000ull)
                         ? FILE_N : rowPos(rows[size_t(rows.size() - 1)]);
                 {
                     // THE LCP WALKS BY A POOL: the adjacent pairs are
@@ -3370,9 +3647,10 @@ int main(int argc, char** argv) {
                             for (;;) {
                                 const u64 i2 = nextPair.fetch_add(1, std::memory_order_relaxed);
                                 if (i2 >= rows.size()) break;
-                                const u64 rowA = rows[size_t(i2 - 1)], rowB = rows[size_t(i2)];
-                                if (rowA == 0xFFFFFFFF00000000ull ||
-                                    rowB == 0xFFFFFFFF00000000ull) continue;
+                                const BandRow rowA = rows[size_t(i2 - 1)],
+                                              rowB = rows[size_t(i2)];
+                                if (rowA.occ_o == 0xFFFFFFFF00000000ull ||
+                                    rowB.occ_o == 0xFFFFFFFF00000000ull) continue;
                                 u64 lcpTrue = 0;
                                 suf_cmp_lcp(rowPos(rowA), rowPos(rowB), 0, lcpTrue);
                                 lcpv2[size_t(i2)] = lcpTrue;
@@ -3385,8 +3663,9 @@ int main(int argc, char** argv) {
                 U.bin = 0;
                 U.Pout.resize(rows.size());
                 for (size_t i2 = 0; i2 < rows.size(); ++i2) {
-                    const u64 row = rows[size_t(i2)];
-                    const u64 pos = (row == 0xFFFFFFFF00000000ull) ? FILE_N : rowPos(row);
+                    const BandRow row = rows[size_t(i2)];
+                    const u64 pos = (row.occ_o == 0xFFFFFFFF00000000ull)
+                        ? FILE_N : rowPos(row);
                     U.Pout[size_t(i2)] = pack_sym(
                         pos, pos ? u8(REMAP ? REMAP[T[pos - 1]] : T[pos - 1])
                                 : SENTINEL_SYMBOL);
@@ -3394,12 +3673,19 @@ int main(int argc, char** argv) {
                 U.lcpv = std::move(lcpv2);
                 std::fprintf(stderr,
                     "SS_GPARSE_BAND_SORT band=%" PRIu64 "/%" PRIu64
-                    " rows=%" PRIu64 " slice_bytes=%" PRIu64
-                    " rank_jumps=%" PRIu64 " sort_s=%.2f"
-                    " rule=induced_local_slices_and_integer_ranks;zero_stream_steps\n",
+                    " rows=%" PRIu64 " fast_bytes=%" PRIu64
+                    " same_phrase_hits=%" PRIu64 " cont_hits=%" PRIu64
+                    " rank_hits=%" PRIu64 " slow_jumps=%" PRIu64
+                    " slow_bytes=%" PRIu64 " sort_s=%.2f"
+                    " rule=registers_then_parse_arrays;walks_last_resort"
+                    ";zero_stream_steps\n",
                     k, NB, bandRows,
-                    sliceSteps.load(std::memory_order_relaxed),
-                    rankJumps.load(std::memory_order_relaxed),
+                    fastBytes.load(std::memory_order_relaxed),
+                    samePhraseHits.load(std::memory_order_relaxed),
+                    contHits.load(std::memory_order_relaxed),
+                    rankHits.load(std::memory_order_relaxed),
+                    slowJumps.load(std::memory_order_relaxed),
+                    slowBytes.load(std::memory_order_relaxed),
                     now_sec() - tk0);
                 std::fprintf(stderr,
                     "SS_THREADS phase=band_sort band=%" PRIu64 "/%" PRIu64
