@@ -36,14 +36,16 @@ for arm in ('main', 'reader'):
     for name in ('bands', 'waves', 'merged'):
         (run/name).mkdir(parents=True, exist_ok=True)
     prefix = run/'merged/frag'
-    # the rchar limit is a RUNAWAY guard (100x); the 3.0 proxy is a
-    # journal line, not the verdict (the operator's frozen acceptance)
-    env = dict(os.environ, XSA_MEM_GUARD_MB=str(196*1024), CROSS_V2_PIECES='1', CROSS_V2_PIECE_WINDOW='1100', XSA_TAPE_WAIT_S='inf', XSA_TAPE_RCHAR_LIMIT=str(100*corpus_bytes))
+    # NO rchar limit here anymore: the producer derives it from the plan
+    # (expected = (1+K) x corpus + 25% margin; an env override must exceed
+    # the plan or the producer refuses the stale bar). The 3.0 proxy is a
+    # journal line, not the verdict (the operator's frozen acceptance).
+    env = dict(os.environ, XSA_MEM_GUARD_MB=str(196*1024), CROSS_V2_PIECES='1', CROSS_V2_PIECE_WINDOW='1100', XSA_TAPE_WAIT_S='inf')
     if arm == 'main':
         producer = [str(baseline/'scatter_sort'), *common, '--scratch', str(run/'waves'), '--tape-bands', str(run/'bands'), '--pending-bands', '8']
     else:
         producer = [str(reader), *common, '--out-prefix', str(prefix), '--bands', str(run/'bands')]
-    finish = [str(baseline/'xsa_finish'), '--prefix', str(prefix), '--corpus', str(corpus), '--remap', str(remap), '--output', str(run/'product.sxi2'), '--threads', '24', '--poll-timeout', '0', '--wit-ram-budget', str(196 << 30), '--lcp-bands', str(run/'bands'), '--no-chi']
+    finish = [str(baseline/'xsa_finish'), '--prefix', str(prefix), '--corpus', str(corpus), '--remap', str(remap), '--output', str(run/'product.sxi2'), '--threads', '24', '--poll-timeout', '0', '--wit-ram-budget', str(196 << 30), '--lcp-bands', str(run/'bands')]
     commands = [producer]
     if arm == 'main':
         commands.append([str(baseline/'cross_lcp_merge'), '--binbwt', str(corpus), '--remap', str(remap), '--out-prefix', str(prefix), '--threads', '24', '--tape-bands', str(run/'bands')])

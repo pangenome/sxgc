@@ -3360,21 +3360,39 @@ int main(int argc, char** argv) {
             rchar, rb, syscr, FILE_N, N,
             FILE_N ? double(rchar) / double(FILE_N) : 0.0,
             FILE_N ? double(rb) / double(FILE_N) : 0.0, u64(1));
-        // THE EXPLICIT RCHAR BACKSTOP (carried over from the pull machine):
-        // a monotone I/O counter, never a wall deadline. A run whose asked
-        // bytes crossed the limit is VOID - die loudly with the numbers
-        // instead of finishing a wrong-shaped run.
+        // THE PLAN-DERIVED RCHAR BACKSTOP (run8's receipt: the flat 3x
+        // threshold was the OLD machine's acceptance proxy - obsolete
+        // since the operator overruled it; Amendment 3 made K x corpus
+        // the expected arithmetic). expected = parse (1x) + K band
+        // passes + 25% margin; an env override wins and must exceed the
+        // plan. A refusal means REALITY EXCEEDED THE PLAN - a finding,
+        // never a stale bar. The plan line prints both with denominators.
+        const u64 expectedRchar = (1 + NB) * FILE_N + FILE_N / 4;
+        u64 limit = expectedRchar;
         if (const char* limitText = ::getenv("XSA_TAPE_RCHAR_LIMIT")) {
-            const u64 limit = std::strtoull(limitText, nullptr, 10);
-            if (limit && rchar > limit)
-                die("TAPE_RCHAR_LIMIT: rchar=" + std::to_string(rchar) +
-                    " limit=" + std::to_string(limit) +
-                    " corpus_bytes=" + std::to_string(FILE_N) +
-                    " rows_emitted=" + std::to_string(emittedRows.load()) +
-                    " units_emitted=" + std::to_string(lcpSlices) +
-                    " bands=" + std::to_string(NB) +
-                    " status=VOID");
+            const u64 envLimit = std::strtoull(limitText, nullptr, 10);
+            if (envLimit) limit = envLimit;
         }
+        if (limit < expectedRchar)
+            die("TAPE_RCHAR_LIMIT: the env override " + std::to_string(limit) +
+                " is below the plan-derived expectation " + std::to_string(expectedRchar) +
+                " = (1 + K=" + std::to_string(NB) + ") x corpus " +
+                std::to_string(FILE_N) + " + 25% - refusing a stale bar");
+        std::fprintf(stderr,
+            "RCHAR_PLAN expected=%" PRIu64 " limit=%" PRIu64
+            " arithmetic=(1+K=%" PRIu64 ")x_corpus=%" PRIu64 "+25%%_margin=%" PRIu64
+            " actual=%" PRIu64
+            " rule=a_refusal_means_reality_exceeded_the_plan\n",
+            expectedRchar, limit, NB, FILE_N, FILE_N / 4, rchar);
+        if (rchar > limit)
+            die("TAPE_RCHAR_LIMIT: rchar=" + std::to_string(rchar) +
+                " limit=" + std::to_string(limit) +
+                " expected=" + std::to_string(expectedRchar) +
+                " corpus_bytes=" + std::to_string(FILE_N) +
+                " rows_emitted=" + std::to_string(emittedRows.load()) +
+                " units_emitted=" + std::to_string(lcpSlices) +
+                " bands=" + std::to_string(NB) +
+                " status=VOID_reality_exceeded_the_plan");
     }
     std::fprintf(stderr,
         "parse_classes=%" PRIu64 " rows=%" PRIu64 " phrases=%" PRIu64
