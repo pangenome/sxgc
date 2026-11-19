@@ -3182,6 +3182,11 @@ int main(int argc, char** argv) {
             // ---- THE BAND LOOP (AMENDMENT 6): the bands are the
             // first-slice-BYTE ranges of the plan; the rows enumerate
             // from the parse; the sort is the induced comparator ----
+            u64 prevBandLastPos = ~0ull;   // the SEAM LCP state: the
+            // container contract (the scatter_sort arm is the trusted
+            // shape): the LCP column is TRUE in SA order across the
+            // band boundaries - lcpv[0] of band k>0 is the TRUE lcp of
+            // (band k-1's last row, band k's first row), never 0
             for (u64 k = 0; k < NB; ++k) {
                 const double tk0 = now_sec();
                 const u32 keyLo = bandBytes[size_t(k)].first;
@@ -3342,6 +3347,18 @@ int main(int argc, char** argv) {
                     rows.insert(rows.begin(), 0xFFFFFFFF00000000ull);   // the virtual
                         // END row sorts before every real suffix
                 std::vector<u64> lcpv2 = std::vector<u64>(size_t(bandRows), 0);
+                if (prevBandLastPos != ~0ull) {   // THE SEAM LCP: true,
+                    // never 0 (the container contract; the scatter_sort
+                    // arm computes its seams - the identity gate dies on
+                    // the difference otherwise)
+                    u64 lcpSeam = 0;
+                    suf_cmp_lcp(prevBandLastPos, rowPos(rows[size_t(0)]), 0, lcpSeam);
+                    lcpv2[size_t(0)] = lcpSeam;
+                }
+                if (!rows.empty())
+                    prevBandLastPos = (rows[size_t(rows.size() - 1)]
+                                       == 0xFFFFFFFF00000000ull)
+                        ? FILE_N : rowPos(rows[size_t(rows.size() - 1)]);
                 {
                     // THE LCP WALKS BY A POOL: the adjacent pairs are
                     // independent; the serial walk was the same regression
