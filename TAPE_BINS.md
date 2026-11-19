@@ -341,3 +341,78 @@ THE SORT:
 THE EXPECTED ARITHMETIC (from run10's receipts): parse 228 s + parse-sort
 (~174M integer rows) + O(N) induction + finish — the 2h05m wall should
 collapse by ~20x. G3 prices it from measurement, as always.
+
+## AMENDMENT 7 — THE ONE-SIDED TRIGGER (the prefix-free parse), 2026-11-19
+
+THE FINDING: the classic construction (sort only the parse; the unaligned
+induced from the static dictionary table) REQUIRES a prefix-free parse.
+The two-sided trigger rule CANNOT yield one: the AFTER-window of a
+phrase's final trigger (positions s+1..s+w) always extends past the
+phrase end — the trigger's minimality is context-dependent on the NEXT
+phrase's bytes. A phrase P1 can then be a byte-prefix of a phrase P2
+occurring elsewhere: P2's continuation supplies different after-window
+bytes, the same k-mer does not trigger inside P2, P2 runs longer.
+Measured: 60,799 relations per 488,443 phrases on the 9.4 MB real-text
+slice (12.5%), 25.7M at 3 GB — and the 552M slide walks of the parse sort
+existed only because the relations existed.
+
+THE RULE (one-sided): a position s fires a trigger iff km(s) is STRICTLY
+smaller than the w k-mers PRECEDING it, suppressed for the first w
+positions of every phrase (the before-window lies inside the phrase).
+Phrases end with their trigger k-mer as before.
+
+THE PROOF: if P1 were a strict byte-prefix of P2, P1's terminal trigger
+sits at relative position p >= w with its whole before-window inside P1;
+the identical k-mers appear at P2's relative position p, the identical
+minimality holds there, so P2's scan triggers at p — P2 cannot be
+longer. Contradiction; the parse is prefix-free. The doc-end forced
+phrases keep a provable residual (the walk stays as the journaled
+safety net for exactly those).
+
+THE ASSERT: aligned prefix relations (not involving a doc-end forced
+phrase string) must be ZERO - die with the counter if not. The
+prefix_relations journal line stays; with the new rule it must report
+the doc-end residual and nothing else.
+
+## AMENDMENT 7b — THE CONSTRUCTION (the classic PFP-SA shape)
+
+1. The parse (the one-sided rule).
+2. THE SORT: the suffix array of THE PARSE - the phrase positions as an
+   integer array (the rank-sequence comparator with the position-walk as
+   the doc-end residual safety net). This is the ONLY sort any
+   corpus-suffix row ever enters.
+   THE HARD RULE (assertable, a die()): total corpus-suffix rows ever
+   sorted == the phrase count. No band ever sorts suffixes; there are no
+   per-suffix enumerations in any comparator-based sort.
+3. The aligned order IS the parse-SA order.
+4. THE STATIC TABLE (one-time dictionary precompute, its own counter
+   dict_static_pairs, its own receipt line): the dictionary text's tail
+   order - the (P, o) pairs for every distinct phrase P and every offset
+   o in [0, len(P)) - sorted once by their slice content with the
+   phrase-end SENTINEL terminating every comparison (the comparisons are
+   local, bounded by the phrase lengths; no walks, no rank cascades).
+   This table gives: the groups' order against each other, the
+   per-phrase internal-offset order (the same structure), and the
+   pair-level prefix-relation marks (the adjacent-lcp chain).
+5. THE EMIT (O(N) streaming, no random access): every row is (its slice,
+   the continuation rank parseRank[occ+1]). Each group (P, o) has ONE
+   occurrence list ordered by the continuation rank (built once per
+   phrase, shared by all its offsets). The emit walks the groups in the
+   static-table order and merges, with the prefix-chain groups open on
+   a stack (the chains are the pair-level prefix relations): each
+   decision compares at most one phrase-length of bytes - the slice
+   compare is local; at the joint slice exhaustion the continuation
+   order IS the aligned rank (O(1) integer); the tail-prefix splits
+   compare the continuation's leading bytes against the survivor's
+   remaining slice (bounded), then fall to the rank cascade; the walk
+   remains the journaled safety net. The LCP column rides the same
+   bounded comparisons.
+
+THE WALLS (the projection the operator holds the machine to): parse
+~210 s + the parse-SA (integer ranks, the slides gone) ~60-120 s + the
+static table (the dict-scale local sort, pooled) ~minutes + the O(N)
+emit ~minutes + the finish.
+
+G3 NOTE (projection arithmetic only): at pile scale the dictionary text
+exceeds RAM; its precompute can reuse the band machinery (the dictionary
+is just text; the machine can sort its own dictionary recursively).
