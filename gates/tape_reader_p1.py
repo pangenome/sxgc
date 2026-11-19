@@ -36,7 +36,9 @@ for arm in ('main', 'reader'):
     for name in ('bands', 'waves', 'merged'):
         (run/name).mkdir(parents=True, exist_ok=True)
     prefix = run/'merged/frag'
-    env = dict(os.environ, XSA_MEM_GUARD_MB=str(196*1024), CROSS_V2_PIECES='1', CROSS_V2_PIECE_WINDOW='1100', XSA_TAPE_WAIT_S='inf', XSA_TAPE_RCHAR_LIMIT=str(3*corpus_bytes))
+    # the rchar limit is a RUNAWAY guard (100x); the 3.0 proxy is a
+    # journal line, not the verdict (the operator's frozen acceptance)
+    env = dict(os.environ, XSA_MEM_GUARD_MB=str(196*1024), CROSS_V2_PIECES='1', CROSS_V2_PIECE_WINDOW='1100', XSA_TAPE_WAIT_S='inf', XSA_TAPE_RCHAR_LIMIT=str(100*corpus_bytes))
     if arm == 'main':
         producer = [str(baseline/'scatter_sort'), *common, '--scratch', str(run/'waves'), '--tape-bands', str(run/'bands'), '--pending-bands', '8']
     else:

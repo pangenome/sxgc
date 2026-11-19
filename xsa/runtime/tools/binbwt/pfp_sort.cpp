@@ -2721,15 +2721,30 @@ int main(int argc, char** argv) {
                 return v;
             };
             std::vector<u8> pbuf2;
-            u64 prevStart = 0, forcedSplits = 0;
+            u64 prevStart = 0, forcedSplits = 0, carryReads = 0, carryBytes = 0;
+            // THE READ-ONCE LAW: the scan window already holds the phrase
+            // bytes; only a phrase straddling the chunk seam needs a carry
+            // read (rare, journaled). The old closePhrase re-read EVERY
+            // phrase - 174.5M extra preads at 3 GB, the run8 receipt's
+            // 3.3 GB of the 6.79x rchar.
+            const u8* scanBase = nullptr;   // the current window's [from] base
+            u64 scanFrom = 0, scanUntil = 0;
             auto closePhrase = [&](u64 endPos) {
                 if (endPos <= prevStart) return;
-                const u64 at = prevStart ? prevStart - 1 : 0;
-                u64 want = endPos - prevStart + 1 + (prevStart ? 1 : 0);
-                want = std::min(want, FILE_N - at);   // clamp at EOF
-                read_window(fd, at, want, pbuf2);
-                const u8* q = pbuf2.data() + (prevStart ? 1 : 0);
-                PA.push_back(internPhrase(q, u32(endPos - prevStart)));
+                const u32 plen = u32(endPos - prevStart);
+                if (scanBase && prevStart >= scanFrom && endPos <= scanUntil) {
+                    PA.push_back(internPhrase(scanBase + size_t(prevStart - scanFrom), plen));
+                } else {
+                    // the seam carry (a phrase started in the previous chunk)
+                    const u64 at = prevStart ? prevStart - 1 : 0;
+                    u64 want = u64(plen) + 1 + (prevStart ? 1 : 0);
+                    want = std::min(want, FILE_N - at);
+                    read_window(fd, at, want, pbuf2);
+                    const u8* q = pbuf2.data() + (prevStart ? 1 : 0);
+                    PA.push_back(internPhrase(q, plen));
+                    ++carryReads;
+                    carryBytes += want;
+                }
                 PStart_.push_back(prevStart);
             };
             // the km hash over the buffer (carried over verbatim)
@@ -2741,26 +2756,32 @@ int main(int argc, char** argv) {
             const u64 wWin = g_pfp_w, kWin = g_pfp_k;
             std::vector<u8> buf;
             u64 parseBytes = 0;
+            const u64 ov2 = wWin + kWin;   // the backward window's overlap
             for (u64 base = 0; base < FILE_N; ) {
                 beat(1);
                 if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
                 const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, FILE_N - base);
-                const u64 from = base;
-                const u64 want = std::min<u64>(chunk + wWin + kWin, FILE_N - from);
+                const u64 from = base >= ov2 ? base - ov2 : 0;
+                const u64 want = std::min<u64>(chunk + ov2 * 2, FILE_N - from);
                 read_window(fd, from, want, buf);
                 parseBytes += want;
+                scanBase = buf.data();
+                scanFrom = from;
+                scanUntil = from + want;
                 const u64 hi = base + chunk;
                 for (u64 p = base; p < hi; ++p) {
                     // the trigger: km(p) strictly smaller than the w
                     // k-mers before AND after it (clamped at the corpus
                     // edges); p==0 always starts the first phrase
                     bool trig = (p == 0);
-                    if (!trig && p + kWin <= FILE_N) {
+                    if (!trig && p + kWin <= FILE_N && p >= from) {
                         const u64 hp = kmAt(buf, p - from);
                         bool ok = true;
                         for (u64 j = 1; j <= wWin && ok; ++j) {
-                            if (p >= j) { if (kmAt(buf, p - from - j) <= hp) ok = false; }
+                            if (p >= j && p - j >= from &&
+                                kmAt(buf, p - from - j) <= hp) ok = false;
                             if (p + j + kWin <= FILE_N &&
+                                p + j + kWin <= scanUntil &&
                                 kmAt(buf, p - from + j) <= hp) ok = false;
                         }
                         trig = ok;
@@ -2778,10 +2799,12 @@ int main(int argc, char** argv) {
             std::fprintf(stderr,
                 "SS_GPARSE_PASS threads=%" PRIu64 " phrases=%zu distinct=%zu dict_bytes=%zu"
                 " avg_len=%.2f forced_splits=%" PRIu64 " parse_bytes=%" PRIu64
-                " parse_s=%.2f rule=one_doc_aware_pfp_pass_trigger_rule_carried_over\n",
+                " carry_reads=%" PRIu64 " carry_bytes=%" PRIu64
+                " parse_s=%.2f"
+                " rule=one_doc_aware_pfp_pass_read_once;the_scan_window_supplies_the_phrases\n",
                 threads, PA.size(), dictEnt.size(), dictArena.size(),
                 double(FILE_N) / double(std::max<size_t>(1, PA.size())),
-                forcedSplits, parseBytes, tParseS);
+                forcedSplits, parseBytes, carryReads, carryBytes, tParseS);
         }
 
         // ---- THE DICTIONARY SORT (byte order, shorter-prefix-first) ----
