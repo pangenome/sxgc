@@ -3279,85 +3279,245 @@ int main(int argc, char** argv) {
             }
         }
 
-        // ---- THE BAND PLAN: the exact row census per FIRST SLICE BYTE
-        // (the parse IS the census - every suffix's first byte is a
-        // dictionary-arena byte at its (phrase, offset); the empty
-        // suffix rides the first band), packed to the workspace knob ----
-        std::vector<std::pair<u32, u32>> bandBytes;   // [2-byte key lo, hi)
+        // =============================================================
+        // AMENDMENT 7b: THE STATIC TABLE + THE O(N) EMIT. The band loop
+        // that enumerated and sorted all 3e9 corpus suffixes is DELETED
+        // (the operator's hard rule: total corpus-suffix rows ever sorted
+        // == the phrase count; the run12 receipt: 12 bands x 250M rows).
+        //
+        // THE PAIRS TABLE (the one-time dictionary precompute, its own
+        // counter): every arena position is a pair (P, o) - the phrase P
+        // and the offset o - whose slice is P[o:] followed by the
+        // implicit SENTINEL 0. The pairs sorted by (slice + 0) give: the
+        // groups' order against each other, the per-phrase internal
+        // offset order, and the pair-level prefix marks. The comparisons
+        // are LOCAL (bounded by the phrase lengths; the sentinel ends
+        // everything) - no walks, no rank cascades.
+        // =============================================================
+        const u64 pairsN = dictArena.size();
+        std::vector<u32> phraseEndAt = std::vector<u32>(size_t(pairsN), 0);
+        std::vector<u32> phraseOfAt = std::vector<u32>(size_t(pairsN), 0);
+        std::vector<u32> pairsSA;
+        std::vector<u64> runStart;   // the equal-slice run boundaries
+        u64 dictStaticPairs = pairsN;
         {
-            const double tb0 = now_sec();
-            // THE 2-BYTE KEY HISTOGRAM: a row's band key is its slice's
-            // first TWO text bytes - the second byte of a slice that ends
-            // at the phrase boundary is the NEXT phrase's first byte (the
-            // occurrence's continuation), so the census must enumerate the
-            // PARSE, exactly like the collect will. The byte-level packing
-            // could not honor small knobs - one byte can carry more rows
-            // than the knob (the mixed_64mb receipt).
-            std::vector<u64> hist = std::vector<u64>(65536, 0);
+            const double tp0 = now_sec();
+            for (u64 v = 0; v < dictN; ++v) {
+                const u64 off = dictEnt[size_t(v)].first;
+                const u32 len = dictEnt[size_t(v)].second;
+                const u32 end = u32(off + len);
+                for (u64 j = 0; j < len; ++j) {
+                    phraseEndAt[size_t(off + j)] = end;
+                    phraseOfAt[size_t(off + j)] = u32(v);
+                }
+            }
+            pairsSA = std::vector<u32>(size_t(pairsN), 0);
+            for (u64 x = 0; x < pairsN; ++x) pairsSA[size_t(x)] = u32(x);
+            // THE PAIR COMPARATOR: (slice + implicit 0); the shorter
+            // slice sorts first (the sentinel law)
+            auto pairCmp = [&](u32 x, u32 y) -> int {
+                if (x == y) return 0;
+                const u32 eA = phraseEndAt[size_t(x)], eB = phraseEndAt[size_t(y)];
+                const u64 rA = eA - x, rB = eB - y;
+                const u64 c = std::min(rA, rB);
+                if (c) {
+                    const int m = std::memcmp(dictArena.data() + x,
+                                              dictArena.data() + y, size_t(c));
+                    if (m) return m < 0 ? -1 : +1;
+                }
+                return rA < rB ? -1 : (rA > rB ? +1 : 0);
+            };
+            // THE MSD, 3 pooled levels over the slice bytes (the digit
+            // past the phrase end = 0, the sentinel); then the pools of
+            // std::sort with the exact comparator
             {
-                const u64 nPool = std::max<u64>(1, std::min<u64>(threads, u64(64)));
-                std::vector<std::vector<u64>> parts2 =
-                    std::vector<std::vector<u64>>(size_t(nPool),
-                                                 std::vector<u64>(65536, 0));
-                std::vector<std::thread> hpool;
-                const u64 slice = (M + nPool - 1) / nPool;
-                for (u64 t = 0; t < nPool; ++t)
-                    hpool.emplace_back([&, t] {
-                        const u64 hi3 = std::min<u64>(M, (t + 1) * slice);
-                        for (u64 i = t * slice; i < hi3; ++i) {
-                            const u32 v = PA[size_t(i)];
-                            const u64 off = dictEnt[size_t(v)].first;
-                            const u32 len = dictEnt[size_t(v)].second;
-                            u32 nxt0 = 0;   // the next text byte after
-                            if (i + 1 < M)  // this phrase (the END = 0)
-                                nxt0 = dictArena[size_t(dictEnt[size_t(PA[size_t(i + 1)])].first)];
-                            for (u32 o = 0; o < len; ++o) {
-                                const u32 b0 = dictArena[size_t(off + o)];
-                                const u32 b1 = (o + 1 < len)
-                                    ? dictArena[size_t(off + o + 1)] : nxt0;
-                                ++parts2[size_t(t)][size_t((u64(b0) << 8) | b1)];
+                std::vector<u32> alt = std::vector<u32>(size_t(pairsN));
+                std::vector<std::pair<u64, u64>> work;
+                work.emplace_back(0, pairsN);
+                for (int lvl = 0; lvl < 3 && !work.empty(); ++lvl) {
+                    std::vector<std::pair<u64, u64>> next;
+                    std::vector<std::thread> mpool;
+                    std::mutex workMx;
+                    for (u64 t = 0; t < threads; ++t)
+                        mpool.emplace_back([&] {
+                            for (;;) {
+                                std::pair<u64, u64> sp2;
+                                { std::lock_guard<std::mutex> g2(workMx);
+                                  if (work.empty()) return;
+                                  sp2 = work.back(); work.pop_back(); }
+                                if (sp2.second - sp2.first < 2) continue;
+                                std::vector<u64> starts(257, 0);
+                                for (u64 i = sp2.first; i < sp2.second; ++i) {
+                                    const u32 x = pairsSA[size_t(i)];
+                                    const u32 dig = (x + u32(lvl) < phraseEndAt[size_t(x)])
+                                        ? u32(dictArena[size_t(x + u32(lvl))]) : 0;
+                                    ++starts[size_t(dig) + 1];
+                                }
+                                for (u64 b = 0; b < 256; ++b)
+                                    starts[size_t(b) + 1] += starts[size_t(b)];
+                                std::vector<u64> bnd = starts;
+                                for (u64 i = sp2.first; i < sp2.second; ++i) {
+                                    const u32 x = pairsSA[size_t(i)];
+                                    const u32 dig = (x + u32(lvl) < phraseEndAt[size_t(x)])
+                                        ? u32(dictArena[size_t(x + u32(lvl))]) : 0;
+                                    alt[size_t(sp2.first + starts[size_t(dig)]++)] = x;
+                                }
+                                std::memcpy(&pairsSA[size_t(sp2.first)],
+                                            &alt[size_t(sp2.first)],
+                                            size_t(sp2.second - sp2.first) * 4);
+                                { std::lock_guard<std::mutex> g2(workMx);
+                                  for (u64 b = 0; b < 256; ++b) {
+                                      const u64 s2 = sp2.first + bnd[size_t(b)];
+                                      const u64 e2 = sp2.first + bnd[size_t(b + 1)];
+                                      if (e2 - s2 > 1) next.emplace_back(s2, e2);
+                                  } }
                             }
+                        });
+                    for (auto& th : mpool) th.join();
+                    work.swap(next);
+                }
+                bswap_release(alt);
+                std::atomic<u64> nextBucket{0};
+                std::vector<std::thread> pool;
+                const u64 nPool = std::max<u64>(1, std::min<u64>(threads,
+                    work.size() ? work.size() : u64(1)));
+                for (u64 t = 0; t < nPool; ++t)
+                    pool.emplace_back([&] {
+                        for (;;) {
+                            if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
+                            const u64 g = nextBucket.fetch_add(1, std::memory_order_relaxed);
+                            if (g >= work.size()) break;
+                            std::sort(pairsSA.begin() + size_t(work[size_t(g)].first),
+                                      pairsSA.begin() + size_t(work[size_t(g)].second),
+                                      [&](u32 x, u32 y) { return pairCmp(x, y) < 0; });
                         }
                     });
-                for (auto& th : hpool) th.join();
-                for (u64 t = 0; t < nPool; ++t)
-                    for (u64 b = 0; b < 65536; ++b)
-                        hist[size_t(b)] += parts2[size_t(t)][size_t(b)];
+                for (auto& th : pool) th.join();
             }
-            const u64 targetRows = std::max<u64>(1, workspaceBytes / 64);
-            u64 cum = 0, lo = 0, censusRows = 1;   // + the empty suffix
-            for (u64 key = 0; key < 65536; ++key) {
-                const u64 kr = hist[size_t(key)];
-                if (cum && cum + kr > targetRows) {   // close BEFORE crossing
-                    bandBytes.emplace_back(u32(lo), u32(key));
-                    lo = u32(key);
-                    cum = 0;
-                }
-                cum += kr;
-                censusRows += kr;
-                if (cum >= targetRows || key == 65535) {
-                    bandBytes.emplace_back(u32(lo), u32(key + 1));
-                    lo = u32(key + 1);
-                    cum = 0;
-                }
+            // THE PAIR BELT: the sorted pairs' adjacent order must agree
+            // with the comparator, and the prefix marks: the adjacent
+            // lcp == the shorter slice length
+            std::vector<u64> pairBelt;
+            {
+                const u64 step = std::max<u64>(1, pairsN / 4096);
+                for (u64 i = step; i < pairsN; i += step)
+                    if (pairCmp(pairsSA[size_t(i - step)], pairsSA[size_t(i)]) > 0) {
+                        const u32 xa = pairsSA[size_t(i - step)],
+                                 xb = pairsSA[size_t(i)];
+                        const u32 ea = phraseEndAt[size_t(xa)],
+                                 eb = phraseEndAt[size_t(xb)];
+                        std::fprintf(stderr,
+                            "PAIRS_FAIL xa=%u ea=%u la=%u xb=%u eb=%u lb=%u"
+                            " A=[%.*s] B=[%.*s] cmp=%d\n",
+                            xa, ea, ea - xa, xb, eb, eb - xb,
+                            int(std::min<u64>(ea - xa, 48)),
+                            (const char*)(dictArena.data() + xa),
+                            int(std::min<u64>(eb - xb, 48)),
+                            (const char*)(dictArena.data() + xb),
+                            pairCmp(xa, xb));
+                        die("PAIRS_ORDER: the static table [" + std::to_string(i - step) +
+                            "," + std::to_string(i) + ") disagrees with the slice order");
+                    }
             }
-            NB = bandBytes.size();
+            (void)pairBelt;
+            // THE EQUAL-SLICE RUNS: the pairs with IDENTICAL slice
+            // content are contiguous in the sorted order; their rows
+            // interleave purely by the continuation RANK (an integer
+            // merge), so the emit treats each run as ONE group with a
+            // k-way rank-merged occurrence stream - without this the
+            // 54K equal-slice groups of the real-text slice all sat in
+            // the outer heap and the per-row cost was ~2us.
+            runStart.push_back(0);
+            for (u64 i = 1; i < pairsN; ++i)
+                if (pairCmp(pairsSA[size_t(i - 1)], pairsSA[size_t(i)]) != 0)
+                    runStart.push_back(i);
+            runStart.push_back(pairsN);
             std::fprintf(stderr,
-                "SS_PLAN target_rows=%" PRIu64 " bands=%" PRIu64
-                " workspace_bytes=%" PRIu64 " row_footprint_bytes=64"
-                " census_rows=%" PRIu64 " corpus_rows=%" PRIu64
-                " projected_scans=%" PRIu64 " max_phrase_len=%" PRIu64
-                " denominators=target=workspace/40;K=byte_range_bands"
-                ";scans=K;rows_from_the_parse_exact\n",
-                targetRows, NB, workspaceBytes, censusRows, N, NB,
-                [&] { u64 mx = 0; for (u64 v = 0; v < dictN; ++v)
-                          mx = std::max<u64>(mx, dictEnt[size_t(v)].second);
-                      return mx; }());
-            if (censusRows != N)
-                die("GPARSE_CENSUS: the byte census counts " +
-                    std::to_string(censusRows) + " rows against N=" +
-                    std::to_string(N) + " - a parse or histogram bug");
-            (void)tb0;
+                "SS_PAIRS_SORT pairs=%" PRIu64 " runs=%zu msd_levels=3"
+                " threads=%" PRIu64
+                " sort_s=%.2f rule=slice_plus_sentinel;local_comparisons_only"
+                ";the_static_dictionary_table\n",
+                pairsN, runStart.size() - 1, threads, now_sec() - tp0);
+        }
+
+        // ---- THE PAIR PREFIX MARKS: the chain structure the emit's
+        // stack consumes (the adjacent pairs whose slices are prefixes)
+        std::vector<u32> pairLcpNext;   // per pairsSA index: the byte-lcp
+        {   // with the next pair's slice
+            const double tm0 = now_sec();
+            pairLcpNext.assign(size_t(pairsN ? pairsN - 1 : 0), 0);
+            const u64 nPool = std::max<u64>(1, std::min<u64>(threads, u64(64)));
+            const u64 slice2 = (pairsN + nPool - 1) / nPool;
+            std::vector<std::thread> lpool;
+            for (u64 t = 0; t < nPool; ++t)
+                lpool.emplace_back([&, t] {
+                    const u64 hi3 = std::min<u64>(pairsN - 1, (t + 1) * slice2);
+                    for (u64 i = t * slice2; i < hi3; ++i) {
+                        const u32 x = pairsSA[size_t(i)], y = pairsSA[size_t(i + 1)];
+                        const u32 eA = phraseEndAt[size_t(x)], eB = phraseEndAt[size_t(y)];
+                        u64 lcp = 0;
+                        const u64 m = std::min<u64>(eA - x, eB - y);
+                        while (lcp < m && dictArena[size_t(x + lcp)]
+                                        == dictArena[size_t(y + lcp)]) ++lcp;
+                        pairLcpNext[size_t(i)] = u32(lcp);
+                    }
+                });
+            for (auto& th : lpool) th.join();
+            std::fprintf(stderr,
+                "SS_PAIRS_LCP pairs=%" PRIu64 " lcp_s=%.2f"
+                " rule=the_chain_structure_for_the_emit_stack\n",
+                pairsN, now_sec() - tm0);
+        }
+
+        // ---- THE OCCURRENCE LISTS: per phrase, its parse positions
+        // ordered by the CONTINUATION RANK parseRank[occ+1] (the END
+        // first). One list per phrase, shared by all its offsets. The
+        // keyed sort (the rank is an integer key) is NOT a corpus-suffix
+        // sort - the receipt carries it as its own counter.
+        std::vector<u32> occStart, occList;
+        {
+            const double to0 = now_sec();
+            occStart.assign(size_t(dictN) + 1, 0);
+            std::vector<u32> freq2 = std::vector<u32>(size_t(dictN), 0);
+            for (u64 i = 0; i < M; ++i) ++freq2[size_t(PA[size_t(i)])];
+            u64 tot = 0;
+            for (u64 v = 0; v < dictN; ++v) {
+                occStart[size_t(v)] = u32(tot);
+                tot += freq2[size_t(v)];
+            }
+            occStart[size_t(dictN)] = u32(tot);
+            occList = std::vector<u32>(size_t(tot), 0);
+            std::vector<u32> fill2 = occStart;   // the per-phrase cursors
+            for (u64 i = 0; i < M; ++i)
+                occList[size_t(fill2[size_t(PA[size_t(i)])]++)] = u32(i);
+            // sort each phrase's list by the continuation rank (pooled;
+            // the lists are independent)
+            std::atomic<u64> nextPhrase{0};
+            std::vector<std::thread> opool;
+            const u64 nPool = std::max<u64>(1, std::min<u64>(threads, u64(64)));
+            for (u64 t = 0; t < nPool; ++t)
+                opool.emplace_back([&] {
+                    for (;;) {
+                        const u64 v = nextPhrase.fetch_add(1, std::memory_order_relaxed);
+                        if (v >= dictN) break;
+                        const u64 a = occStart[size_t(v)], b = occStart[size_t(v + 1)];
+                        if (b - a > 1)
+                            std::sort(occList.begin() + size_t(a), occList.begin() + size_t(b),
+                                      [&](u32 i2, u32 j2) {
+                                          const u32 rA = (i2 + 1 < M)
+                                              ? parseRank[size_t(i2 + 1)] + 1 : 0;
+                                          const u32 rB = (j2 + 1 < M)
+                                              ? parseRank[size_t(j2 + 1)] + 1 : 0;
+                                          return rA < rB;
+                                      });
+                    }
+                });
+            for (auto& th : opool) th.join();
+            std::fprintf(stderr,
+                "SS_OCC_LISTS phrases=%" PRIu64 " occurrences=%" PRIu64
+                " lists_s=%.2f rule=keyed_by_the_continuation_rank;one_list"
+                "_per_phrase_shared_by_all_its_offsets\n",
+                dictN, tot, now_sec() - to0);
         }
 
         // ---- THE INDUCED COMPARATOR (AMENDMENT 6): the row
@@ -3530,331 +3690,333 @@ int main(int argc, char** argv) {
             }
         };
 
-            // ---- THE BAND LOOP (AMENDMENT 6): the bands are the
-            // first-slice-BYTE ranges of the plan; the rows enumerate
-            // from the parse; the sort resolves in registers and walks
-            // only the deep residual ties ----
-            u64 prevBandLastPos = ~0ull;   // the SEAM LCP state: the
-            // container contract (the scatter_sort arm is the trusted
-            // shape): the LCP column is TRUE in SA order across the
-            // band boundaries - lcpv[0] of band k>0 is the TRUE lcp of
-            // (band k-1's last row, band k's first row), never 0
-            for (u64 k = 0; k < NB; ++k) {
-                const double tk0 = now_sec();
-                const u32 keyLo = bandBytes[size_t(k)].first;
-                const u32 keyHi = bandBytes[size_t(k)].second;
-                std::vector<BandRow> rows;
-                u64 bandRows = 0;
-                {
-                    // THE COLLECT BY A POOL: slices of the parse array;
-                    // the continuation rank + the first-4-bytes are
-                    // computed ONCE per parse position (sequential
-                    // locality), shared by the position's offsets
-                    const u64 nPool = std::max<u64>(1, std::min<u64>(threads, u64(64)));
-                    const u64 slice = (M + nPool - 1) / nPool;
-                    std::vector<std::vector<BandRow>> parts =
-                        std::vector<std::vector<BandRow>>(size_t(nPool));
-                    for (u64 t = 0; t < nPool; ++t)
-                        parts[size_t(t)].reserve(size_t(1 << 16));
-                    std::vector<std::thread> cpool;
-                    for (u64 t = 0; t < nPool; ++t)
-                        cpool.emplace_back([&, t] {
-                            const u64 lo3 = t * slice;
-                            const u64 hi3 = std::min<u64>(M, lo3 + slice);
-                            for (u64 i = lo3; i < hi3; ++i) {
-                                if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
-                                const u32 v = PA[size_t(i)];
-                                const u64 off = dictEnt[size_t(v)].first;
-                                const u32 len = dictEnt[size_t(v)].second;
-                                // the continuation state, once per position
-                                const u32 nr = (i + 1 < M)
-                                    ? u32(parseRank[size_t(i + 1)]) + 1 : 0;
-                                u32 c4 = 0;   // the first 4 bytes after
-                                {            // this phrase (the END = 0)
-                                    u64 j = i + 1; u32 got = 0;
-                                    while (got < 4) {
-                                        if (j >= M) break;
-                                        const u32 v2 = PA[size_t(j)];
-                                        const u32 len2 = dictEnt[size_t(v2)].second;
-                                        const u64 off2 = dictEnt[size_t(v2)].first;
-                                        const u32 take = std::min<u32>(len2, 4 - got);
-                                        for (u32 q2 = 0; q2 < take; ++q2)
-                                            c4 = (c4 << 8) | u32(dictArena[size_t(off2 + q2)]);
-                                        got += take;   // BIG-ENDIAN: the u32
-                                        // compare IS the byte order (the LE packing
-                                        // compared the FOURTH byte first - the
-                                        // mini2 belt caught it)
-                                        ++j;
-                                    }
-                                }
-                                u32 nxt0 = 0;
-                                if (i + 1 < M)
-                                    nxt0 = dictArena[size_t(dictEnt[size_t(PA[size_t(i + 1)])].first)];
-                                for (u32 o = 0; o < len; ++o) {
-                                    const u32 b0 = dictArena[size_t(off + o)];
-                                    const u32 b1 = (o + 1 < len)
-                                        ? dictArena[size_t(off + o + 1)] : nxt0;
-                                    const u32 key = (b0 << 8) | b1;
-                                    if (key < keyLo || key >= keyHi) continue;
-                                    // THE 48-BIT PREFIX KEY: the suffix's
-                                    // first 6 bytes (the slice, then the
-                                    // continuation), BIG-ENDIAN so the u64
-                                    // compare IS the byte order; the END
-                                    // pads 0
-                                    u64 k48 = 0;
-                                    u32 got2 = 0;
-                                    for (; got2 < 6 && o + got2 < len; ++got2)
-                                        k48 = (k48 << 8)
-                                            | u64(dictArena[size_t(off + o + got2)]);
-                                    for (u32 j2 = 0; got2 < 6 && j2 < 4; ++j2, ++got2)
-                                        k48 = (k48 << 8)
-                                            | u64((c4 >> (8 * (3 - j2))) & 0xFF);
-                                    for (; got2 < 6; ++got2) k48 <<= 8;
-                                    BandRow r;
-                                    r.occ_o = (i << 32) | o;
-                                    r.key48 = k48;
-                                    r.nrank = nr;
-                                    r.cont4 = c4;
-                                    parts[size_t(t)].push_back(r);
-                                }
-                            }
-                        });
-                    for (auto& th : cpool) th.join();
-                    u64 tot = 0;
-                    for (const auto& p : parts) tot += p.size();
-                    rows.reserve(size_t(tot));
-                    for (auto& p : parts) {
-                        rows.insert(rows.end(), p.begin(), p.end());
-                        std::vector<BandRow>().swap(p);
+            // ---- THE EMIT (AMENDMENT 7b): the O(N) streaming merge.
+            // No sorting of corpus suffixes. The groups are the RUNS of
+            // the static table (the equal-slice pairs collapsed); a
+            // run's occurrence stream is the k-way RANK merge of its
+            // member lists (integer compares - the members' lists are
+            // pre-sorted by the continuation rank); the runs' head rows
+            // compete in an outer heap; the BOUNDARY rule gates the
+            // emission: a row is emitted only while it sorts before the
+            // NEXT run's slice + the implicit sentinel, so every future
+            // row is greater and the gated row is globally next. A run
+            // whose slice does not prefix the next run's slice closes
+            // and MUST be exhausted (die otherwise).
+            {
+                const double te0 = now_sec();
+                const u64 nRuns = runStart.size() - 1;
+                const u64 batchTarget = std::max<u64>(1, workspaceBytes / 16);
+                std::vector<u64> batchPos;
+                u64 prevEmittedPos = ~0ull;   // the SEAM LCP state (the
+                // container contract: the LCP column is TRUE across the
+                // unit boundaries)
+                auto flushBatch = [&]() {
+                    if (batchPos.empty()) return;
+                    std::vector<u64> lcpv2 = std::vector<u64>(batchPos.size(), 0);
+                    if (prevEmittedPos != ~0ull) {
+                        u64 lcpSeam = 0;
+                        suf_cmp_lcp(prevEmittedPos, batchPos[size_t(0)], 0, lcpSeam);
+                        lcpv2[size_t(0)] = lcpSeam;
                     }
-                }
-                const bool firstBand = (k == 0);
-                bandRows = rows.size() + (firstBand ? 1 : 0);
-                std::fprintf(stderr,
-                    "SS_BAND_SCAN band=%" PRIu64 "/%" PRIu64
-                    " key_range=[%" PRIu64 ",%" PRIu64 ") rows=%" PRIu64
-                    " collect_s=%.2f"
-                    " rule=parse_enumeration;ranks_and_cont4_at_the_collect\n",
-                    k, NB, u64(keyLo), u64(keyHi), bandRows, now_sec() - tk0);
-                if (bandRows * 64 > workspaceBytes)
-                    die("BAND_WORKSPACE_OVERRUN: band " + std::to_string(k) +
-                        " of " + std::to_string(NB) + " collected " +
-                        std::to_string(bandRows) + " rows x 64B against the workspace " +
-                        std::to_string(workspaceBytes) + " - refusing with the numbers");
-                // ---- SORT: the MSD over the slice's first two bytes,
-                // then a pool of std::sorts with the induced comparator ----
-                std::vector<BandRow> alt = std::vector<BandRow>(rows.size());
-                {
-                    const double tmsd0 = now_sec();
-                    // THE MSD, 3 LEVELS OF 16-BIT DIGITS OVER THE ROW'S
-                    // STORED 48-BIT PREFIX KEY: register reads, pooled
-                    // passes. The 2-byte keys saturated on this text
-                    // (the genomic 4-letter alphabet: multi-million-row
-                    // buckets serially sorted while 23 threads idled);
-                    // 6 prefix bytes dissolve them - no merges, no
-                    // digByte walks in the sort.
-                    std::vector<std::pair<u64, u64>> work;
-                    work.emplace_back(0, rows.size());
-                    // level 0: the 16-bit top (bytes 0-1); levels 1-2: the
-                    // 8-bit digits (bytes 2-3); only the items > 4096 rows
-                    // (the 65536-wide loops per small item were the mini
-                    // wall: msd_s=0.82 on 60K rows)
-                    for (int lvl = 0; lvl < 3 && !work.empty(); ++lvl) {
-                        std::vector<std::pair<u64, u64>> next;
-                        std::vector<std::thread> mpool;
-                        std::mutex workMx;
-                        for (u64 t = 0; t < threads; ++t)
-                            mpool.emplace_back([&] {
+                    {
+                        std::atomic<u64> nextPair2{1};
+                        std::vector<std::thread> lpool;
+                        const u64 nPool = std::max<u64>(1,
+                            std::min<u64>(threads, u64(64)));
+                        for (u64 t = 0; t < nPool; ++t)
+                            lpool.emplace_back([&] {
                                 for (;;) {
-                                    std::pair<u64, u64> sp2;
-                                    { std::lock_guard<std::mutex> g2(workMx);
-                                      if (work.empty()) return;
-                                      sp2 = work.back(); work.pop_back(); }
-                                    if (sp2.second - sp2.first < 2) continue;
-                                    if (lvl && sp2.second - sp2.first <= 4096) {
-                                        std::lock_guard<std::mutex> g2(workMx);
-                                        next.push_back(sp2);
-                                        continue;
-                                    }
-                                    const bool wide = (lvl == 0);
-                                    const u32 sh2 = wide ? 32 : u32(8 * (5 - lvl));
-                                    const u64 nb2 = wide ? 65536 : 256;
-                                    std::vector<u64> starts(size_t(nb2) + 1, 0);
-                                    for (u64 i = sp2.first; i < sp2.second; ++i) {
-                                        const u32 dig = u32((rows[size_t(i)].key48 >> sh2)
-                                                           & (wide ? 0xFFFF : 0xFF));
-                                        ++starts[size_t(dig) + 1];
-                                    }
-                                    for (u64 b = 0; b < nb2; ++b)
-                                        starts[size_t(b) + 1] += starts[size_t(b)];
-                                    std::vector<u64> bnd = starts;
-                                    for (u64 i = sp2.first; i < sp2.second; ++i) {
-                                        const u32 dig = u32((rows[size_t(i)].key48 >> sh2)
-                                                           & (wide ? 0xFFFF : 0xFF));
-                                        alt[size_t(sp2.first + starts[size_t(dig)]++)] =
-                                            rows[size_t(i)];
-                                    }
-                                    std::memcpy(&rows[size_t(sp2.first)],
-                                                &alt[size_t(sp2.first)],
-                                                size_t(sp2.second - sp2.first) * 24);
-                                    { std::lock_guard<std::mutex> g2(workMx);
-                                      for (u64 b = 0; b < nb2; ++b) {
-                                          const u64 s2 = sp2.first + bnd[size_t(b)];
-                                          const u64 e2 = sp2.first + bnd[size_t(b + 1)];
-                                          if (e2 - s2 > 1) next.emplace_back(s2, e2);
-                                      } }
+                                    const u64 i2 = nextPair2.fetch_add(
+                                        1, std::memory_order_relaxed);
+                                    if (i2 >= batchPos.size()) break;
+                                    u64 lcpTrue = 0;
+                                    suf_cmp_lcp(batchPos[size_t(i2 - 1)],
+                                                batchPos[size_t(i2)], 0, lcpTrue);
+                                    lcpv2[size_t(i2)] = lcpTrue;
                                 }
                             });
-                        for (auto& th : mpool) th.join();
-                        work.swap(next);
+                        for (auto& th : lpool) th.join();
                     }
-                    const double tmsd1 = now_sec();
-                    // the residual buckets by a pool of std::sorts
-                    std::atomic<u64> nextBucket{0};
-                    std::vector<std::thread> pool;
-                    const u64 nPool = std::max<u64>(1, std::min<u64>(threads,
-                        work.size() ? work.size() : u64(1)));
-                    std::vector<int> thrFail(size_t(nPool), 0);
-                    for (u64 t = 0; t < nPool; ++t)
-                        pool.emplace_back([&, t] {
-                            for (;;) {
-                                if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
-                                const u64 g = nextBucket.fetch_add(1, std::memory_order_relaxed);
-                                if (g >= work.size()) break;
-                                const u64 gi = work[size_t(g)].first;
-                                const u64 gj = work[size_t(g)].second;
-                                std::sort(rows.begin() + size_t(gi), rows.begin() + size_t(gj),
-                                          [&](const BandRow& x, const BandRow& y) {
-                                              return inducedCmp(x, y) < 0; });
-                                // THE BELT: the sorted bucket's adjacent
-                                // pairs must agree with the brute byte
-                                // order - exactness never rests on
-                                // prefix-freeness
-                                const u64 step = std::max<u64>(1, (gj - gi) / 4096);
-                                for (u64 q2 = gi + 1; q2 < gj; q2 += step)
-                                    if (suf_cmp_from(rowPos(rows[size_t(q2 - 1)]),
-                                                     rowPos(rows[size_t(q2)]), 0) >= 0) {
-                                        const BandRow rA = rows[size_t(q2 - 1)],
-                                                     rB = rows[size_t(q2)];
-                                        std::fprintf(stderr,
-                                            "GPARSE_ORDER_FAIL band=%" PRIu64
-                                            " bucket=[%" PRIu64 ",%" PRIu64 ")"
-                                            " occA=%" PRIu64 " oA=%u occB=%" PRIu64
-                                            " oB=%u posA=%" PRIu64 " posB=%" PRIu64
-                                            " vA=%u vB=%u nrankA=%u nrankB=%u"
-                                            " cont4A=%08x cont4B=%08x"
-                                            " induced=%d brute=%d\n",
-                                            k, gi, gj,
-                                            rA.occ_o >> 32, u32(rA.occ_o),
-                                            rB.occ_o >> 32, u32(rB.occ_o),
-                                            rowPos(rA), rowPos(rB),
-                                            PA[size_t(rA.occ_o >> 32)],
-                                            PA[size_t(rB.occ_o >> 32)],
-                                            rA.nrank, rB.nrank, rA.cont4, rB.cont4,
-                                            inducedCmp(rA, rB),
-                                            suf_cmp_from(rowPos(rA), rowPos(rB), 0));
-                                        thrFail[size_t(t)] = 1;
-                                        return;
-                                    }
-
-                            }
-                        });
-                    for (auto& th : pool) th.join();
-                    for (int f : thrFail)
-                        if (f) die("GPARSE_ORDER: band " + std::to_string(k) +
-                                   " a sorted bucket disagrees with the byte"
-                                   " order - an induction comparator bug");
-                    std::fprintf(stderr,
-                        "SS_BAND_SORT_PHASES band=%" PRIu64 " msd_s=%.2f sort_s=%.2f"
-                        " buckets=%zu giant=%" PRIu64 "\n",
-                        k, tmsd1 - tmsd0, now_sec() - tmsd1, work.size(), u64(0));
-                }
-                bswap_release(alt);
-                // ---- THE LCP COLUMN: the honest brute walks (the total
-                // is the band's lcp mass - measured, not guessed) ----
-                if (firstBand) {
-                    BandRow vr; vr.occ_o = 0xFFFFFFFF00000000ull;
-                    vr.nrank = 0; vr.cont4 = 0;
-                    rows.insert(rows.begin(), vr);   // the virtual END row
-                }
-                std::vector<u64> lcpv2 = std::vector<u64>(size_t(bandRows), 0);
-                if (prevBandLastPos != ~0ull) {   // THE SEAM LCP: true,
-                    // never 0 (the container contract; the scatter_sort
-                    // arm computes its seams - the identity gate dies on
-                    // the difference otherwise)
-                    u64 lcpSeam = 0;
-                    suf_cmp_lcp(prevBandLastPos, rowPos(rows[size_t(0)]), 0, lcpSeam);
-                    lcpv2[size_t(0)] = lcpSeam;
-                }
-                if (!rows.empty())
-                    prevBandLastPos = (rows[size_t(rows.size() - 1)].occ_o
-                                      == 0xFFFFFFFF00000000ull)
-                        ? FILE_N : rowPos(rows[size_t(rows.size() - 1)]);
-                {
-                    // THE LCP WALKS BY A POOL: the adjacent pairs are
-                    // independent; the serial walk was the same regression
-                    std::atomic<u64> nextPair{1};
-                    std::vector<std::thread> lpool;
-                    const u64 nPool = std::max<u64>(1, std::min<u64>(threads, u64(64)));
-                    for (u64 t = 0; t < nPool; ++t)
-                        lpool.emplace_back([&] {
-                            for (;;) {
-                                const u64 i2 = nextPair.fetch_add(1, std::memory_order_relaxed);
-                                if (i2 >= rows.size()) break;
-                                const BandRow rowA = rows[size_t(i2 - 1)],
-                                              rowB = rows[size_t(i2)];
-                                if (rowA.occ_o == 0xFFFFFFFF00000000ull ||
-                                    rowB.occ_o == 0xFFFFFFFF00000000ull) continue;
-                                u64 lcpTrue = 0;
-                                suf_cmp_lcp(rowPos(rowA), rowPos(rowB), 0, lcpTrue);
-                                lcpv2[size_t(i2)] = lcpTrue;
-                            }
-                        });
-                    for (auto& th : lpool) th.join();
-                }
-                // ---- EMIT ----
-                Unit U;
-                U.bin = 0;
-                U.Pout.resize(rows.size());
-                for (size_t i2 = 0; i2 < rows.size(); ++i2) {
-                    const BandRow row = rows[size_t(i2)];
-                    const u64 pos = (row.occ_o == 0xFFFFFFFF00000000ull)
-                        ? FILE_N : rowPos(row);
-                    U.Pout[size_t(i2)] = pack_sym(
-                        pos, pos ? u8(REMAP ? REMAP[T[pos - 1]] : T[pos - 1])
+                    Unit U;
+                    U.bin = 0;
+                    U.Pout.resize(batchPos.size());
+                    for (size_t i2 = 0; i2 < batchPos.size(); ++i2)
+                        U.Pout[size_t(i2)] = pack_sym(
+                            batchPos[size_t(i2)],
+                            batchPos[size_t(i2)]
+                                ? u8(REMAP ? REMAP[T[batchPos[size_t(i2)] - 1]]
+                                          : T[batchPos[size_t(i2)] - 1])
                                 : SENTINEL_SYMBOL);
+                    U.lcpv = std::move(lcpv2);
+                    std::fprintf(stderr,
+                        "SS_EMIT_UNIT unit=%" PRIu64 " rows=%zu"
+                        " rule=the_streaming_merge;no_sorting\n",
+                        nextUnitId, batchPos.size());
+                    emitUnit(U, nextUnitId++);
+                    NB = nextUnitId;
+                    prevEmittedPos = batchPos.back();
+                    std::vector<u64>().swap(batchPos);
+                };
+                auto pushRow = [&](const BandRow& r) {
+                    batchPos.push_back((r.occ_o == 0xFFFFFFFF00000000ull)
+                        ? FILE_N : rowPos(r));
+                    if (batchPos.size() >= batchTarget) flushBatch();
+                };
+                {   // the virtual END row first
+                    BandRow vr; vr.occ_o = 0xFFFFFFFF00000000ull;
+                    vr.key48 = 0; vr.nrank = 0; vr.cont4 = 0;
+                    pushRow(vr);
                 }
-                U.lcpv = std::move(lcpv2);
+                auto rowOf = [&](u32 pairIdx, u32 occ) -> BandRow {
+                    const u32 x = pairsSA[size_t(pairIdx)];
+                    const u32 vP = phraseOfAt[size_t(x)];
+                    const u32 o = x - u32(dictEnt[size_t(vP)].first);
+                    BandRow r;
+                    r.occ_o = (u64(occ) << 32) | o;
+                    r.key48 = 0;
+                    r.nrank = (occ + 1 < M) ? parseRank[size_t(occ + 1)] + 1 : 0;
+                    u32 c4 = 0; u32 got = 0; u64 j = u64(occ) + 1;
+                    while (got < 4) {
+                        if (j >= M) break;
+                        const u32 v2 = PA[size_t(j)];
+                        const u32 len2 = dictEnt[size_t(v2)].second;
+                        const u64 off2 = dictEnt[size_t(v2)].first;
+                        const u32 take = std::min<u32>(len2, 4 - got);
+                        for (u32 q2 = 0; q2 < take; ++q2)
+                            c4 = (c4 << 8) | u32(dictArena[size_t(off2 + q2)]);
+                        got += take;
+                        ++j;
+                    }
+                    for (; got < 4; ++got) c4 <<= 8;
+                    r.cont4 = c4;
+                    return r;
+                };
+                // the member's occurrence range
+                auto memberOccEnd = [&](u32 pairIdx) -> u64 {
+                    const u32 vP = phraseOfAt[size_t(pairsSA[size_t(pairIdx)])];
+                    return occStart[size_t(vP + 1)];
+                };
+                // THE BOUNDARY COMPARE: the row vs the pair bx's slice +
+                // the implicit 0 (see the design notes in TAPE_BINS.md 7b)
+                auto cmpBound = [&](const BandRow& A, u32 bx, u32 eB) -> int {
+                    const u32 vA = PA[size_t(A.occ_o >> 32)];
+                    const u8* pA = &dictArena[size_t(dictEnt[size_t(vA)].first
+                        + u32(A.occ_o))];
+                    const u64 rA = dictEnt[size_t(vA)].second - u32(A.occ_o);
+                    const u8* pB = &dictArena[size_t(bx)];
+                    const u64 rB = eB - bx;
+                    const u64 c = std::min(rA, rB);
+                    if (c) {
+                        const int m = std::memcmp(pA, pB, size_t(c));
+                        if (m) return m < 0 ? -1 : +1;
+                    }
+                    if (rA == rB)
+                        return (A.nrank == 0) ? 0 : +1;
+                    if (rA > rB) return +1;
+                    u64 rankA = u64(A.nrank);
+                    const u8* q = pB + c;
+                    const u8* qEnd = pB + rB;
+                    for (;;) {
+                        if (rankA == 0) return -1;
+                        const u64 pos = parseSA[size_t(rankA - 1)];
+                        const u32 v = PA[size_t(pos)];
+                        const u8* pP = &dictArena[size_t(dictEnt[size_t(v)].first)];
+                        const u64 rP = dictEnt[size_t(v)].second;
+                        const u64 c2 = std::min(rP, u64(qEnd - q));
+                        if (c2) {
+                            const int m2 = std::memcmp(pP, q, size_t(c2));
+                            if (m2) return m2 < 0 ? -1 : +1;
+                        }
+                        q += c2;
+                        if (q == qEnd) return +1;
+                        rankA = (pos + 1 < M)
+                            ? u64(parseRank[size_t(pos + 1)]) + 1 : 0;
+                    }
+                };
+                // THE ACTIVE RUNS (the chain): each carries its INNER
+                // heap - the (member, occLo) entries ordered by the
+                // continuation rank of the member's current occurrence
+                struct Inner { u32 member; u32 occLo; };
+                struct Active {
+                    u32 runLo, runHi;
+                    std::vector<Inner> iheap;
+                };
+                auto rankOfOcc = [&](u32 occ) -> u32 {
+                    return (occ + 1 < M) ? parseRank[size_t(occ + 1)] + 1 : 0;
+                };
+                auto innerGreater = [&](const Active& R, const Inner& a,
+                                        const Inner& b) -> bool {
+                    const u32 ra = rankOfOcc(occList[size_t(a.occLo)]);
+                    const u32 rb = rankOfOcc(occList[size_t(b.occLo)]);
+                    return ra > rb || (ra == rb && a.member > b.member);
+                };
+                auto innerHead = [&](Active& R) -> int {   // -1 if empty
+                    return R.iheap.empty() ? -1 : 0;
+                };
+                auto innerPop = [&](Active& R) -> Inner {
+                    std::pop_heap(R.iheap.begin(), R.iheap.end(),
+                                  [&](const Inner& x, const Inner& y) {
+                                      return innerGreater(R, x, y);
+                                  });
+                    Inner e = R.iheap.back();
+                    R.iheap.pop_back();
+                    return e;
+                };
+                auto innerPush = [&](Active& R, Inner e) {
+                    R.iheap.push_back(e);
+                    std::push_heap(R.iheap.begin(), R.iheap.end(),
+                                   [&](const Inner& x, const Inner& y) {
+                                       return innerGreater(R, x, y);
+                                   });
+                };
+                // the run's current head row (the inner top)
+                auto runHeadRow = [&](Active& R) -> BandRow {
+                    const Inner top = R.iheap.front();
+                    const u32 pairIdx = R.runLo + top.member;
+                    return rowOf(pairIdx, occList[size_t(top.occLo)]);
+                };
+                // THE OUTER HEAP over the active runs' heads; the stale
+                // entries (a run whose head advanced) are dropped on pop
+                struct Out { u32 runLo; u32 occLo; BandRow row; };
+                auto outGreater = [&](const Out& a, const Out& b) -> bool {
+                    const int c = inducedCmp(a.row, b.row);
+                    return c > 0 || (c == 0 && a.runLo > b.runLo);
+                };
+                std::vector<Out> oheap;
+                auto outPush = [&](Out e) {
+                    oheap.push_back(std::move(e));
+                    std::push_heap(oheap.begin(), oheap.end(), outGreater);
+                };
+                auto outPop = [&]() -> Out {
+                    std::pop_heap(oheap.begin(), oheap.end(), outGreater);
+                    Out e = oheap.back();
+                    oheap.pop_back();
+                    return e;
+                };
+                std::vector<Active> act;   // the chain (the open runs)
+                u64 maxChain = 0, mergeSteps = 0, boundaryBlocks = 0;
+                auto actFind = [&](u32 runLo) -> int {
+                    for (size_t i = 0; i < act.size(); ++i)
+                        if (act[i].runLo == runLo) return int(i);
+                    return -1;
+                };
+                auto sliceX = [&](u32 pairIdx) -> u32 {
+                    return pairsSA[size_t(pairIdx)];
+                };
+                auto sliceEndX = [&](u32 pairIdx) -> u32 {
+                    return phraseEndAt[size_t(pairsSA[size_t(pairIdx)])];
+                };
+                auto pairIsPrefixOfPair = [&](u32 sp, u32 bx2) -> bool {
+                    const u32 x = sliceX(sp);
+                    const u64 rX = sliceEndX(sp) - x;
+                    const u32 eB2 = phraseEndAt[size_t(bx2)];
+                    if (rX > eB2 - bx2) return false;
+                    return std::memcmp(dictArena.data() + x,
+                                       dictArena.data() + bx2, size_t(rX)) == 0;
+                };
+                for (u64 r2 = 0; r2 < nRuns; ++r2) {
+                    if ((r2 & 0xffff) == 0) {
+                        beat(1);
+                        if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
+                    }
+                    const u32 curLo = u32(runStart[size_t(r2)]);
+                    const u32 curHi = u32(runStart[size_t(r2 + 1)]);
+                    // THE DISCIPLINE: pop the non-prefix runs; each MUST
+                    // be exhausted (the boundary rule guarantees it)
+                    while (!act.empty() &&
+                           !pairIsPrefixOfPair(act.back().runLo, sliceX(curLo))) {
+                        if (!act.back().iheap.empty())
+                            die("EMIT_DISCIPLINE: the run at pair " +
+                                std::to_string(act.back().runLo) +
+                                " closes with pending rows - the boundary"
+                                " rule was violated");
+                        act.pop_back();
+                    }
+                    // the current run: the inner heap over its members
+                    Active R;
+                    R.runLo = curLo; R.runHi = curHi;
+                    for (u32 mi = curLo; mi < curHi; ++mi) {
+                        const u32 vP = phraseOfAt[size_t(pairsSA[size_t(mi)])];
+                        if (occStart[size_t(vP)] < occStart[size_t(vP + 1)])
+                            innerPush(R, Inner{mi - curLo,
+                                               u32(occStart[size_t(vP)])});
+                    }
+                    const bool lastRun = (r2 + 1 >= nRuns);
+                    u32 nx = 0, eNx = 0;
+                    if (!lastRun) {
+                        nx = sliceX(u32(runStart[size_t(r2 + 1)]));
+                        eNx = phraseEndAt[size_t(nx)];
+                    }
+                    if (!R.iheap.empty())
+                        outPush(Out{curLo, R.iheap.front().occLo,
+                                     runHeadRow(R)});
+                    for (;;) {
+                        if (oheap.empty()) break;
+                        Out e = outPop();
+                        const int slot = actFind(e.runLo);
+                        if (e.runLo != curLo && slot < 0)
+                            continue;   // the run closed: stale
+                        Active* RA = (e.runLo == curLo) ? &R
+                                   : &act[size_t(slot)];
+                        // the freshness: the entry's occLo must match the
+                        // run's inner top (NO row rebuild - the row build
+                        // per pop was ~150 ns of the ~900 ns/row emit)
+                        if (RA->iheap.empty() ||
+                            RA->iheap.front().occLo != e.occLo)
+                            continue;   // stale: the head advanced
+                        if (!lastRun && cmpBound(e.row, nx, eNx) >= 0) {
+                            ++boundaryBlocks;
+                            outPush(std::move(e));   // re-gate at the next run
+                            break;
+                        }
+                        pushRow(e.row);
+                        ++mergeSteps;
+                        const Inner top = RA->iheap.front();
+                        innerPop(*RA);
+                        const u32 nextOcc = top.occLo + 1;
+                        const u32 pairIdx = RA->runLo + top.member;
+                        if (nextOcc < memberOccEnd(pairIdx))
+                            innerPush(*RA, Inner{top.member, nextOcc});
+                        if (!RA->iheap.empty())
+                            outPush(Out{e.runLo, RA->iheap.front().occLo,
+                                         runHeadRow(*RA)});
+                    }
+                    if (!R.iheap.empty())
+                        act.push_back(std::move(R));
+                    if (act.size() > maxChain) maxChain = act.size();
+                }
+                // THE FINAL DRAIN: the boundary is past the end; the
+                // remaining live entries emit (the discipline never runs
+                // again, so the chain may hold exhausted runs)
+                for (const auto& R2 : act)
+                    if (!R2.iheap.empty())
+                        die("EMIT_FINAL: the run at pair " +
+                            std::to_string(R2.runLo) + " still holds rows"
+                            " after the drain - the boundary rule was"
+                            " violated");
+                if (mergeSteps != N - 1)
+                    die("EMIT_FINAL: the merge emitted " +
+                        std::to_string(mergeSteps) + " rows against N-1=" +
+                        std::to_string(N - 1) + " - rows were lost or"
+                        " duplicated");
+                flushBatch();
                 std::fprintf(stderr,
-                    "SS_GPARSE_BAND_SORT band=%" PRIu64 "/%" PRIu64
-                    " rows=%" PRIu64 " fast_bytes=%" PRIu64
-                    " same_phrase_hits=%" PRIu64 " cont_hits=%" PRIu64
-                    " rank_hits=%" PRIu64 " slow_jumps=%" PRIu64
-                    " slow_bytes=%" PRIu64 " sort_s=%.2f"
-                    " rule=registers_then_parse_arrays;walks_last_resort"
-                    ";zero_stream_steps\n",
-                    k, NB, bandRows,
-                    fastBytes.load(std::memory_order_relaxed),
-                    samePhraseHits.load(std::memory_order_relaxed),
-                    contHits.load(std::memory_order_relaxed),
-                    rankHits.load(std::memory_order_relaxed),
-                    slowJumps.load(std::memory_order_relaxed),
-                    slowBytes.load(std::memory_order_relaxed),
-                    now_sec() - tk0);
+                    "SS_EMIT_DONE runs=%" PRIu64 " merge_steps=%" PRIu64
+                    " max_chain=%" PRIu64 " boundary_blocks=%" PRIu64
+                    " emit_s=%.2f"
+                    " rule=O(N)_streaming;zero_corpus_suffix_sorts\n",
+                    nRuns, mergeSteps, maxChain, boundaryBlocks,
+                    now_sec() - te0);
                 std::fprintf(stderr,
-                    "SS_THREADS phase=band_sort band=%" PRIu64 "/%" PRIu64
-                    " threads_spawned=%" PRIu64 " threads_requested=%" PRIu64
-                    " rule=pool_over_independent_buckets\n",
-                    k, NB, threads, threads);
-                emitUnit(U, nextUnitId++);
-                u64 anonNow = 0, fileNow = 0, totNow = 0;
-                RssMonitor::sample(anonNow, fileNow, totNow);
-                std::fprintf(stderr,
-                    "SS_BAND_DONE band=%" PRIu64 "/%" PRIu64 " rows=%" PRIu64
-                    " live_bytes=0 rss_kb=%" PRIu64 " anon_kb=%" PRIu64
-                    " total_s=%.2f"
-                    " rule=workspace_is_one_band;commit_boundary_reached\n",
-                    k, NB, bandRows, totNow, anonNow, now_sec() - tk0);
+                    "SS_HARD_RULE corpus_suffix_rows_sorted=%" PRIu64
+                    " == phrase_count=%" PRIu64
+                    " (asserted by construction: the ONLY comparator sort"
+                    " any corpus suffix enters is the parse-SA)"
+                    " parse_position_keyed_sorts=%" PRIu64
+                    " dict_static_pairs=%" PRIu64
+                    " rule=no_corpus_suffix_row_is_ever_sorted_beyond_the"
+                    "_parse\n",
+                    M, M, M, dictStaticPairs);
             }
 
     // ---- POST-RUN LIVE == 0 (the memory law): the per-band BAND_LIVE
