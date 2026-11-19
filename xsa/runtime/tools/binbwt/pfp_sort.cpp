@@ -107,7 +107,15 @@ static inline u64 unpack_pos(u64 v) { return v & ((1ull << 48) - 1); }
 // dollar-order suffix comparison the tails, the seams and the LCE residual
 // need; the leaf sort itself never calls it for a row the window resolved).
 // ---------------------------------------------------------------------------
+static std::atomic<u64> g_text_walk{0};
+static inline int suf_cmp_lcp_inner(u64 a, u64 b, u64 from, u64& lcp);
+static inline int suf_cmp_from_counted(u64 a, u64 b, u64 from, u64& walked);
 static inline int suf_cmp_lcp(u64 a, u64 b, u64 from, u64& lcp) {
+    const int rc = suf_cmp_lcp_inner(a, b, from, lcp);
+    g_text_walk.fetch_add(lcp - from + 1, std::memory_order_relaxed);
+    return rc;
+}
+static inline int suf_cmp_lcp_inner(u64 a, u64 b, u64 from, u64& lcp) {
     const u64 cap = std::min(FILE_N - a, FILE_N - b);
     lcp = from;
     u64 i = from;
@@ -141,6 +149,12 @@ static inline int suf_cmp_lcp(u64 a, u64 b, u64 from, u64& lcp) {
     return (FILE_N - a) < (FILE_N - b) ? -1 : 1;
 }
 
+static inline int suf_cmp_from(u64 a, u64 b, u64 from) {
+    u64 walked = 0;
+    const int rc = suf_cmp_from_counted(a, b, from, walked);
+    g_text_walk.fetch_add(walked, std::memory_order_relaxed);
+    return rc;
+}
 static u64 g_wave_fallback_walk_max = 4ull << 30;
 static bool g_wave_fallback_walk_set = false;
 static inline int suf_cmp_from_counted(u64 a, u64 b, u64 from, u64& walked) {
@@ -160,7 +174,9 @@ static inline int suf_cmp_from_counted(u64 a, u64 b, u64 from, u64& walked) {
             std::memcpy(ys, &y, 8);
             for (int j = 0; j < 8; ++j) {
                 walked += 1;
-                if (xs[j] != ys[j]) return xs[j] < ys[j] ? -1 : 1;
+                const u8 xj = REMAP ? REMAP[xs[j]] : xs[j];
+                const u8 yj = REMAP ? REMAP[ys[j]] : ys[j];
+                if (xj != yj) return xj < yj ? -1 : 1;
             }
         }
         walked += 8;
@@ -176,7 +192,7 @@ static inline int suf_cmp_from_counted(u64 a, u64 b, u64 from, u64& walked) {
     return (FILE_N - a) < (FILE_N - b) ? -1 : 1;
 }
 
-static inline int suf_cmp_from(u64 a, u64 b, u64 from) {
+static inline int suf_cmp_from_inner(u64 a, u64 b, u64 from) {
     const u64 cap = std::min(FILE_N - a, FILE_N - b);
     if (from >= cap) {
         if (a == b) return 0;
@@ -2572,7 +2588,7 @@ int main(int argc, char** argv) {
                                  // a gap would hang it on a .done that never
                                  // comes, so ids are assigned AT EMIT.
     u64 unitCounter = 0;        // the band-relative journal id only
-    u64 totalScanBytes = 0, totalScanS = 0.0, totalSortS = 0.0;
+    u64 totalScanBytes = 0; double totalScanS = 0.0, totalSortS = 0.0;
     u64 rowsEmittedTotal = 0;
     const std::string stopFlag = bandsDir + "/../stop.requested";
     const u64 K = g_wave_key_bytes;
@@ -2867,254 +2883,389 @@ int main(int argc, char** argv) {
             bswap_release(order);
         }
 
-        // ---- THE CENSUS: the parse IS the census. The row's FIRST KEY
-        // = the suffix's first D bytes (D=6), computed EXACTLY from the
-        // parse (the phrase tail, then the following phrase's leading
-        // bytes via its rank; the corpus end pads 0 = the virtual END -
-        // unambiguous because the remapped text has no zero bytes). The
-        // bins are D-key ranges packed by the measured per-key row
-        // counts: exact, balanced, no sampling, no trie. ----
-        const u64 DKEY = std::min<u64>(6, g_wave_key_bytes);
+        // =============================================================
+        // AMENDMENT 6: THE SORT SORTS THE PARSE. The rows of the SORT
+        // are the PARSE POSITIONS (N/L of them - 174M at 3 GB, not 3e9
+        // suffixes); keys are INTEGER phrase-rank sequences over the
+        // contiguous parse array. The ALIGNED suffixes take the sorted
+        // parse order; every UNALIGNED suffix's order is then INDUCED
+        // from it: each row is (a local dict-arena slice, the aligned
+        // rank of its continuation) - the slice compare is cache-local
+        // and bounded by the phrase, the joint exhaustion is an O(1)
+        // INTEGER rank compare, and the single-sided exhaustion jumps
+        // into the aligned order. The per-suffix stream comparator is
+        // DELETED (the run10 receipt: 7.8e9 stream steps per band at
+        // ~900 ns each, memory-latency-bound - that was the mistake).
+        // =============================================================
+        const u64 M = PA.size();
+        std::vector<u32> parseSA = std::vector<u32>(size_t(M), 0);
+        std::vector<u32> parseRank = std::vector<u32>(size_t(M), 0);
+        u64 slideFires = 0, parseIntSteps = 0;
         {
-            auto rowKey = [&](u64 occ, u32 o) -> u64 {
-                const u32 v = PA[size_t(occ)];
-                const u64 off = dictEnt[size_t(v)].first;
-                const u32 len = dictEnt[size_t(v)].second;
-                u64 key = 0;
-                u32 j = 0;
-                for (; j < DKEY && o + j < len; ++j)
-                    key = (key << 8) | dictArena[size_t(off + o + j)];
-                u64 cur = occ + 1;
-                while (j < DKEY) {
-                    if (cur >= PA.size()) {
-                        for (; j < DKEY; ++j) key <<= 8;
-                        break;
-                    }
-                    const u32 v2 = PA[size_t(cur)];
-                    const u64 off2 = dictEnt[size_t(v2)].first;
-                    const u32 len2 = dictEnt[size_t(v2)].second;
-                    for (u32 t = 0; j < DKEY && t < len2; ++t, ++j)
-                        key = (key << 8) | dictArena[size_t(off2 + t)];
-                    ++cur;
-                }
-                return key;
-            };
-            std::unordered_map<u64, u64> keyRows;
-            keyRows.reserve(1 << 22);
-            for (size_t i = 0; i < PA.size(); ++i) {
-                beat(1);
-                if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
-                const u32 v = PA[size_t(i)];
-                const u32 len = dictEnt[size_t(v)].second;
-                for (u32 o = 0; o < len; ++o)
-                    ++keyRows[rowKey(i, o)];
-            }
-            ++keyRows[0];   // the empty suffix: the all-zero key
-            const u64 targetRows = std::max<u64>(1, workspaceBytes / 24);
-            std::vector<u64> keys;
-            keys.reserve(keyRows.size());
-            for (const auto& kv : keyRows) keys.push_back(kv.first);
-            std::sort(keys.begin(), keys.end());
-            std::vector<std::pair<u64, u64>> bandLoHi;
-            {
-                // THE GREEDY PACK (the ledger must be able to honor the
-                // knob): close a band BEFORE adding a key that would
-                // cross the workspace line. A single key whose rows
-                // alone exceed the target still becomes its own band -
-                // and the ledger die is then a genuine finding (the
-                // mixed_64mb receipt: the packing overshoot made band 0
-                // 69 MB against the 64 MB knob).
-                u64 cum = 0, lo = 0;
-                for (size_t i = 0; i < keys.size(); ++i) {
-                    const u64 kr = keyRows.at(keys[i]);
-                    const bool last = (i + 1 == keys.size());
-                    if (cum && cum + kr > targetRows) {
-                        bandLoHi.emplace_back(lo, keys[i]);
-                        lo = keys[i];
-                        cum = 0;
-                    }
-                    cum += kr;
-                    if (cum >= targetRows || last) {
-                        bandLoHi.emplace_back(
-                            lo, last ? (u64(1) << (8 * DKEY)) : keys[i] + 1);
-                        lo = keys[i] + 1;
-                        cum = 0;
-                    }
-                }
-            }
-            NB = bandLoHi.size();
-            u64 censusRows = 0;
-            for (const auto& bnd : bandLoHi)
-                for (const auto& kv : keyRows)
-                    if (kv.first >= bnd.first && kv.first < bnd.second)
-                        censusRows += kv.second;
-            std::fprintf(stderr,
-                "SS_PLAN target_rows=%" PRIu64 " bands=%" PRIu64
-                " workspace_bytes=%" PRIu64 " row_footprint_bytes=24"
-                " distinct_d_keys=%zu census_rows=%" PRIu64 " corpus_rows=%" PRIu64
-                " projected_scans=%" PRIu64
-                " denominators=target=workspace/24;K=ceil(census/target);scans=K"
-                ";keys_from_the_parse_exact\n",
-                targetRows, NB, workspaceBytes, keys.size(), censusRows, N, NB);
-            if (censusRows != N)
-                die("GPARSE_CENSUS: the parse census counts " +
-                    std::to_string(censusRows) + " rows against N=" +
-                    std::to_string(N) + " - a parse or key bug");
-
-            // ---- THE STREAM COMPARATOR (the reactive machine's
-            // modality slide over the GLOBAL parse array): two cursors
-            // in phrase coordinates (i, j); the phrase-boundary fast
-            // path compares ids by rank in O(1) per phrase; mid-phrase
-            // it walks bytes from the dictionary arena; the prefix
-            // relations byte-slide; the step cap falls to the raw brute.
-            // Exact by construction - prefix-freeness never assumed. ----
-            auto rowPos = [&](u64 row) -> u64 {
-                return PStart_[size_t(row >> 16)] + (row & 0xFFFF);
-            };
-            const u64 streamCap = g_parse_phrases;
-            u64 streamSteps = 0, slideFires = 0;
-            auto streamCmpG = [&](u64 ra, u64 rb) -> int {
-                if (ra == rb) return 0;
-                u64 ia = ra >> 16, ib = rb >> 16;
-                u32 ja = u32(ra & 0xFFFF), jb = u32(rb & 0xFFFF);
+            const double tps0 = now_sec();
+            // THE PARSE COMPARATOR: integer rank sequences; the divergence
+            // ambiguity (a phrase prefix-relation across the rank range)
+            // byte-slides - rare, journaled, exactly as the dictionary
+            // tables always did
+            auto parseCmp = [&](u32 ia, u32 ib) -> int {
+                if (ia == ib) return 0;
+                u64 i = ia, j = ib;
                 for (;;) {
-                    if (++streamSteps > (streamCap << 12))
-                        return suf_cmp_from(rowPos(ra), rowPos(rb), 0);
-                    const bool endA = (ia >= PA.size()), endB = (ib >= PA.size());
-                    if (endA && endB) return suf_cmp_from(rowPos(ra), rowPos(rb), 0);
-                    if (endA) return -1;   // the END sorts first
-                    if (endB) return +1;
-                    const u32 vA = PA[size_t(ia)], vB = PA[size_t(ib)];
-                    const u32 lA = dictEnt[size_t(vA)].second, lB = dictEnt[size_t(vB)].second;
-                    if (ja == 0 && jb == 0) {
-                        const u64 rA = rankOf[size_t(vA)], rB = rankOf[size_t(vB)];
-                        if (rA != rB) {
-                            // THE AMBIGUITY TEST (the 'nhancement' receipt):
-                            // phrase(lo) is a byte-prefix of phrase(hi) iff
-                            // EVERY adjacent dictionary lcp in [lo, hi)
-                            // stays >= len(phrase(lo)) - the phrases between
-                            // can break the mark chain while the prefix
-                            // relation persists across them. Bounded by the
-                            // step fuse; journaled as slide fires.
-                            const u64 lo2 = std::min(rA, rB), hi2 = std::max(rA, rB);
+                    if (i >= M) return j >= M ? 0 : -1;   // the END first
+                    if (j >= M) return +1;
+                    ++parseIntSteps;
+                    const u64 rA = rankOf[size_t(PA[size_t(i)])];
+                    const u64 rB = rankOf[size_t(PA[size_t(j)])];
+                    if (rA != rB) {
+                        const u64 lo2 = std::min(rA, rB), hi2 = std::max(rA, rB);
+                        // THE AMBIGUITY TEST (the 'nhancement' receipt):
+                        // phrase(lo) is a byte-prefix of phrase(hi) iff
+                        // EVERY adjacent dictionary lcp in [lo, hi)
+                        // stays >= len(phrase(lo)). The transitive run
+                        // mark answers the chain-cover case in O(1); the
+                        // walk is exact for the cross-break cases; the
+                        // unbounded gap slides (correct, rare).
+                        bool ambiguous;
+                        if (dictPrefixRun[size_t(lo2)] >= hi2 - lo2)
+                            ambiguous = true;
+                        else if (hi2 - lo2 <= 4096) {
+                            ambiguous = true;
                             const u32 lenLo = rankLen[size_t(lo2)];
-                            bool ambiguous = true;
-                            for (u64 j = lo2; j < hi2; ++j) {
-                                if (dictLcpNext[size_t(j)] < lenLo) {
+                            for (u64 j2 = lo2; j2 < hi2; ++j2)
+                                if (dictLcpNext[size_t(j2)] < lenLo) {
                                     ambiguous = false; break;
                                 }
-                                if (++streamSteps > (streamCap << 12)) break;
-                            }
-                            if (ambiguous) {
-                                ++slideFires;
-                                return suf_cmp_from(PStart_[size_t(ia)],
-                                                    PStart_[size_t(ib)], 0);
-                            }
-                            return rA < rB ? -1 : +1;
+                        } else ambiguous = true;   // unbounded walk: slide
+                        if (ambiguous) {
+                            ++slideFires;
+                            return suf_cmp_from(PStart_[size_t(i)],
+                                                PStart_[size_t(j)], 0);
                         }
-                        ++ia; ++ib;   // equal phrases: a whole phrase in O(1)
-                        continue;
+                        return rA < rB ? -1 : +1;
                     }
-                    const u8 xa = dictArena[size_t(dictEnt[size_t(vA)].first + ja)];
-                    const u8 xb = dictArena[size_t(dictEnt[size_t(vB)].first + jb)];
-                    if (xa != xb) return xa < xb ? -1 : +1;
-                    if (++ja >= lA) { ++ia; ja = 0; }
-                    if (++jb >= lB) { ++ib; jb = 0; }
+                    ++i; ++j;   // equal phrases: an integer advance
                 }
             };
+            // THE SHARD SORT + K-WAY MERGE: an MSD over the first rank
+            // would split at AMBIGUOUS rank boundaries (a prefix relation
+            // across buckets breaks the order - the docsep receipt: the
+            // seeds [141930,142020) disagreed with the brute). The exact
+            // comparator runs in every shard and in the merge.
+            for (u32 i = 0; i < M; ++i) parseSA[size_t(i)] = i;
+            {
+                const u64 nShard = std::max<u64>(1, std::min<u64>(threads, u64(64)));
+                const u64 shard = (M + nShard - 1) / nShard;
+                std::vector<std::thread> pool;
+                for (u64 t = 0; t < nShard; ++t)
+                    pool.emplace_back([&, t] {
+                        const u64 lo4 = t * shard;
+                        const u64 hi4 = std::min<u64>(M, lo4 + shard);
+                        if (hi4 > lo4)
+                            std::sort(parseSA.begin() + size_t(lo4),
+                                      parseSA.begin() + size_t(hi4),
+                                      [&](u32 x, u32 y) { return parseCmp(x, y) < 0; });
+                    });
+                for (auto& th : pool) th.join();
+                // the k-way merge: a binary heap over the shard heads
+                std::vector<u32> alt = std::vector<u32>(size_t(M));
+                std::vector<u64> cur = std::vector<u64>(size_t(nShard)), end4 = std::vector<u64>(size_t(nShard));
+                for (u64 t = 0; t < nShard; ++t) {
+                    cur[size_t(t)] = t * shard;
+                    end4[size_t(t)] = std::min<u64>(M, (t + 1) * shard);
+                }
+                // the heap of live shards, ordered by their head row
+                std::vector<u32> heap;
+                heap.reserve(size_t(nShard));
+                auto headLess = [&](u32 a, u32 b) -> bool {   // min-heap
+                    return parseCmp(parseSA[size_t(cur[size_t(a)])],
+                                    parseSA[size_t(cur[size_t(b)])]) > 0;
+                };
+                for (u64 t = 0; t < nShard; ++t)
+                    if (cur[size_t(t)] < end4[size_t(t)]) heap.push_back(u32(t));
+                std::make_heap(heap.begin(), heap.end(), headLess);
+                u64 out = 0;
+                while (!heap.empty()) {
+                    std::pop_heap(heap.begin(), heap.end(), headLess);
+                    const u32 t = heap.back(); heap.pop_back();
+                    alt[size_t(out++)] = parseSA[size_t(cur[size_t(t)]++)];
+                    if (cur[size_t(t)] < end4[size_t(t)]) {
+                        heap.push_back(t);
+                        std::push_heap(heap.begin(), heap.end(), headLess);
+                    }
+                }
+                if (out != M)
+                    die("PARSE_SORT_MERGE: emitted " + std::to_string(out) +
+                        " of " + std::to_string(M) + " rows - a shard bug");
+                std::memcpy(parseSA.data(), alt.data(), size_t(M) * 4);
+                bswap_release(alt);
+            }
+            for (u64 i = 0; i < M; ++i)
+                parseRank[size_t(parseSA[size_t(i)])] = u32(i);
+            std::fprintf(stderr,
+                "SS_PARSE_SORT parse_rows=%" PRIu64 " int_steps=%" PRIu64
+                " slide_fires=%" PRIu64 " threads=%" PRIu64 " sort_s=%.2f"
+                " rule=integer_rank_sequences;the_aligned_order\n",
+                M, parseIntSteps, slideFires, threads, now_sec() - tps0);
+            // THE SEED BELT: the aligned order must agree with the brute
+            // byte order on a spot-sample of adjacent seeds
+            {
+                const u64 step = std::max<u64>(1, M / 4096);
+                for (u64 i = step; i < M; i += step)
+                    if (suf_cmp_from(PStart_[size_t(parseSA[size_t(i - step)])],
+                                     PStart_[size_t(parseSA[size_t(i)])], 0) >= 0)
+                        die("PARSE_SORT_ORDER: the aligned seeds [" +
+                            std::to_string(i - step) + "," + std::to_string(i) +
+                            ") disagree with the brute byte order - a parse"
+                            " comparator bug");
+            }
+        }
 
-            // ---- THE BAND LOOP ----
+        // ---- THE BAND PLAN: the exact row census per FIRST SLICE BYTE
+        // (the parse IS the census - every suffix's first byte is a
+        // dictionary-arena byte at its (phrase, offset); the empty
+        // suffix rides the first band), packed to the workspace knob ----
+        std::vector<std::pair<u32, u32>> bandBytes;   // [2-byte key lo, hi)
+        {
+            const double tb0 = now_sec();
+            // THE 2-BYTE KEY HISTOGRAM: a row's band key is its slice's
+            // first TWO text bytes - the second byte of a slice that ends
+            // at the phrase boundary is the NEXT phrase's first byte (the
+            // occurrence's continuation), so the census must enumerate the
+            // PARSE, exactly like the collect will. The byte-level packing
+            // could not honor small knobs - one byte can carry more rows
+            // than the knob (the mixed_64mb receipt).
+            std::vector<u64> hist = std::vector<u64>(65536, 0);
+            {
+                const u64 nPool = std::max<u64>(1, std::min<u64>(threads, u64(64)));
+                std::vector<std::vector<u64>> parts2 =
+                    std::vector<std::vector<u64>>(size_t(nPool),
+                                                 std::vector<u64>(65536, 0));
+                std::vector<std::thread> hpool;
+                const u64 slice = (M + nPool - 1) / nPool;
+                for (u64 t = 0; t < nPool; ++t)
+                    hpool.emplace_back([&, t] {
+                        const u64 hi3 = std::min<u64>(M, (t + 1) * slice);
+                        for (u64 i = t * slice; i < hi3; ++i) {
+                            const u32 v = PA[size_t(i)];
+                            const u64 off = dictEnt[size_t(v)].first;
+                            const u32 len = dictEnt[size_t(v)].second;
+                            u32 nxt0 = 0;   // the next text byte after
+                            if (i + 1 < M)  // this phrase (the END = 0)
+                                nxt0 = dictArena[size_t(dictEnt[size_t(PA[size_t(i + 1)])].first)];
+                            for (u32 o = 0; o < len; ++o) {
+                                const u32 b0 = dictArena[size_t(off + o)];
+                                const u32 b1 = (o + 1 < len)
+                                    ? dictArena[size_t(off + o + 1)] : nxt0;
+                                ++parts2[size_t(t)][size_t((u64(b0) << 8) | b1)];
+                            }
+                        }
+                    });
+                for (auto& th : hpool) th.join();
+                for (u64 t = 0; t < nPool; ++t)
+                    for (u64 b = 0; b < 65536; ++b)
+                        hist[size_t(b)] += parts2[size_t(t)][size_t(b)];
+            }
+            const u64 targetRows = std::max<u64>(1, workspaceBytes / 40);
+            u64 cum = 0, lo = 0, censusRows = 1;   // + the empty suffix
+            for (u64 key = 0; key < 65536; ++key) {
+                const u64 kr = hist[size_t(key)];
+                if (cum && cum + kr > targetRows) {   // close BEFORE crossing
+                    bandBytes.emplace_back(u32(lo), u32(key));
+                    lo = u32(key);
+                    cum = 0;
+                }
+                cum += kr;
+                censusRows += kr;
+                if (cum >= targetRows || key == 65535) {
+                    bandBytes.emplace_back(u32(lo), u32(key + 1));
+                    lo = u32(key + 1);
+                    cum = 0;
+                }
+            }
+            NB = bandBytes.size();
+            std::fprintf(stderr,
+                "SS_PLAN target_rows=%" PRIu64 " bands=%" PRIu64
+                " workspace_bytes=%" PRIu64 " row_footprint_bytes=40"
+                " census_rows=%" PRIu64 " corpus_rows=%" PRIu64
+                " projected_scans=%" PRIu64 " max_phrase_len=%" PRIu64
+                " denominators=target=workspace/40;K=byte_range_bands"
+                ";scans=K;rows_from_the_parse_exact\n",
+                targetRows, NB, workspaceBytes, censusRows, N, NB,
+                [&] { u64 mx = 0; for (u64 v = 0; v < dictN; ++v)
+                          mx = std::max<u64>(mx, dictEnt[size_t(v)].second);
+                      return mx; }());
+            if (censusRows != N)
+                die("GPARSE_CENSUS: the byte census counts " +
+                    std::to_string(censusRows) + " rows against N=" +
+                    std::to_string(N) + " - a parse or histogram bug");
+            (void)tb0;
+        }
+
+        // ---- THE INDUCED COMPARATOR (AMENDMENT 6): the row
+        // (occ, o) is (the local slice = the phrase's bytes from o,
+        // the aligned rank of the continuation at occ+1). The slice
+        // compare is a cache-local dict-arena memcmp bounded by the
+        // phrase; at the JOINT slice exhaustion the comparison is an
+        // O(1) integer compare of the continuation ranks; a single-
+        // sided exhaustion RANK-JUMPS into the aligned order. ZERO
+        // dictionary byte-streaming - the stream comparator is gone. ----
+        auto rowPos = [&](u64 row) -> u64 {
+            return PStart_[size_t(row >> 32)] + (row & 0xFFFFFFFFull);
+        };
+        std::atomic<u64> sliceSteps{0}, rankJumps{0};
+        auto inducedCmp = [&](u64 ra, u64 rb) -> int {
+            if (ra == rb) return 0;
+            u64 occA = ra >> 32, occB = rb >> 32;
+            u32 oA = u32(ra & 0xFFFFFFFFull), oB = u32(rb & 0xFFFFFFFFull);
+            u32 vA = PA[size_t(occA)], vB = PA[size_t(occB)];
+            // the continuation ranks; the END (rank 0) sorts first
+            u64 rankA = (occA + 1 < M) ? u64(parseRank[size_t(occA + 1)]) + 1 : 0;
+            u64 rankB = (occB + 1 < M) ? u64(parseRank[size_t(occB + 1)]) + 1 : 0;
+            const u8* pA = &dictArena[size_t(dictEnt[size_t(vA)].first + oA)];
+            const u8* eA = pA + (dictEnt[size_t(vA)].second - oA);
+            const u8* pB = &dictArena[size_t(dictEnt[size_t(vB)].first + oB)];
+            const u8* eB = pB + (dictEnt[size_t(vB)].second - oB);
+            for (;;) {
+                const u64 remA = u64(eA - pA), remB = u64(eB - pB);
+                const u64 common = std::min(remA, remB);
+                if (common) {
+                    sliceSteps.fetch_add(common, std::memory_order_relaxed);
+                    const int c = std::memcmp(pA, pB, size_t(common));
+                    if (c) return c < 0 ? -1 : +1;
+                    pA += common; pB += common;
+                }
+                const bool doneA = (pA == eA), doneB = (pB == eB);
+                if (doneA && doneB) {
+                    if (rankA != rankB) return rankA < rankB ? -1 : +1;
+                    // equal continuations for distinct rows is a
+                    // structural impossibility; the brute answers and
+                    // the belt fails loud if it ever happens
+                    return suf_cmp_from(rowPos(ra), rowPos(rb), 0);
+                }
+                if (doneA) {   // RANK-JUMP: the continuation is the
+                    // aligned suffix with that rank; the END rank (0)
+                    // is the EMPTY continuation - it loses against any
+                    // remaining bytes (the other side is still live)
+                    if (rankA == 0) return -1;
+                    ++rankJumps;
+                    const u64 pos = parseSA[size_t(rankA - 1)];
+                    const u32 v = PA[size_t(pos)];
+                    pA = &dictArena[size_t(dictEnt[size_t(v)].first)];
+                    eA = pA + dictEnt[size_t(v)].second;
+                    rankA = (pos + 1 < M) ? u64(parseRank[size_t(pos + 1)]) + 1 : 0;
+                } else {
+                    if (rankB == 0) return +1;
+                    ++rankJumps;
+                    const u64 pos = parseSA[size_t(rankB - 1)];
+                    const u32 v = PA[size_t(pos)];
+                    pB = &dictArena[size_t(dictEnt[size_t(v)].first)];
+                    eB = pB + dictEnt[size_t(v)].second;
+                    rankB = (pos + 1 < M) ? u64(parseRank[size_t(pos + 1)]) + 1 : 0;
+                }
+            }
+        };
+        // the MSD digits: the slice's actual text bytes (walking into
+        // the continuation phrases across 1-byte phrases; the END = 0)
+        auto digByte = [&](u64 row, u32 which) -> u32 {
+            u64 occ = row >> 32;
+            u32 o = u32(row & 0xFFFFFFFFull) + which;
+            for (;;) {
+                const u32 v = PA[size_t(occ)];
+                const u32 len = dictEnt[size_t(v)].second;
+                if (o < len) return dictArena[size_t(dictEnt[size_t(v)].first + o)];
+                if (occ + 1 >= M) return 0;   // the END byte
+                o -= len;
+                ++occ;
+            }
+        };
+
+            // ---- THE BAND LOOP (AMENDMENT 6): the bands are the
+            // first-slice-BYTE ranges of the plan; the rows enumerate
+            // from the parse; the sort is the induced comparator ----
             for (u64 k = 0; k < NB; ++k) {
                 const double tk0 = now_sec();
-                const u64 keyLo = bandLoHi[size_t(k)].first;
-                const u64 keyHi = bandLoHi[size_t(k)].second;
+                const u32 keyLo = bandBytes[size_t(k)].first;
+                const u32 keyHi = bandBytes[size_t(k)].second;
                 std::vector<u64> rows;
                 u64 bandRows = 0;
                 {
-                    // THE COLLECT BY A POOL: slices of the parse array,
-                    // per-thread row vectors, ordered concatenation (the
-                    // MSD re-orders everything anyway)
+                    // THE COLLECT BY A POOL: slices of the parse array;
+                    // the byte test reads the dict arena (cache-local)
                     const u64 nPool = std::max<u64>(1, std::min<u64>(threads, u64(64)));
-                    const u64 slice = (PA.size() + nPool - 1) / nPool;
-                    std::vector<std::vector<u64>> parts = std::vector<std::vector<u64>>(size_t(nPool));
+                    const u64 slice = (M + nPool - 1) / nPool;
+                    std::vector<std::vector<u64>> parts =
+                        std::vector<std::vector<u64>>(size_t(nPool));
+                    for (u64 t = 0; t < nPool; ++t)
+                        parts[size_t(t)].reserve(size_t(1 << 16));
                     std::vector<std::thread> cpool;
                     for (u64 t = 0; t < nPool; ++t)
                         cpool.emplace_back([&, t] {
                             const u64 lo3 = t * slice;
-                            const u64 hi3 = std::min<u64>(PA.size(), lo3 + slice);
+                            const u64 hi3 = std::min<u64>(M, lo3 + slice);
                             for (u64 i = lo3; i < hi3; ++i) {
                                 if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
                                 const u32 v = PA[size_t(i)];
+                                const u64 off = dictEnt[size_t(v)].first;
                                 const u32 len = dictEnt[size_t(v)].second;
+                                u32 nxt0 = 0;
+                                if (i + 1 < M)
+                                    nxt0 = dictArena[size_t(dictEnt[size_t(PA[size_t(i + 1)])].first)];
                                 for (u32 o = 0; o < len; ++o) {
-                                    const u64 key = rowKey(i, o);
+                                    const u32 b0 = dictArena[size_t(off + o)];
+                                    const u32 b1 = (o + 1 < len)
+                                        ? dictArena[size_t(off + o + 1)] : nxt0;
+                                    const u32 key = (b0 << 8) | b1;
                                     if (key < keyLo || key >= keyHi) continue;
-                                    parts[size_t(t)].push_back((i << 16) | o);
+                                    parts[size_t(t)].push_back((i << 32) | o);
                                 }
                             }
                         });
                     for (auto& th : cpool) th.join();
+                    u64 tot = 0;
+                    for (const auto& p : parts) tot += p.size();
+                    rows.reserve(size_t(tot));
                     for (auto& p : parts) {
                         rows.insert(rows.end(), p.begin(), p.end());
                         std::vector<u64>().swap(p);
                     }
                 }
                 const bool firstBand = (k == 0);
-                const bool ownsEmptySuffix = firstBand && keyLo == 0;
-                bandRows = rows.size() + (ownsEmptySuffix ? 1 : 0);
+                bandRows = rows.size() + (firstBand ? 1 : 0);
                 std::fprintf(stderr,
                     "SS_BAND_SCAN band=%" PRIu64 "/%" PRIu64
                     " key_range=[%" PRIu64 ",%" PRIu64 ") rows=%" PRIu64
                     " collect_s=%.2f"
-                    " rule=filtered_pass_over_the_parse_array\n",
-                    k, NB, keyLo, keyHi, bandRows, now_sec() - tk0);
-                if (bandRows * 24 > workspaceBytes)
+                    " rule=parse_enumeration;slice_bytes_local\n",
+                    k, NB, u64(keyLo), u64(keyHi), bandRows, now_sec() - tk0);
+                if (bandRows * 40 > workspaceBytes)
                     die("BAND_WORKSPACE_OVERRUN: band " + std::to_string(k) +
                         " of " + std::to_string(NB) + " collected " +
-                        std::to_string(bandRows) + " rows x 24B against the workspace " +
+                        std::to_string(bandRows) + " rows x 40B against the workspace " +
                         std::to_string(workspaceBytes) + " - refusing with the numbers");
-                // SORT: the MSD over the D-key, then the D-key groups by
-                // the stream comparator with the byte slide
+                // ---- SORT: the MSD over the slice's first two bytes,
+                // then a pool of std::sorts with the induced comparator ----
                 std::vector<u64> alt = std::vector<u64>(rows.size());
                 {
                     std::vector<std::pair<u64, u64>> work;
                     work.emplace_back(0, rows.size());
-                    std::vector<u64> starts(65537), bnd;
-                    const int shift0 = int(8 * DKEY) - 16;
-                    for (int lvl = 0; lvl < 3 && !work.empty(); ++lvl) {
+                    for (int lvl = 0; lvl < 2 && !work.empty(); ++lvl) {
                         std::vector<std::pair<u64, u64>> next;
-                        const int sh = shift0 - 16 * lvl;
+                        std::vector<u64> starts(257);
                         for (const auto& sp2 : work) {
                             if (sp2.second - sp2.first < 2) continue;
-                            starts.assign(65537, 0);
-                            for (u64 i = sp2.first; i < sp2.second; ++i) {
-                                const u64 r = rows[size_t(i)];
-                                const u64 dig = ((rowKey(r >> 16, u32(r & 0xFFFF)) >> sh) & 0xFFFF) + 1;
-                                if (dig > 65536)
-                                    die("GPARSE_MSD_COUNT: digit " + std::to_string(dig) +
-                                        " sh=" + std::to_string(sh) + " row=" +
-                                        std::to_string(r) + " occ=" + std::to_string(r >> 16) +
-                                        " off=" + std::to_string(r & 0xFFFF));
-                                ++starts[size_t(dig)];
-                            }
-                            for (u64 b = 0; b < 65536; ++b)
+                            starts.assign(257, 0);
+                            for (u64 i = sp2.first; i < sp2.second; ++i)
+                                ++starts[size_t(digByte(rows[size_t(i)], u32(lvl)) + 1)];
+                            for (u64 b = 0; b < 256; ++b)
                                 starts[size_t(b) + 1] += starts[size_t(b)];
-                            bnd = starts;
-                            for (u64 i = sp2.first; i < sp2.second; ++i) {
-                                const u64 r = rows[size_t(i)];
-                                const u64 dig = ((rowKey(r >> 16, u32(r & 0xFFFF)) >> sh) & 0xFFFF) + 1;
-                                if (dig > 65536)
-                                    die("GPARSE_MSD: digit " + std::to_string(dig) +
-                                        " at level sh=" + std::to_string(sh) +
-                                        " row=" + std::to_string(r) +
-                                        " occ=" + std::to_string(r >> 16) +
-                                        " off=" + std::to_string(r & 0xFFFF) +
-                                        " - a key bug");
-                                alt[size_t(sp2.first + starts[size_t(dig - 1)]++)] = r;
-                            }
+                            std::vector<u64> bnd = starts;
+                            for (u64 i = sp2.first; i < sp2.second; ++i)
+                                alt[size_t(sp2.first + starts[size_t(
+                                    digByte(rows[size_t(i)], u32(lvl)))]++)] =
+                                    rows[size_t(i)];
                             std::memcpy(&rows[size_t(sp2.first)], &alt[size_t(sp2.first)],
                                         size_t(sp2.second - sp2.first) * 8);
-                            for (u64 b = 0; b < 65536; ++b) {
+                            for (u64 b = 0; b < 256; ++b) {
                                 const u64 s2 = sp2.first + bnd[size_t(b)];
                                 const u64 e2 = sp2.first + bnd[size_t(b + 1)];
                                 if (e2 - s2 > 1) next.emplace_back(s2, e2);
@@ -3122,80 +3273,73 @@ int main(int argc, char** argv) {
                         }
                         work.swap(next);
                     }
-                }
-                bswap_release(alt);
-                // ---- THE D-KEY GROUPS, SORTED BY A POOL (the run7 receipt:
-                // the groups are independent - the serial loop was a thread-
-                // engagement regression, one core through hours at 3 GB) ----
-                u64 groupsSorted = 0, groupRowsMax = 0;
-                {
-                    std::vector<std::pair<u64, u64>> gspans;
-                    u64 i = 0;
-                    while (i < rows.size()) {
-                        const u64 rowI = rows[size_t(i)];
-                        if (rowI == (~0ull >> 16)) { ++i; continue; }
-                        const u64 keyI = rowKey(rowI >> 16, u32(rowI & 0xFFFF));
-                        u64 j = i + 1;
-                        while (j < rows.size()) {
-                            const u64 rowJ = rows[size_t(j)];
-                            if (rowJ == (~0ull >> 16)) break;
-                            if (rowKey(rowJ >> 16, u32(rowJ & 0xFFFF)) != keyI) break;
-                            ++j;
-                        }
-                        if (j - i > 1) gspans.emplace_back(i, j);
-                        i = j;
-                    }
-                    groupsSorted = gspans.size();
-                    for (const auto& g : gspans)
-                        groupRowsMax = std::max(groupRowsMax, g.second - g.first);
-                    std::atomic<u64> nextGroup{0};
+                    // the deep buckets by a pool
+                    std::atomic<u64> nextBucket{0};
                     std::vector<std::thread> pool;
                     const u64 nPool = std::max<u64>(1, std::min<u64>(threads,
-                        gspans.size() ? gspans.size() : u64(1)));
+                        work.size() ? work.size() : u64(1)));
                     std::vector<int> thrFail(size_t(nPool), 0);
                     for (u64 t = 0; t < nPool; ++t)
                         pool.emplace_back([&, t] {
                             for (;;) {
                                 if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
-                                const u64 g = nextGroup.fetch_add(1, std::memory_order_relaxed);
-                                if (g >= gspans.size()) break;
-                                const u64 gi = gspans[size_t(g)].first;
-                                const u64 gj = gspans[size_t(g)].second;
+                                const u64 g = nextBucket.fetch_add(1, std::memory_order_relaxed);
+                                if (g >= work.size()) break;
+                                const u64 gi = work[size_t(g)].first;
+                                const u64 gj = work[size_t(g)].second;
                                 std::sort(rows.begin() + size_t(gi), rows.begin() + size_t(gj),
-                                          [&](u64 x, u64 y) { return streamCmpG(x, y) < 0; });
-                                // THE BELT: a sorted group's adjacent pairs
-                                // must agree with the brute byte order -
-                                // exactness never rests on prefix-freeness
-                                if (gj - gi <= 4096)
-                                    for (u64 q2 = gi + 1; q2 < gj; ++q2)
-                                        if (suf_cmp_from(rowPos(rows[size_t(q2 - 1)]),
-                                                         rowPos(rows[size_t(q2)]), 0) >= 0) {
-                                            const u64 rA = rows[size_t(q2 - 1)],
-                                                     rB = rows[size_t(q2)];
-                                            std::fprintf(stderr,
-                                                "GPARSE_ORDER_FAIL band=%" PRIu64
-                                                " group=[%" PRIu64 ",%" PRIu64 ")"
-                                                " rowA=%" PRIu64 " posA=%" PRIu64
-                                                " rowB=%" PRIu64 " posB=%" PRIu64
-                                                " cmp=%d brute=%d\n",
-                                                k, gi, gj, rA, rowPos(rA), rB, rowPos(rB),
-                                                streamCmpG(rA, rB),
-                                                suf_cmp_from(rowPos(rA), rowPos(rB), 0));
-                                            thrFail[size_t(t)] = 1;
-                                            return;
-                                        }
+                                          [&](u64 x, u64 y) { return inducedCmp(x, y) < 0; });
+                                // THE BELT: the sorted bucket's adjacent
+                                // pairs must agree with the brute byte
+                                // order - exactness never rests on
+                                // prefix-freeness
+                                const u64 step = std::max<u64>(1, (gj - gi) / 4096);
+                                for (u64 q2 = gi + 1; q2 < gj; q2 += step)
+                                    if (suf_cmp_from(rowPos(rows[size_t(q2 - 1)]),
+                                                     rowPos(rows[size_t(q2)]), 0) >= 0) {
+                                        const u64 rA = rows[size_t(q2 - 1)],
+                                                 rB = rows[size_t(q2)];
+                                        std::fprintf(stderr,
+                                            "GPARSE_ORDER_FAIL band=%" PRIu64
+                                            " bucket=[%" PRIu64 ",%" PRIu64 ")"
+                                            " rowA=%" PRIu64 " posA=%" PRIu64
+                                            " rowB=%" PRIu64 " posB=%" PRIu64
+                                            " induced=%d brute=%d"
+                                            " occA=%" PRIu64 " oA=%" PRIu64
+                                            " occB=%" PRIu64 " oB=%" PRIu64
+                                            " vA=%" PRIu64 " lenA=%" PRIu64
+                                            " vB=%" PRIu64 " lenB=%" PRIu64
+                                            " rankA_next=%" PRIu64
+                                            " rankB_next=%" PRIu64 "\n",
+                                            k, gi, gj, rA, rowPos(rA), rB, rowPos(rB),
+                                            inducedCmp(rA, rB),
+                                            suf_cmp_from(rowPos(rA), rowPos(rB), 0),
+                                            rA >> 32, rA & 0xFFFFFFFFull,
+                                            rB >> 32, rB & 0xFFFFFFFFull,
+                                            u64(PA[size_t(rA >> 32)]),
+                                            u64(dictEnt[size_t(PA[size_t(rA >> 32)])].second),
+                                            u64(PA[size_t(rB >> 32)]),
+                                            u64(dictEnt[size_t(PA[size_t(rB >> 32)])].second),
+                                            (rA >> 32) + 1 < M
+                                                ? u64(parseRank[size_t((rA >> 32) + 1)]) : u64(~0),
+                                            (rB >> 32) + 1 < M
+                                                ? u64(parseRank[size_t((rB >> 32) + 1)]) : u64(~0));
+                                        thrFail[size_t(t)] = 1;
+                                        return;
+                                    }
                             }
                         });
                     for (auto& th : pool) th.join();
                     for (int f : thrFail)
                         if (f) die("GPARSE_ORDER: band " + std::to_string(k) +
-                                   " a sorted group disagrees with the byte order -"
-                                   " a comparator or parse bug");
+                                   " a sorted bucket disagrees with the byte"
+                                   " order - an induction comparator bug");
                 }
+                bswap_release(alt);
                 // ---- THE LCP COLUMN: the honest brute walks (the total
                 // is the band's lcp mass - measured, not guessed) ----
-                if (ownsEmptySuffix)
-                    rows.insert(rows.begin(), ~0ull >> 16);   // the virtual
+                if (firstBand)
+                    rows.insert(rows.begin(), 0xFFFFFFFF00000000ull);   // the virtual
                         // END row sorts before every real suffix
                 std::vector<u64> lcpv2 = std::vector<u64>(size_t(bandRows), 0);
                 {
@@ -3210,7 +3354,8 @@ int main(int argc, char** argv) {
                                 const u64 i2 = nextPair.fetch_add(1, std::memory_order_relaxed);
                                 if (i2 >= rows.size()) break;
                                 const u64 rowA = rows[size_t(i2 - 1)], rowB = rows[size_t(i2)];
-                                if (rowA == (~0ull >> 16) || rowB == (~0ull >> 16)) continue;
+                                if (rowA == 0xFFFFFFFF00000000ull ||
+                                    rowB == 0xFFFFFFFF00000000ull) continue;
                                 u64 lcpTrue = 0;
                                 suf_cmp_lcp(rowPos(rowA), rowPos(rowB), 0, lcpTrue);
                                 lcpv2[size_t(i2)] = lcpTrue;
@@ -3224,7 +3369,7 @@ int main(int argc, char** argv) {
                 U.Pout.resize(rows.size());
                 for (size_t i2 = 0; i2 < rows.size(); ++i2) {
                     const u64 row = rows[size_t(i2)];
-                    const u64 pos = (row == (~0ull >> 16)) ? FILE_N : rowPos(row);
+                    const u64 pos = (row == 0xFFFFFFFF00000000ull) ? FILE_N : rowPos(row);
                     U.Pout[size_t(i2)] = pack_sym(
                         pos, pos ? u8(REMAP ? REMAP[T[pos - 1]] : T[pos - 1])
                                 : SENTINEL_SYMBOL);
@@ -3232,19 +3377,18 @@ int main(int argc, char** argv) {
                 U.lcpv = std::move(lcpv2);
                 std::fprintf(stderr,
                     "SS_GPARSE_BAND_SORT band=%" PRIu64 "/%" PRIu64
-                    " rows=%" PRIu64 " groups_sorted=%" PRIu64
-                    " max_group_rows=%" PRIu64 " stream_steps=%" PRIu64
-                    " slide_fires=%" PRIu64 " sort_s=%.2f"
-                    " rule=msd_dkey_then_stream_with_byte_slide\n",
-                    k, NB, bandRows, groupsSorted, groupRowsMax,
-                    streamSteps, slideFires, now_sec() - tk0);
+                    " rows=%" PRIu64 " slice_bytes=%" PRIu64
+                    " rank_jumps=%" PRIu64 " sort_s=%.2f"
+                    " rule=induced_local_slices_and_integer_ranks;zero_stream_steps\n",
+                    k, NB, bandRows,
+                    sliceSteps.load(std::memory_order_relaxed),
+                    rankJumps.load(std::memory_order_relaxed),
+                    now_sec() - tk0);
                 std::fprintf(stderr,
-                    "SS_THREADS phase=group_sort band=%" PRIu64 "/%" PRIu64
+                    "SS_THREADS phase=band_sort band=%" PRIu64 "/%" PRIu64
                     " threads_spawned=%" PRIu64 " threads_requested=%" PRIu64
-                    " groups=%" PRIu64 " rule=pool_over_independent_groups\n",
-                    k, NB,
-                    std::min<u64>(threads, groupsSorted ? groupsSorted : u64(1)),
-                    threads, groupsSorted);
+                    " rule=pool_over_independent_buckets\n",
+                    k, NB, threads, threads);
                 emitUnit(U, nextUnitId++);
                 u64 anonNow = 0, fileNow = 0, totNow = 0;
                 RssMonitor::sample(anonNow, fileNow, totNow);
@@ -3255,7 +3399,8 @@ int main(int argc, char** argv) {
                     " rule=workspace_is_one_band;commit_boundary_reached\n",
                     k, NB, bandRows, totNow, anonNow, now_sec() - tk0);
             }
-        }    // ---- POST-RUN LIVE == 0 (the memory law): the per-band BAND_LIVE
+
+    // ---- POST-RUN LIVE == 0 (the memory law): the per-band BAND_LIVE
     // asserts already proved every plane freed at every commit boundary;
     // this is the terminal statement of the same law.
     std::fprintf(stderr,
@@ -3360,14 +3505,19 @@ int main(int argc, char** argv) {
             rchar, rb, syscr, FILE_N, N,
             FILE_N ? double(rchar) / double(FILE_N) : 0.0,
             FILE_N ? double(rb) / double(FILE_N) : 0.0, u64(1));
-        // THE PLAN-DERIVED RCHAR BACKSTOP (run8's receipt: the flat 3x
-        // threshold was the OLD machine's acceptance proxy - obsolete
-        // since the operator overruled it; Amendment 3 made K x corpus
-        // the expected arithmetic). expected = parse (1x) + K band
-        // passes + 25% margin; an env override wins and must exceed the
-        // plan. A refusal means REALITY EXCEEDED THE PLAN - a finding,
-        // never a stale bar. The plan line prints both with denominators.
-        const u64 expectedRchar = (1 + NB) * FILE_N + FILE_N / 4;
+        // THE PLAN-DERIVED RCHAR BACKSTOP (AMENDMENT 6's arithmetic):
+        // the K per-band corpus scans are GONE - the bands enumerate the
+        // parse and the dictionary arena (anonymous, no rchar). The text
+        // reads are: the parse pass (1x corpus) + the honest text walks
+        // (the LCP column, the belts, the slides) - data-dependent, so
+        // the plan TRACKS the measured walk bytes. expected = 1x parse
+        // + 4x margin (the parse/belt/seam misestimates) + 2x the
+        // measured walks. A refusal means REALITY EXCEEDED THE PLAN -
+        // the parse re-read bug class (run8's closePhrase) or a walk
+        // runaway the journal must account. The env override must exceed
+        // the plan; the plan line prints the decomposition.
+        const u64 walkBytes = g_text_walk.load(std::memory_order_relaxed);
+        const u64 expectedRchar = FILE_N + 4 * FILE_N + 2 * walkBytes;
         u64 limit = expectedRchar;
         if (const char* limitText = ::getenv("XSA_TAPE_RCHAR_LIMIT")) {
             const u64 envLimit = std::strtoull(limitText, nullptr, 10);
@@ -3376,14 +3526,15 @@ int main(int argc, char** argv) {
         if (limit < expectedRchar)
             die("TAPE_RCHAR_LIMIT: the env override " + std::to_string(limit) +
                 " is below the plan-derived expectation " + std::to_string(expectedRchar) +
-                " = (1 + K=" + std::to_string(NB) + ") x corpus " +
-                std::to_string(FILE_N) + " + 25% - refusing a stale bar");
+                " = parse_1x(" + std::to_string(FILE_N) + ") + margin_4x(" +
+                std::to_string(4 * FILE_N) + ") + 2x_measured_walks(" +
+                std::to_string(walkBytes) + ") - refusing a stale bar");
         std::fprintf(stderr,
             "RCHAR_PLAN expected=%" PRIu64 " limit=%" PRIu64
-            " arithmetic=(1+K=%" PRIu64 ")x_corpus=%" PRIu64 "+25%%_margin=%" PRIu64
-            " actual=%" PRIu64
+            " arithmetic=parse_1x=%" PRIu64 "+margin_4x=%" PRIu64
+            "+2x_measured_walks=%" PRIu64 " actual=%" PRIu64
             " rule=a_refusal_means_reality_exceeded_the_plan\n",
-            expectedRchar, limit, NB, FILE_N, FILE_N / 4, rchar);
+            expectedRchar, limit, FILE_N, 4 * FILE_N, 2 * walkBytes, (u64)rchar);
         if (rchar > limit)
             die("TAPE_RCHAR_LIMIT: rchar=" + std::to_string(rchar) +
                 " limit=" + std::to_string(limit) +
