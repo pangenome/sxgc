@@ -15,13 +15,13 @@
 # MEM_GUARD is set LOW on purpose: the fixtures are 6 MB; 16 GiB of anon
 # is already 2600x the corpus and any crossing is a runaway by definition.
 set -u
-BIN=${BIN:-/tmp/bins_sort}
-ENGINE=${G0_ENGINE:-reactive}   # reactive | gparse (AMENDMENT 5)
+BIN=${BIN:-/tmp/pfp_sort}
+
 BRUTE=${BRUTE:-/tmp/brute_sa}
 FIX=${FIX:-/tmp/tr_p3/fixtures}
 GEN=${GEN:-/tmp/parse_gate_adv}
 RD=${RD:-/mnt/nvme2n1/erikg/TAPEREADER/bins-g0}
-[ "$ENGINE" = gparse ] && RD=${RD}-gparse
+
 J=$RD/JOURNAL.txt
 mkdir -p "$RD"
 : > "$J"
@@ -35,9 +35,9 @@ run_one() {
   local name=$1 corpus=$2; shift 2
   local rd="$RD/$name"
   rm -rf "$rd"; mkdir -p "$rd/bands" "$rd/merged"
-  local log="$rd/bins_sort.log"
-  say "START name=$name engine=$ENGINE corpus=$corpus bytes=$(stat -c %s "$corpus" 2>/dev/null)"
-  env XSA_ENGINE=$ENGINE XSA_MEM_GUARD_MB=16384 "$@" TRIE_TAP=1 XSA_WAVEKEY_VERIFY=1 \
+  local log="$rd/pfp_sort.log"
+  say "START name=$name corpus=$corpus bytes=$(stat -c %s "$corpus" 2>/dev/null)"
+  env XSA_MEM_GUARD_MB=16384 "$@" TRIE_TAP=1 XSA_WAVEKEY_VERIFY=1 \
     SS_LCP_SLICE_WINDOW=1048576 CROSS_V2_PIECE_WINDOW=1000000 \
     "$BIN" --corpus "$corpus" --out-prefix "$rd/merged/frag" --bands "$rd/bands" \
     --budget-bytes 16000000000 --threads 8 \
@@ -130,7 +130,7 @@ run_one mixed_64mb "$FIX/mixed.txt" XSA_BAND_WORKSPACE_BYTES=67108864
 inv_fail() {
   say "GATE name=band_invariance FAIL reason=$1"
   for d in mixed mixed_64mb; do
-    tail -3 "$RD/$d/bins_sort.log" 2>/dev/null | sed 's/^/  '$d': /' | tee -a "$J"
+    tail -3 "$RD/$d/pfp_sort.log" 2>/dev/null | sed 's/^/  '$d': /' | tee -a "$J"
   done
   G0_FAILS=$((G0_FAILS+1)); G0_RESULTS="$G0_RESULTS band_invariance:$1"
 }
@@ -165,8 +165,8 @@ print(sha(sys.argv[1]), sha(sys.argv[2]))
 PY2
 )
 SHASH
-    kA=$(grep -o 'bands=[0-9]*' "$RD/mixed/bins_sort.log" | head -1)
-    kB=$(grep -o 'bands=[0-9]*' "$RD/mixed_64mb/bins_sort.log" | head -1)
+    kA=$(grep -o 'bands=[0-9]*' "$RD/mixed/pfp_sort.log" | head -1)
+    kB=$(grep -o 'bands=[0-9]*' "$RD/mixed_64mb/pfp_sort.log" | head -1)
     if [ "$shaA" == "$shaB" ]; then
       say "GATE name=band_invariance PASS sha=$shaA rows=$rowsA default:$kA small:$kB"
       G0_RESULTS="$G0_RESULTS band_invariance:PASS($kA,$kB,rows=$rowsA)"

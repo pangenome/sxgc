@@ -1,38 +1,30 @@
-// bins_sort.cpp - THE PER-BIN MACHINE (TAPE_BINS.md, frozen 2026-11-17,
-// AMENDMENTS 1 + 2: the adaptive prefix-range bins + the Sawzall law).
+// pfp_sort.cpp - THE PFP-BAND MACHINE (TAPE_BINS.md, frozen 2026-11-17,
+// AMENDMENTS 1-5; the reactive engine deleted by operator order:
+// forward-only, one machine, no transitional flag).
 //
-// THE LAW: every row's bytes are read at most once per need; no central
-// reader mediates; no match crosses a document boundary; no signals ever
-// (files + exit codes); a run without SS_DONE is VOID; our guards fire
-// before the OS's.
+// THE LAW: no routing decisions anywhere; no signals ever (files + exit
+// codes); a run without SS_DONE is VOID; the guards are fuses (assertions
+// of invariants) and fire before the OS's; denominators on every number.
 //
-//   STROKE 1  SCATTER (AMENDMENT 1: one pass over the corpus through the
-//          sampled prefix-trie plan, rchar = corpus once) + K-byte keys +
-//          the in-memory leaf sort. Rows that resolve here are done.
-//   STROKE 2  EVERY surviving tie class parses - uniformly (AMENDMENT 2,
-//          the Sawzall law: no routing decisions, one blade, every
-//          stroke). The parse IS the tie resolution: capture the class's
-//          span (read exactly once), dictionary, (id, offset) keys.
-//   STROKE 3  phrase-space sort with the byte-slide comparator (the slide
-//          is part of the blade: ambiguity -> walk bytes); the widening
-//          rounds (x8) then the LCE residual are within-stroke machinery.
-//   STROKE 4  concatenation in key order (the emitter's piece/band
-//          contracts unchanged; POST_RUN_LIVE == 0).
-//
-// Kept (all proven): the scatter discipline, the leaf sort (order-identity
-// green at 44M rows), the parse layer (two-sided trigger dictionary,
-// (phrase id, intra-phrase offset) keys), the modality-slide comparator
-// (byte-walking at prefix ambiguity, widening rounds, LCE residual), and
-// the oracle gates. No text is materialized to disc; the corpus file is the
-// only text, read through windowed preads (the sample and scatter passes)
-// and the parse readheads, plus the mmap'd comparison core for the seams,
-// tails and the residual.
-//
-// DELETED by AMENDMENT 2 (the session's every failure was a routing
-// decision): the census and its clauses (width, depth), the expansion path
-// (delta doubling), the reverse slide. Guards demoted to fuses: step
-// counters, the ids-plane invariant, the rchar backstop, post-run live
-// == 0.
+//   PARSE    ONE doc-aware PFP parse of the corpus (the two-sided trigger
+//            rule): the dictionary of distinct phrases (memcmp-verified
+//            intern), the parse array, the phrase starts. Read once.
+//   KEYS     every suffix a phrase-position row; the first key = the
+//            suffix's first D bytes computed EXACTLY from the parse. THE
+//            PARSE IS THE CENSUS: the bins are D-key ranges packed to the
+//            workspace knob (AMENDMENTS 3+4: one band resident, K bands,
+//            lean by default; band boundaries are commit boundaries).
+//   SORT     the 16-bit MSD over the D-key, then the D-key groups by the
+//            STREAM COMPARATOR (phrase-boundary fast path compares ids by
+//            rank O(1) per phrase; mid-phrase walks arena bytes; the
+//            prefix-ambiguity byte-slides - phrase(lo) is a prefix of
+//            phrase(hi) iff every adjacent dictionary lcp in [lo,hi)
+//            stays >= len(phrase lo); the step fuse falls to the raw
+//            brute). Exact by construction: prefix-freeness NEVER
+//            assumed. The brute belt checks every sorted group.
+//   EMIT     the chunk streams directly to its final place (no merge, no
+//            staging); the LCP column is the honest brute walk per
+//            adjacent pair; POST_RUN_LIVE == 0 asserted per band.
 
 #include <algorithm>
 #include <numeric>
@@ -76,7 +68,7 @@ using u32 = uint32_t;
 using u64 = uint64_t;
 
 static void die(const std::string& m) {
-    std::fprintf(stderr, "tape_sort: %s\n", m.c_str());
+    std::fprintf(stderr, "pfp_sort: %s\n", m.c_str());
     std::exit(2);
 }
 static void require(bool b, const char* s) { if (!b) die(s); }
@@ -382,7 +374,6 @@ static void read_proc_io(u64& rchar, u64& rb, u64& syscr) {
 // ---------------------------------------------------------------------------
 static u64 g_wave_key_bytes = 8;        // K
 static u64 g_wave_run_cap = 65536;      // L's cap
-static std::string g_engine = "reactive";   // reactive | gparse (AMENDMENT 5)
 // ---- LEVEL 3: the parse (the named fallback). A tie class whose big-window
 // plane (rows x tie window) exceeds g_parse_plane_max is a DEEP REPEAT class
 // (kilobytes+ of mutual match, announced by its own size): instead of paying
@@ -2361,7 +2352,7 @@ int main(int argc, char** argv) {
     double memory_gb = 0.0;
     u64 threads = 32, unit_target_rows = 0, sample_n = 0;
     u64 wave_key_bytes = 0;
-    std::fprintf(stderr, "bins_sort: THE PER-BIN MACHINE (TAPE_BINS.md) - every bin its own readhead\n");
+    std::fprintf(stderr, "pfp_sort: THE PFP-BAND MACHINE (TAPE_BINS.md, AMENDMENTS 1-5) - one parse, phrase-key bands, byte-slide exactness\n");
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto nxt = [&]() {
@@ -2382,7 +2373,6 @@ int main(int argc, char** argv) {
         else if (a == "--sample") sample_n = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--wave-key-bytes") wave_key_bytes = std::strtoull(nxt().c_str(), nullptr, 10);
         else if (a == "--wave-run-cap") g_wave_run_cap = std::strtoull(nxt().c_str(), nullptr, 10);
-        else if (a == "--engine") g_engine = nxt();
         else if (a == "--wave-fallback-walk-max") {
             g_wave_fallback_walk_max = std::strtoull(nxt().c_str(), nullptr, 10);
             g_wave_fallback_walk_set = true;
@@ -2553,265 +2543,11 @@ int main(int argc, char** argv) {
         die("BAND_WORKSPACE: " + std::to_string(workspaceBytes) +
             " bytes is below the 1 MiB floor - a knob error");
 
-    if (const char* e = ::getenv("XSA_ENGINE")) g_engine = e;
-    if (g_engine != "reactive" && g_engine != "gparse")
-        die("XSA_ENGINE/--engine must be 'reactive' or 'gparse'");
     RssMonitor rss;
     rss.stopPath = bandsDir + "/../stop.requested";
     rss.start();
 
-    u64 NB = 0;   // bands: reactive = trie leaves; gparse = rank ranges
-    u64 planDmax = 6;
-    if (const char* e = ::getenv("XSA_PLAN_DMAX"))
-        planDmax = std::strtoull(e, nullptr, 10);
-    if (planDmax < 1 || planDmax > 16)
-        die("XSA_PLAN_DMAX must be in [1,16]");
-    if (planDmax > g_wave_key_bytes)
-        die("XSA_PLAN_DMAX exceeds the key bytes: the trie would walk past the captured key");
-    // ---- the trie (cache-sized: nodes exist only where the plan split) ----
-    struct PlanTrie {
-        std::vector<std::array<u32, 256>> child;   // 0 = absent (the
-            // lexicographic-successor rule covers unsampled prefixes);
-            // LEAF|bin = a leaf bin; otherwise the child node id
-        std::vector<u64> est;          // per node: the sampled row estimate
-        std::vector<u64> leafEst;      // per bin: the sampled row estimate
-        u32 nNodes = 0, nLeaves = 0;
-        u64 dMax = 6;
-        u64 satHits = 0;               // saturated sample counts (lower bounds)
-        enum : u32 { LEAF = 0x80000000u };
-        u32 mkNode() {
-            child.emplace_back();
-            child.back().fill(0);
-            est.push_back(0);
-            return nNodes++;
-        }
-    };
-    PlanTrie PT;
-    PT.dMax = planDmax;
-    u32 rootSlot = 0;
-
-    auto leftmostLeaf = [&](u32 slot) -> u64 {
-        for (u64 d = 0; d <= planDmax; ++d) {
-            if (slot & PlanTrie::LEAF) return u64(slot & ~PlanTrie::LEAF);
-            u32 next = 0;
-            for (u64 c = 0; c < 256; ++c)
-                if (PT.child[size_t(slot)][size_t(c)]) { next = PT.child[size_t(slot)][size_t(c)]; break; }
-            if (!next) die("PLAN_TRIE: an internal node with no children - a plan bug");
-            slot = next;
-        }
-        die("PLAN_TRIE: the walk exceeded d_max - a plan bug");
-    };
-    // a LEAF root = the whole corpus is one bin (NB=1): no walk at all.
-    // Read rootSlot AT CALL TIME: the plan builds the trie after this
-    // lambda is defined (the guard region below).
-    auto classify = [&](const u8* s, u64 avail) -> u64 {
-        if (rootSlot & PlanTrie::LEAF) return 0;
-        u32 slot = 0;                  // the root node id
-        u32 pathNode[17], pathByte[17];
-        for (u64 j = 0; j < planDmax; ++j) {
-            if (j >= avail) return leftmostLeaf(slot);   // END-suffix
-            const u8 c = s[j];
-            const u32 here = slot;
-            const u32 ch = PT.child[size_t(here)][c];
-            if (ch == 0) {
-                // unsampled prefix: the successor among present bytes,
-                // walking back up the path when this level has none
-                for (u64 d = j + 1; d-- > 0; ) {
-                    const u32 node = (d == j) ? here : pathNode[d];
-                    const u64 from = (d == j) ? u64(c + 1) : u64(pathByte[d] + 1);
-                    for (u64 c2 = from; c2 < 256; ++c2) {
-                        const u32 ch2 = PT.child[size_t(node)][size_t(c2)];
-                        if (ch2) return leftmostLeaf(ch2);
-                    }
-                }
-                return NB - 1;      // beyond every sampled prefix: the last bin
-            }
-            if (ch & PlanTrie::LEAF) return u64(ch & ~PlanTrie::LEAF);   // leaf bin
-            pathNode[j] = here;
-            pathByte[j] = c;
-            slot = ch;
-        }
-        return leftmostLeaf(slot);
-    };
-    // END-suffixes of the virtual END at the root: the empty suffix rides bin 0
-    // (leftmostLeaf(root) - the virtual END bucket, the leaf sort owns it).
-    if (g_engine != "gparse") {
-    // =================================================================
-    // AMENDMENT 1 (TAPE_BINS.md): the ADAPTIVE PREFIX-RANGE PLAN. The
-    // fixed 256 first-byte bins are wrong for real text (byte skew:
-    // space ~10% of the pile, letters unequal, controls empty). Bins
-    // are PREFIX RANGES chosen by sampling: SAMPLE (one sequential
-    // pass, every S-th position, prefixes to depth D_max), PLAN (grow a
-    // prefix trie only where the sampled row estimate exceeds the
-    // per-bin TARGET; sparse regions stay depth 1, dense go deeper),
-    // SCATTER (walk <= D_max bytes through the cache-sized trie to a
-    // leaf = bin id; leaf order = lexicographic = concatenation order),
-    // WAVES (bins stream in key order in waves packed to the RAM
-    // budget; peak = one wave, not the corpus - the pile mode).
-    // =================================================================
-    u64 planStride = 0;   // 0 = auto
-    if (const char* e = ::getenv("XSA_PLAN_STRIDE"))
-        planStride = std::strtoull(e, nullptr, 10);
-    u64 planTargetOverride = 0;   // debug override of the derived TARGET
-    if (const char* e = ::getenv("XSA_PLAN_TARGET"))
-        planTargetOverride = std::strtoull(e, nullptr, 10);
-    // ---- AMENDMENT 4 + ITS CODICIL: THE BAND WORKSPACE KNOB, LEAN BY
-    // DEFAULT. The default is a modest workspace (~12 GB, capped at the
-    // envelope's safe number) so an ordinary build runs K in the
-    // single-to-double digits on ordinary hardware; big workspaces are
-    // OPT-IN via the explicit knob. (The first default filled the box:
-    // a 3 GB build with --memory-gb 196 ran ONE band at 119 GB RSS.)
-    // K derives from corpus/workspace and the plan prints it with
-    // denominators. ----
-
-    // ---- SAMPLE: one sequential pass, every S-th position ----
-    u64 nSamples = 0, satSlots = 0, planStrideUsed = 0;
-    double tSampleS = 0;
-    std::vector<std::pair<u64, u64>> sampleKeys;   // (48-bit prefix, count)
-    {
-        const double t0 = now_sec();
-        u64 S = planStride;
-        if (!S) S = std::max<u64>(1, std::min<u64>(4096, FILE_N / 2000000));
-        planStrideUsed = S;
-        // the flat counting table: 48-bit key + 16-bit count (saturating)
-        u64 cap = 1u << 14;
-        const u64 want = (KEY_N + S - 1) / S + 1;
-        while (cap < want * 2 && cap < (1ull << 28)) cap <<= 1;
-        std::vector<u64> table(size_t(cap), 0);
-        u64 used = 0;
-        auto tabPut = [&](u64 key) {
-            u64 h = (key * 0x9E3779B97F4A7C15ull) & (cap - 1);
-            for (;;) {
-                const u64 slot = table[size_t(h)];
-                if (!slot) {
-                    if (used * 4 >= cap * 3)
-                        die("SAMPLE_DENSITY: the counting table filled (capacity=" +
-                            std::to_string(cap) + " samples=" + std::to_string(nSamples) +
-                            ") - raise XSA_PLAN_STRIDE");
-                    table[size_t(h)] = key | (1ull << 48);
-                    ++used;
-                    return;
-                }
-                if ((slot & ((1ull << 48) - 1)) == key) {
-                    const u64 cnt = slot >> 48;
-                    if (cnt < 0xFFFE) table[size_t(h)] =
-                        (slot & ((1ull << 48) - 1)) | ((cnt + 1) << 48);
-                    else ++satSlots;
-                    return;
-                }
-                h = (h + 1) & (cap - 1);
-            }
-        };
-        std::vector<u8> sbuf;
-        u64 sweepSampleBytes = 0;
-        for (u64 base = 0; base < KEY_N; ) {
-            beat(1);
-            if (::access(rss.stopPath.c_str(), F_OK) == 0) ::_exit(75);
-            const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, KEY_N - base);
-            const u64 want2 = std::min<u64>(chunk + planDmax, FILE_N - base);
-            read_window(fd, base, want2, sbuf);
-            sweepSampleBytes += want2;
-            const u64 hi = base + chunk;
-            u64 p = (base + S - 1) / S * S;
-            for (; p < hi; p += S) {
-                u64 key = 0;
-                for (u64 j = 0; j < planDmax; ++j)
-                    key = (key << 8) | sbuf[size_t(p - base + j)];
-                tabPut(key);
-                ++nSamples;
-            }
-            base += chunk;
-        }
-        sampleKeys.reserve(size_t(used));
-        for (u64 i = 0; i < cap; ++i) {
-            const u64 slot = table[size_t(i)];
-            if (slot) sampleKeys.emplace_back(slot & ((1ull << 48) - 1),
-                                              slot >> 48);
-        }
-        bswap_release(table);
-        std::sort(sampleKeys.begin(), sampleKeys.end());
-        tSampleS = now_sec() - t0;
-        std::fprintf(stderr,
-            "SS_SAMPLE stride=%" PRIu64 " d_max=%" PRIu64 " samples=%" PRIu64
-            " distinct=%zu saturated_slots=%" PRIu64 " sweep_bytes=%" PRIu64
-            " sample_s=%.2f"
-            " rule=one_sequential_pass_every_Sth_position_depth_histogram\n",
-            S, planDmax, nSamples, sampleKeys.size(), satSlots,
-            sweepSampleBytes, tSampleS);
-    }
-
-    // ---- PLAN: grow the trie only where the estimate exceeds TARGET ----
-    u64 planTarget = 0;
-    {
-        u64 target;
-        if (planTargetOverride) target = planTargetOverride;
-        else target = workspaceBytes / std::max<u64>(1, recBytes);
-        if (!target) die("PLAN_TARGET collapsed to 0 - a knob error");
-        planTarget = target;
-        const u64 S = planStrideUsed;
-        // one pass over the SORTED sample: a node = a key range at a
-        // depth; the range's total x S is the row estimate. The
-        // recursion descends ONLY where the parent split, so the trie
-        // stays cache-sized however dense the sample is.
-        std::function<u32(u64, u64, u64)> buildRange =
-            [&](u64 lo, u64 hi, u64 d) -> u32 {
-            u64 tot = 0;
-            for (u64 i = lo; i < hi; ++i) tot += sampleKeys[size_t(i)].second;
-            const u64 estRows = tot * S;
-            // AMENDMENT 3: the trie is pure BAND-BOUNDARY selection - a
-            // leaf = one band's key range, sized so its workspace fits
-            // (TARGET = workspace / rec_bytes). The byte-0 uniformity the
-            // leaf sort needs comes from the POST-SCAN sub-unit radix,
-            // not from the trie, so the root may stay a leaf (K=1).
-            if (d < planDmax && estRows > target && hi > lo) {
-                const u32 node = PT.mkNode();
-                PT.est[size_t(node)] = estRows;
-                const u64 sh = 8 * (planDmax - 1 - d);
-                u64 i = lo;
-                while (i < hi) {
-                    const u64 byte = (sampleKeys[size_t(i)].first >> sh) & 0xFF;
-                    u64 j = i;
-                    while (j < hi && ((sampleKeys[size_t(j)].first >> sh) & 0xFF)
-                               == byte) ++j;
-                    PT.child[size_t(node)][size_t(byte)] = buildRange(i, j, d + 1);
-                    i = j;
-                }
-                return node;
-            }
-            PT.leafEst.push_back(estRows);
-            if (PT.nLeaves >= (1u << 20))
-                die("PLAN_EXPLODED: over a million bins - TARGET too small");
-            return PlanTrie::LEAF | PT.nLeaves++;
-        };
-        rootSlot = buildRange(0, sampleKeys.size(), 0);
-        bswap_release(sampleKeys);
-        NB = PT.nLeaves;
-        if (!NB) die("PLAN_EMPTY: the sample produced no bins - a plan error");
-        // a LEAF root = the whole corpus is one bin: classify() short-circuits
-        u64 leafBytes = 0, maxBand = 0;
-        for (u64 b = 0; b < NB; ++b) {
-            leafBytes += PT.leafEst[size_t(b)] * recBytes;
-            maxBand = std::max(maxBand, PT.leafEst[size_t(b)]);
-        }
-        std::fprintf(stderr,
-            "SS_PLAN target_rows=%" PRIu64 " bands=%" PRIu64
-            " workspace_bytes=%" PRIu64 " rec_bytes=%" PRIu64
-            " corpus_rows=%" PRIu64 " corpus_row_bytes=%" PRIu64
-            " est_rows_sum=%" PRIu64 " est_largest_band_rows=%" PRIu64
-            " projected_scans=%" PRIu64 " nodes=%u saturated=%" PRIu64
-            " denominators=target=workspace/rec_bytes;K=ceil(corpus_rows/target);scans=K\n",
-            planTarget, NB, workspaceBytes, recBytes, N, N * recBytes,
-            std::accumulate(PT.leafEst.begin(), PT.leafEst.end(), u64(0)),
-            maxBand, NB, PT.nNodes, satSlots);
-    }
-
-    // the classification walk (the scatter's hot path). A missing child
-    // is an UNSAMPLED prefix: it goes to the lexicographic SUCCESSOR's
-    // bin (the next present byte at this or an ancestor node; beyond
-    // everything sampled = the last bin). A row that runs out of bytes
-    // is an END-suffix: it sorts before every continuation, so it goes
-    // to the LEFTMOST leaf under the node.
-    }
+    u64 NB = 0;   // bands: D-key ranges (AMENDMENT 5's parse census)
     // =================================================================
     // AMENDMENT 3: BANDS. Workspace = ONE BAND, ever. There is no
     // all-bins position-list artifact: per band, one FILTERED corpus
@@ -2945,143 +2681,6 @@ int main(int argc, char** argv) {
         bswap_release(U.Lp);
         bswap_release(U.Tp);
     };
-    if (g_engine != "gparse") {
-    // ---- THE BAND LOOP ----
-    for (u64 k = 0; k < NB; ++k) {
-        const double tk0 = now_sec();
-        // ---- SCAN: one filtered corpus pass (AMENDMENT 3) ----
-        std::vector<Unit> bandUnits = std::vector<Unit>(256);
-        for (unsigned b = 0; b < 256; ++b) bandUnits[b].bin = b;
-        u64 bandRows = 0, scanBytes = 0;
-        {
-            std::vector<u8> buf;
-            const double ts0 = now_sec();
-            for (u64 base = 0; base < KEY_N; ) {
-                beat(1);
-                if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
-                const u64 chunk = std::min<u64>(SS_SCAN_CHUNK, KEY_N - base);
-                const u64 from = base ? base - 1 : 0;
-                const u64 want = std::min<u64>(chunk + ov, FILE_N - from);
-                read_window(fd, from, want, buf);
-                scanBytes += want;
-                const u64 hi = base + chunk;
-                for (u64 p = base; p < hi; ++p) {
-                    const u64 o = p - from;
-                    const u8* kq = buf.data() + size_t(o) + 1;   // key at kbase=1
-                    if (classify(kq - 1, planDmax) != k) continue;   // the filter
-                    Unit& U = bandUnits[buf[size_t(o)]];
-                    U.P.push_back(pack_sym(p, p ? buf[size_t(o - 1)] : SENTINEL_SYMBOL));
-                    for (u64 j = 0; j < K; ++j) U.Kb.push_back(kq[j]);
-                    u32 runL = 0; u16 runT = 0;
-                    wavekey_run_digit(kq, FILE_N - p - 1, g_wave_run_cap, runL, runT);
-                    U.Lp.push_back(runL);
-                    U.Tp.push_back(runT);
-                }
-                base += chunk;
-            }
-            // THE TAILS: the plan owns them; their key range is their own
-            for (u64 p = KEY_N; p < N; ++p) {
-                u8 tb[17];
-                u64 avail = 0;
-                if (p < FILE_N) {
-                    avail = std::min<u64>(planDmax, FILE_N - p);
-                    for (u64 j = 0; j < avail; ++j)
-                        tb[j] = REMAP ? REMAP[T[p + j]] : T[p + j];
-                }
-                if (classify(tb, avail) != k) continue;
-                const u8 b = p < FILE_N ? u8(REMAP ? REMAP[T[p]] : T[p]) : 0;
-                bandUnits[b].tails.push_back(pack_sym(
-                    p, p == 0 ? SENTINEL_SYMBOL : u8(REMAP ? REMAP[T[p - 1]] : T[p - 1])));
-            }
-            const double scanS = now_sec() - ts0;
-            totalScanS += scanS;
-            totalScanBytes += scanBytes;
-            for (unsigned b = 0; b < 256; ++b)
-                bandRows += bandUnits[b].P.size() + bandUnits[b].tails.size();
-            std::fprintf(stderr,
-                "SS_BAND_SCAN band=%" PRIu64 "/%" PRIu64 " scan_bytes=%" PRIu64
-                " rows=%" PRIu64 " scan_s=%.2f"
-                " rule=one_filtered_pass_only_wanted_positions_kept\n",
-                k, NB, scanBytes, bandRows, scanS);
-        }
-        // ---- THE LEDGER (AMENDMENT 4): the knob is honored EXACTLY - an
-        // overrun means the SAMPLE lied (est << actual); die with the
-        // numbers, never a silent balloon, never a tuning question.
-        {
-            const u64 bandBytes = bandRows * recBytes;
-            if (bandBytes > workspaceBytes)
-                die("BAND_WORKSPACE_OVERRUN: band " + std::to_string(k) + " of " +
-                    std::to_string(NB) + " collected " + std::to_string(bandRows) +
-                    " rows = " + std::to_string(bandBytes) + " bytes against the workspace " +
-                    std::to_string(workspaceBytes) + " (sampled estimate was " +
-                    std::to_string(PT.leafEst[size_t(k)] * recBytes) +
-                    ") - the plan's sample deviated, this is a plan bug not a"
-                    " tuning question");
-        }
-        // ---- SORT: the pool over the band's byte-0 sub-units (the leaf
-        // sort's radix prefix stays byte-0-uniform per sub-unit) ----
-        {
-            std::atomic<u64> nextSub{0};
-            std::vector<std::thread> sorterThreads;
-            const u64 nSorters = std::max<u64>(1, std::min<u64>(threads, u64(256)));
-            for (u64 t = 0; t < nSorters; ++t)
-                sorterThreads.emplace_back([&, t] {
-                    for (;;) {
-                        const u64 b = nextSub.fetch_add(1, std::memory_order_relaxed);
-                        if (b >= 256) break;
-                        if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
-                        if (bandUnits[size_t(b)].P.empty() &&
-                            bandUnits[size_t(b)].tails.empty()) continue;
-                        WaveKeyStats st;
-                        const double ts0 = now_sec();
-                        process_bin(bandUnits[size_t(b)], fd, st, unitCounter + b);
-                        WAVE_KEY.add(st);
-                        u64 anon = 0, file = 0, tot = 0;
-                        RssMonitor::sample(anon, file, tot);
-                        std::fprintf(stderr,
-                            "SS_UNIT unit=%" PRIu64 " rows=%" PRIu64 " sort_s=%.2f"
-                            " tie_rows=%" PRIu64 " tie_groups=%" PRIu64
-                            " fallback_rows=%" PRIu64 " parse_read_bytes=%" PRIu64
-                            " anon_mb=%" PRIu64 "\n",
-                            unitCounter + b, bandUnits[size_t(b)].Pout.size(),
-                            now_sec() - ts0, st.tie_rows, st.tie_groups,
-                            st.fallback_rows, st.bytes_read, anon / 1024);
-                    }
-                });
-            for (auto& th : sorterThreads) th.join();
-        }
-        // ---- EMIT: sub-units in byte order = key order; the chunk
-        // streams directly to its final place (no merge, no staging) ----
-        for (unsigned b = 0; b < 256; ++b) {
-            Unit& U = bandUnits[size_t(b)];
-            if (U.Pout.empty() && U.tails.empty()) continue;
-            emitUnit(U, nextUnitId++);
-        }
-        // ---- FREE + the per-band live==0 law ----
-        {
-            u64 liveBytes = 0, liveRows = 0;
-            for (const Unit& U : bandUnits) {
-                liveBytes += U.P.size() * 8 + U.Pout.size() * 8 +
-                             U.Kb.size() + U.Lp.size() * 4 + U.Tp.size() * 2 +
-                             U.lcpv.size() * 8 + U.tails.size() * 8;
-                liveRows += U.Pout.size() + U.P.size();
-            }
-            if (liveBytes)
-                die("BAND_LIVE: band " + std::to_string(k) + " left " +
-                    std::to_string(liveBytes) + " bytes of planes (" +
-                    std::to_string(liveRows) + " rows) after emission - a leak");
-            u64 anonNow = 0, fileNow = 0, totNow = 0;
-            RssMonitor::sample(anonNow, fileNow, totNow);
-            std::fprintf(stderr,
-                "SS_BAND_DONE band=%" PRIu64 "/%" PRIu64 " rows=%" PRIu64
-                " live_bytes=0 rss_kb=%" PRIu64 " anon_kb=%" PRIu64
-                " total_s=%.2f"
-                " rule=workspace_is_one_band;commit_boundary_reached\n",
-                k, NB, bandRows, totNow, anonNow, now_sec() - tk0);
-        }
-        unitCounter += 256;
-    }
-    } else {
 
         // =============================================================
         // THE GLOBAL PARSE ENGINE (AMENDMENT 5): ONE doc-aware PFP parse
@@ -3564,10 +3163,7 @@ int main(int argc, char** argv) {
                     " rule=workspace_is_one_band;commit_boundary_reached\n",
                     k, NB, bandRows, totNow, anonNow, now_sec() - tk0);
             }
-        }
-    }
-
-    // ---- POST-RUN LIVE == 0 (the memory law): the per-band BAND_LIVE
+        }    // ---- POST-RUN LIVE == 0 (the memory law): the per-band BAND_LIVE
     // asserts already proved every plane freed at every commit boundary;
     // this is the terminal statement of the same law.
     std::fprintf(stderr,
