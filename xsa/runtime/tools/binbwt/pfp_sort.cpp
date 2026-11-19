@@ -60,6 +60,7 @@
 #include <chrono>
 #include <filesystem>
 #include <unordered_map>
+#include <unordered_set>
 #include <malloc.h>
 
 using u8 = uint8_t;
@@ -1208,25 +1209,41 @@ static void process_bin(Unit& U, int fd, WaveKeyStats& st, u64 unit_id) {
                 for (u64 i = 0; i < g_pfp_k; ++i) { h ^= q[i]; h *= 1099511628211ull; }
                 return h;
             };
-            // THE TRIGGER RULE (carried over verbatim): start s is a trigger
-            // iff km(s) is STRICTLY smaller than the w k-mers preceding AND
-            // following it. The spacing lemma: triggers are >= w+1 apart, so
-            // every phrase is > k long and ends with its own trigger k-mer.
+            // THE TRIGGER RULE (AMENDMENT 7, the one-sided form): start s
+            // is a trigger iff km(s) is STRICTLY smaller than the w k-mers
+            // PRECEDING it, suppressed for the first w positions of every
+            // phrase (the before-window lies inside the phrase). The
+            // two-sided form could not yield a prefix-free parse: the
+            // after-window of a phrase's final trigger always extends
+            // past the phrase end, so its minimality is context-dependent
+            // on the NEXT phrase's bytes and a phrase could be a prefix
+            // of another occurring elsewhere (12.5% of adjacent dict
+            // pairs on the real-text slice). THE PROOF of prefix-freeness
+            // under the one-sided rule: if P1 were a strict byte-prefix
+            // of P2, P1's terminal trigger sits at relative position
+            // p >= w with its whole before-window inside P1; the
+            // identical k-mers appear at P2's relative position p, the
+            // identical minimality fires there, so P2 ends at p too.
+            // Contradiction. Phrases end with their trigger k-mer; every
+            // phrase is >= w+k long (the suppression).
             auto extendFrontier = [&](u64 upTo) {
                 const u8* win = pbuf.data();
                 const u64 winBase = pbufBase;
                 for (u64 s = std::max(F.frontierStart, winBase);
-                     s + g_pfp_k + g_pfp_w <= upTo; ++s) {
-                    const u64 h = kmHash(win + (s - winBase));
-                    bool isTrig = true;
-                    const u64 back = std::min<u64>(g_pfp_w, s - winBase);
-                    for (u64 j = 1; j <= back; ++j) {
-                        if (!(h < kmHash(win + (s - j - winBase)))) { isTrig = false; break; }
-                    }
-                    if (isTrig)
-                        for (u64 j = 1; j <= g_pfp_w; ++j) {
-                            if (!(h < kmHash(win + (s + j - winBase)))) { isTrig = false; break; }
+                     s + g_pfp_k <= upTo; ++s) {
+                    const u64 phraseStart = F.ents.empty()
+                        ? std::max(F.frontierStart, winBase)
+                        : F.ents.back().end + 1;
+                    bool isTrig = (s >= phraseStart + g_pfp_w);
+                    if (isTrig) {
+                        const u64 h = kmHash(win + (s - winBase));
+                        const u64 back = std::min<u64>(g_pfp_w, s - phraseStart);
+                        for (u64 j = 1; j <= back; ++j) {
+                            if (!(h < kmHash(win + (s - j - winBase)))) {
+                                isTrig = false; break;
+                            }
                         }
+                    }
                     if (isTrig) {
                         const u64 end = s + g_pfp_k - 1;
                         const u64 start = F.ents.empty()
@@ -2716,6 +2733,9 @@ int main(int argc, char** argv) {
         // two-sided trigger rule carried over verbatim; phrases
         // interned into the dictionary arena; PA + PStart built) ----
         std::vector<u8> dictArena;
+        std::unordered_set<u32> residualIds;   // AMENDMENT 7: the forced-split
+        // and corpus-end phrase strings - the ONLY phrases a byte-prefix
+        // relation may legally involve (the provable residual class)
         std::vector<std::pair<u64, u32>> dictEnt;   // (arena off, len)
         {
             std::unordered_map<u64, std::vector<u32>> dictMap;
@@ -2737,6 +2757,7 @@ int main(int argc, char** argv) {
                 return v;
             };
             std::vector<u8> pbuf2;
+            u64 dbgCloses[2] = {0, 0};
             u64 prevStart = 0, forcedSplits = 0, carryReads = 0, carryBytes = 0;
             // THE READ-ONCE LAW: the scan window already holds the phrase
             // bytes; only a phrase straddling the chunk seam needs a carry
@@ -2786,31 +2807,81 @@ int main(int argc, char** argv) {
                 scanUntil = from + want;
                 const u64 hi = base + chunk;
                 for (u64 p = base; p < hi; ++p) {
-                    // the trigger: km(p) strictly smaller than the w
-                    // k-mers before AND after it (clamped at the corpus
-                    // edges); p==0 always starts the first phrase
-                    bool trig = (p == 0);
-                    if (!trig && p + kWin <= FILE_N && p >= from) {
+                    // THE TRIGGER (AMENDMENT 7, one-sided, the window
+                    // FULLY INSIDE the phrase): km(p) strictly smaller
+                    // than the w k-mers ENDING at or before p - i.e. the
+                    // k-mers at p-j for j in [k, k+w), whose spans
+                    // [p-j, p-j+k) lie INSIDE [prevStart, p). The first
+                    // attempt (j in [1, w]) still had the disease: the
+                    // k-mers at p-1..p-k+1 span PAST the phrase end into
+                    // the next phrase's bytes - the mini2 assert caught a
+                    // 10-byte phrase prefixing a 12-byte one. PROOF of
+                    // prefix-freeness: if P1 were a strict byte-prefix of
+                    // P2, P1's terminal trigger sits at t1 with the whole
+                    // comparison window inside P1; the identical k-mers
+                    // appear at P2's relative position |P1|, the identical
+                    // minimality fires there, so P2 ends at |P1| too.
+                    // Contradiction. The suppression p - prevStart >= k+w
+                    // keeps the window inside the phrase. p==0 always
+                    // starts the first phrase.
+                    bool trig = false;   // p==0 is NOT a trigger: the
+                    // first phrase runs from the corpus start to the
+                    // first real trigger (prevStart starts at 0)
+                    if (p + kWin <= FILE_N && p >= from
+                        && p >= prevStart + kWin + wWin) {
                         const u64 hp = kmAt(buf, p - from);
                         bool ok = true;
-                        for (u64 j = 1; j <= wWin && ok; ++j) {
-                            if (p >= j && p - j >= from &&
+                        for (u64 j = kWin; j < kWin + wWin && ok; ++j) {
+                            if (p - j >= prevStart &&
                                 kmAt(buf, p - from - j) <= hp) ok = false;
-                            if (p + j + kWin <= FILE_N &&
-                                p + j + kWin <= scanUntil &&
-                                kmAt(buf, p - from + j) <= hp) ok = false;
                         }
                         trig = ok;
                     }
-                    if (trig || p - prevStart >= 65535) {
-                        if (p - prevStart >= 65535 && !trig) ++forcedSplits;
-                        if (p > prevStart) closePhrase(p);
-                        prevStart = p;
+                    // THE FORCED-SPLIT GUARD: p > prevStart first - the
+                    // bare `p - prevStart >= 65535` underflows to a huge
+                    // u64 at every position inside the just-closed
+                    // trigger's k-mer (p < prevStart = p_trig + k), and
+                    // the bogus forced-enters RESET prevStart mid-phrase
+                    // (the mini2 receipt: forced_splits=18713 of 18714
+                    // phrases, every phrase overlapping its predecessor's
+                    // trigger k-mer)
+                    const bool forced = (p > prevStart && p - prevStart >= 65535);
+                    if (trig || forced) {
+                        // THE CLASSIC CONVENTION (the proof needs it): a
+                        // phrase ENDS WITH its trigger k-mer - the phrase
+                        // is [prevStart, p+k). With closePhrase(p) the
+                        // trigger lived OUTSIDE the phrase, so the k-mer
+                        // that ends P1 was the NEXT phrase's first k bytes
+                        // - context-dependent, and the prefix-freeness
+                        // proof could not close (the mini2 assert caught a
+                        // 39-byte phrase prefixing a 44-byte one). With
+                        // the trigger inside, P1's terminal k-mer and its
+                        // whole comparison window are inside P1: if P1
+                        // were a strict prefix of P2, the identical
+                        // k-mer + window at P2's relative position |P1|-k
+                        // fires the identical minimality, so P2 ends at
+                        // |P1| too. Contradiction.
+                        const u64 endPos = trig ? p + kWin : p;
+                        if (endPos > prevStart) {
+                            if (forced && !trig) {
+                                ++forcedSplits;
+                                residualIds.insert(PA.back());   // the forced
+                            }   // split string (the provable AMENDMENT 7
+                            closePhrase(endPos);   // residual class)
+                            prevStart = endPos;
+                            ++dbgCloses[trig ? 0 : 1];
+                        }
                     }
                 }
                 base += chunk;
             }
             closePhrase(FILE_N);
+            std::fprintf(stderr, "PARSE_DBG trigCloses=%" PRIu64
+                " forcedCloses=%" PRIu64 " phrases=%zu\n",
+                dbgCloses[0], dbgCloses[1], PA.size());
+            if (!PA.empty()) residualIds.insert(PA.back());   // the corpus-
+            // end phrase (no trigger of its own - the same provable
+            // residual class as the forced splits)
             const double tParseS = now_sec() - tg0;
             std::fprintf(stderr,
                 "SS_GPARSE_PASS threads=%" PRIu64 " phrases=%zu distinct=%zu dict_bytes=%zu"
@@ -2861,6 +2932,31 @@ int main(int argc, char** argv) {
                 if (lcp == la) {           // a is a byte-prefix of b
                     dictPrefixNext[size_t(r)] = 1;
                     ++prefixRelations;
+                    // AMENDMENT 7's ASSERT: with the one-sided trigger the
+                    // parse is prefix-free; a relation is legal ONLY if the
+                    // shorter phrase string is a forced-split or corpus-end
+                    // residual. Any other relation is a bug - die with the
+                    // counter and the pair.
+                    if (!residualIds.count(size_t(a)))
+                        die("PREFIX_FREE: phrase rank " + std::to_string(r) +
+                            " (dict id " + std::to_string(a) + ", len " +
+                            std::to_string(la) + ") is a byte-prefix of rank " +
+                            std::to_string(r + 1) + " (id " + std::to_string(b) +
+                            ", len " + std::to_string(lb) + ") without being a"
+                            " forced-split or corpus-end residual - the"
+                            " one-sided trigger rule is broken");
+                    if (::getenv("PREFIX_DUMP") && prefixRelations <= 24) {
+                        std::fprintf(stderr,
+                            "PREFIX_REL #%llu r=%llu/%llu la=%llu lb=%llu"
+                            " A=[%.*s] B=[%.*s]\n",
+                            (unsigned long long)prefixRelations,
+                            (unsigned long long)r, (unsigned long long)dictN,
+                            (unsigned long long)la, (unsigned long long)lb,
+                            int(la > 40 ? 40 : la),
+                            (const char*)(A + dictEnt[size_t(a)].first),
+                            int(lb > 60 ? 60 : lb),
+                            (const char*)(A + dictEnt[size_t(b)].first));
+                    }
                 }
             }
             // THE TRANSITIVE RUN: phrase(r) is a byte-prefix of
@@ -3154,18 +3250,18 @@ int main(int argc, char** argv) {
                             std::fprintf(stderr,
                                 "DIRECT cmp=%d ambMin=%u lenLo=%u walk_init"
                                 " ia2=%" PRIu64 " oA2=%u jb2=%" PRIu64 " oB2=%u\n",
-                                parseCmp(pa, pb), hi2 > lo2 ? ambMin(lo2, hi2) : 0u,
-                                rankLen[size_t(lo2)], ia2, oA2, jb2, oB2);
+                                parseCmp(pa, pb), hi2 > lo2 ? int(ambMin(lo2, hi2)) : 0,
+                                int(rankLen[size_t(lo2)]), ia2, oA2, jb2, oB2);
                         }
                         std::fprintf(stderr,
                             "PARSE_SORT_FAIL ia=%u ib=%u posA=%" PRIu64
                             " posB=%" PRIu64 " vA=%u rA=%" PRIu64
                             " lenA=%u vB=%u rB=%" PRIu64 " lenB=%u"
                             " lcpAB=%" PRIu64 " brute=%d\n",
-                            pa, pb, PStart_[size_t(pa)], PStart_[size_t(pb)],
-                            PA[size_t(pa)], rankOf[size_t(PA[size_t(pa)])],
+                            u64(pa), u64(pb), PStart_[size_t(pa)], PStart_[size_t(pb)],
+                            u64(PA[size_t(pa)]), rankOf[size_t(PA[size_t(pa)])],
                             dictEnt[size_t(PA[size_t(pa)])].second,
-                            PA[size_t(pb)], rankOf[size_t(PA[size_t(pb)])],
+                            u64(PA[size_t(pb)]), rankOf[size_t(PA[size_t(pb)])],
                             dictEnt[size_t(PA[size_t(pb)])].second,
                             [&] { u64 L = 0; const u64 a = dictEnt[size_t(PA[size_t(pa)])].first,
                                   b = dictEnt[size_t(PA[size_t(pb)])].first;
@@ -3228,7 +3324,7 @@ int main(int argc, char** argv) {
                     for (u64 b = 0; b < 65536; ++b)
                         hist[size_t(b)] += parts2[size_t(t)][size_t(b)];
             }
-            const u64 targetRows = std::max<u64>(1, workspaceBytes / 48);
+            const u64 targetRows = std::max<u64>(1, workspaceBytes / 64);
             u64 cum = 0, lo = 0, censusRows = 1;   // + the empty suffix
             for (u64 key = 0; key < 65536; ++key) {
                 const u64 kr = hist[size_t(key)];
@@ -3248,7 +3344,7 @@ int main(int argc, char** argv) {
             NB = bandBytes.size();
             std::fprintf(stderr,
                 "SS_PLAN target_rows=%" PRIu64 " bands=%" PRIu64
-                " workspace_bytes=%" PRIu64 " row_footprint_bytes=48"
+                " workspace_bytes=%" PRIu64 " row_footprint_bytes=64"
                 " census_rows=%" PRIu64 " corpus_rows=%" PRIu64
                 " projected_scans=%" PRIu64 " max_phrase_len=%" PRIu64
                 " denominators=target=workspace/40;K=byte_range_bands"
@@ -3281,8 +3377,9 @@ int main(int argc, char** argv) {
         // for the deep 16+-byte ties only. ----
         struct BandRow {
             u64 occ_o;   // (occ << 32) | o
+            u64 key48;   // the suffix's first 6 bytes, BIG-ENDIAN (0 = the END)
             u32 nrank;   // the continuation's aligned rank; 0 = the END
-            u32 cont4;   // the continuation's first 4 bytes (LE; 0 = the END)
+            u32 cont4;   // the continuation's first 4 bytes (BE; 0 = the END)
         };
         auto rowPos = [&](const BandRow& r) -> u64 {
             return PStart_[size_t(r.occ_o >> 32)] + (r.occ_o & 0xFFFFFFFFull);
@@ -3499,8 +3596,23 @@ int main(int argc, char** argv) {
                                         ? dictArena[size_t(off + o + 1)] : nxt0;
                                     const u32 key = (b0 << 8) | b1;
                                     if (key < keyLo || key >= keyHi) continue;
+                                    // THE 48-BIT PREFIX KEY: the suffix's
+                                    // first 6 bytes (the slice, then the
+                                    // continuation), BIG-ENDIAN so the u64
+                                    // compare IS the byte order; the END
+                                    // pads 0
+                                    u64 k48 = 0;
+                                    u32 got2 = 0;
+                                    for (; got2 < 6 && o + got2 < len; ++got2)
+                                        k48 = (k48 << 8)
+                                            | u64(dictArena[size_t(off + o + got2)]);
+                                    for (u32 j2 = 0; got2 < 6 && j2 < 4; ++j2, ++got2)
+                                        k48 = (k48 << 8)
+                                            | u64((c4 >> (8 * (3 - j2))) & 0xFF);
+                                    for (; got2 < 6; ++got2) k48 <<= 8;
                                     BandRow r;
                                     r.occ_o = (i << 32) | o;
+                                    r.key48 = k48;
                                     r.nrank = nr;
                                     r.cont4 = c4;
                                     parts[size_t(t)].push_back(r);
@@ -3524,43 +3636,80 @@ int main(int argc, char** argv) {
                     " collect_s=%.2f"
                     " rule=parse_enumeration;ranks_and_cont4_at_the_collect\n",
                     k, NB, u64(keyLo), u64(keyHi), bandRows, now_sec() - tk0);
-                if (bandRows * 48 > workspaceBytes)
+                if (bandRows * 64 > workspaceBytes)
                     die("BAND_WORKSPACE_OVERRUN: band " + std::to_string(k) +
                         " of " + std::to_string(NB) + " collected " +
-                        std::to_string(bandRows) + " rows x 48B against the workspace " +
+                        std::to_string(bandRows) + " rows x 64B against the workspace " +
                         std::to_string(workspaceBytes) + " - refusing with the numbers");
                 // ---- SORT: the MSD over the slice's first two bytes,
                 // then a pool of std::sorts with the induced comparator ----
                 std::vector<BandRow> alt = std::vector<BandRow>(rows.size());
                 {
+                    const double tmsd0 = now_sec();
+                    // THE MSD, 3 LEVELS OF 16-BIT DIGITS OVER THE ROW'S
+                    // STORED 48-BIT PREFIX KEY: register reads, pooled
+                    // passes. The 2-byte keys saturated on this text
+                    // (the genomic 4-letter alphabet: multi-million-row
+                    // buckets serially sorted while 23 threads idled);
+                    // 6 prefix bytes dissolve them - no merges, no
+                    // digByte walks in the sort.
                     std::vector<std::pair<u64, u64>> work;
                     work.emplace_back(0, rows.size());
-                    for (int lvl = 0; lvl < 2 && !work.empty(); ++lvl) {
+                    // level 0: the 16-bit top (bytes 0-1); levels 1-2: the
+                    // 8-bit digits (bytes 2-3); only the items > 4096 rows
+                    // (the 65536-wide loops per small item were the mini
+                    // wall: msd_s=0.82 on 60K rows)
+                    for (int lvl = 0; lvl < 3 && !work.empty(); ++lvl) {
                         std::vector<std::pair<u64, u64>> next;
-                        std::vector<u64> starts(257);
-                        for (const auto& sp2 : work) {
-                            if (sp2.second - sp2.first < 2) continue;
-                            starts.assign(257, 0);
-                            for (u64 i = sp2.first; i < sp2.second; ++i)
-                                ++starts[size_t(digByte(rows[size_t(i)], u32(lvl)) + 1)];
-                            for (u64 b = 0; b < 256; ++b)
-                                starts[size_t(b) + 1] += starts[size_t(b)];
-                            std::vector<u64> bnd = starts;
-                            for (u64 i = sp2.first; i < sp2.second; ++i)
-                                alt[size_t(sp2.first + starts[size_t(
-                                    digByte(rows[size_t(i)], u32(lvl)))]++)] =
-                                    rows[size_t(i)];
-                            std::memcpy(&rows[size_t(sp2.first)], &alt[size_t(sp2.first)],
-                                        size_t(sp2.second - sp2.first) * 16);
-                            for (u64 b = 0; b < 256; ++b) {
-                                const u64 s2 = sp2.first + bnd[size_t(b)];
-                                const u64 e2 = sp2.first + bnd[size_t(b + 1)];
-                                if (e2 - s2 > 1) next.emplace_back(s2, e2);
-                            }
-                        }
+                        std::vector<std::thread> mpool;
+                        std::mutex workMx;
+                        for (u64 t = 0; t < threads; ++t)
+                            mpool.emplace_back([&] {
+                                for (;;) {
+                                    std::pair<u64, u64> sp2;
+                                    { std::lock_guard<std::mutex> g2(workMx);
+                                      if (work.empty()) return;
+                                      sp2 = work.back(); work.pop_back(); }
+                                    if (sp2.second - sp2.first < 2) continue;
+                                    if (lvl && sp2.second - sp2.first <= 4096) {
+                                        std::lock_guard<std::mutex> g2(workMx);
+                                        next.push_back(sp2);
+                                        continue;
+                                    }
+                                    const bool wide = (lvl == 0);
+                                    const u32 sh2 = wide ? 32 : u32(8 * (5 - lvl));
+                                    const u64 nb2 = wide ? 65536 : 256;
+                                    std::vector<u64> starts(size_t(nb2) + 1, 0);
+                                    for (u64 i = sp2.first; i < sp2.second; ++i) {
+                                        const u32 dig = u32((rows[size_t(i)].key48 >> sh2)
+                                                           & (wide ? 0xFFFF : 0xFF));
+                                        ++starts[size_t(dig) + 1];
+                                    }
+                                    for (u64 b = 0; b < nb2; ++b)
+                                        starts[size_t(b) + 1] += starts[size_t(b)];
+                                    std::vector<u64> bnd = starts;
+                                    for (u64 i = sp2.first; i < sp2.second; ++i) {
+                                        const u32 dig = u32((rows[size_t(i)].key48 >> sh2)
+                                                           & (wide ? 0xFFFF : 0xFF));
+                                        alt[size_t(sp2.first + starts[size_t(dig)]++)] =
+                                            rows[size_t(i)];
+                                    }
+                                    std::memcpy(&rows[size_t(sp2.first)],
+                                                &alt[size_t(sp2.first)],
+                                                size_t(sp2.second - sp2.first) * 24);
+                                    { std::lock_guard<std::mutex> g2(workMx);
+                                      for (u64 b = 0; b < nb2; ++b) {
+                                          const u64 s2 = sp2.first + bnd[size_t(b)];
+                                          const u64 e2 = sp2.first + bnd[size_t(b + 1)];
+                                          if (e2 - s2 > 1) next.emplace_back(s2, e2);
+                                      } }
+                                }
+                            });
+                        for (auto& th : mpool) th.join();
                         work.swap(next);
                     }
-                    // the deep buckets by a pool
+                    const double tmsd1 = now_sec();
+                    // the residual buckets by a pool of std::sorts
                     std::atomic<u64> nextBucket{0};
                     std::vector<std::thread> pool;
                     const u64 nPool = std::max<u64>(1, std::min<u64>(threads,
@@ -3607,6 +3756,7 @@ int main(int argc, char** argv) {
                                         thrFail[size_t(t)] = 1;
                                         return;
                                     }
+
                             }
                         });
                     for (auto& th : pool) th.join();
@@ -3614,6 +3764,10 @@ int main(int argc, char** argv) {
                         if (f) die("GPARSE_ORDER: band " + std::to_string(k) +
                                    " a sorted bucket disagrees with the byte"
                                    " order - an induction comparator bug");
+                    std::fprintf(stderr,
+                        "SS_BAND_SORT_PHASES band=%" PRIu64 " msd_s=%.2f sort_s=%.2f"
+                        " buckets=%zu giant=%" PRIu64 "\n",
+                        k, tmsd1 - tmsd0, now_sec() - tmsd1, work.size(), u64(0));
                 }
                 bswap_release(alt);
                 // ---- THE LCP COLUMN: the honest brute walks (the total
