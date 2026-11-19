@@ -315,3 +315,29 @@ detached at 24 threads while this is built). Both machines face the same
 gates: minis -> G0 fixtures + adversarial vs the brute oracle -> G1 cold
 -> G2 identity -> G3. The numbers choose what launches the pile; no
 opinions.
+
+## AMENDMENT 6 — THE SORT SORTS THE PARSE (the radix system completed), 2026-11-19
+
+"THE PARSE IS OUR RADIX SYSTEM" — the operator. The per-suffix phrase-streaming
+band sort was a MISIMPLEMENTATION of "then the sort" and is DELETED.
+
+THE SORT:
+1. The rows to sort are the PARSE POSITIONS (N/L of them — 174M at 3 GB, not
+   3e9 suffixes). Keys are INTEGER phrase-rank sequences over contiguous
+   parse arrays — integer comparisons with locality, never byte-streaming
+   through the dictionary.
+2. ALIGNED suffixes (phrase-boundary starts): their order IS the sorted parse
+   order. Sort the parse positions.
+3. UNALIGNED suffixes (mid-phrase starts): INDUCED locally from the aligned
+   order — each position's order follows from (its phrase's rank, intra-phrase
+   offset) and the local window; O(N) induction with small, cache-local
+   constants. No per-row streaming, ever. The 7.8-billion-step stream counters
+   are evidence of the deleted mistake — the receipt after this amendment
+   should show ZERO stream steps.
+4. Bands (Amendment 3) band the PARSE SORT: key ranges of the parse order,
+   same workspace knob, same invariance law.
+5. EMIT unchanged: induced SA streams to the container in key order.
+
+THE EXPECTED ARITHMETIC (from run10's receipts): parse 228 s + parse-sort
+(~174M integer rows) + O(N) induction + finish — the 2h05m wall should
+collapse by ~20x. G3 prices it from measurement, as always.
