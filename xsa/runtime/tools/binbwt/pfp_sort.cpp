@@ -3903,7 +3903,8 @@ int main(int argc, char** argv) {
                 // per-row text read and the LCP walk run IN the worker.
                 struct SpanStats {
                     u64 rows = 0, blocks = 0, maxChain = 0, fast = 0,
-                        slow = 0, gates = 0, cycles = 0, builds = 0;
+                        slow = 0, gates = 0, cycles = 0, builds = 0,
+                        scanSteps = 0;
                 };
                 auto packRow = [&](u64 pos) -> u64 {
                     return pack_sym(pos,
@@ -4038,23 +4039,30 @@ int main(int argc, char** argv) {
                             ++st.gates;
                             if (!lastRun && cmpBound(e.row, nx, eNx) >= 0) {
                                 ++st.blocks; ++st.cycles;
-                                // THE EMIT-PHASE PRECOMPUTE: binary
-                                // search the first phase whose boundary
-                                // passes the row (cmpBound is monotone
-                                // in the sorted slices). lo lands on the
-                                // passing phase; the span's last phase
-                                // has no boundary (the drain passes all).
-                                u64 lo = r2 + 1, hi = runHi2;
-                                while (lo < hi) {
-                                    const u64 mid = lo + (hi - lo) / 2;
+                                // THE EMIT-PHASE SCAN: walk the future
+                                // boundaries ONE BY ONE - the exact gate
+                                // sequence the re-gating machine ran,
+                                // batched here so the row leaves the live
+                                // heap while it waits (the heap re-sift
+                                // churn was the crawl; the gates remain,
+                                // ~20x cheaper than the churn). NOT a
+                                // binary search: the boundary predicate
+                                // is NOT monotone (the mixed fixture
+                                // proved a passing phase followed by a
+                                // blocking one - the sentinel/END corners
+                                // of cmpBound), and only the linear scan
+                                // is exact by construction.
+                                u64 lo = r2 + 1;
+                                while (lo + 1 < runHi2) {
                                     const u32 nx2 = sliceX(
-                                        u32(runStart[size_t(mid + 1)]));
+                                        u32(runStart[size_t(lo + 1)]));
                                     if (cmpBound(e.row, nx2,
                                         phraseEndAt[size_t(nx2)]) < 0)
-                                        hi = mid;
-                                    else lo = mid + 1;
+                                        break;
+                                    ++lo;
+                                    ++st.scanSteps;
                                 }
-                                if (lo >= runHi2) lo = runHi2 - 1;
+                                if (lo + 1 >= runHi2) lo = runHi2 - 1;
                                 defPush(lo, std::move(e));
                                 break;
                             }
@@ -4111,7 +4119,8 @@ int main(int argc, char** argv) {
                              ? pairsPerRow : 1.0)));
                 u64 mergeSteps = 0, boundaryBlocks = 0, maxChain = 0,
                     fastRows = 0, slowRows = 0, gateCalls = 0,
-                    blockedCycles = 0, rowBuilds = 0, assembledTotal = 0;
+                    blockedCycles = 0, rowBuilds = 0, assembledTotal = 0,
+                    scanSteps = 0;
                 u64 prevEmittedPos = ~0ull;
                 bool pendingHead = true;   // the virtual END row first
                 const u64 headPacked = packRow(FILE_N);
@@ -4186,6 +4195,7 @@ int main(int argc, char** argv) {
                             gateCalls += s2.gates;
                             blockedCycles += s2.cycles;
                             rowBuilds += s2.builds;
+                            scanSteps += s2.scanSteps;
                         }
                         // the thin serial assembly
                         const double ta0 = now_sec();
@@ -4254,14 +4264,15 @@ int main(int argc, char** argv) {
                     " max_chain=%" PRIu64 " boundary_blocks=%" PRIu64
                     " fast_rows=%" PRIu64 " slow_rows=%" PRIu64
                     " gate_calls=%" PRIu64 " blocked_cycles=%" PRIu64
-                    " row_builds=%" PRIu64
+                    " row_builds=%" PRIu64 " scan_steps=%" PRIu64
                     " regions=%" PRIu64 " sim_s=%.2f merge_s=%.2f"
                     " assemble_s=%.2f emit_s=%.2f"
                     " rule=O(N)_parallel_region_merge;fast_path_singletons"
                     ";zero_corpus_suffix_sorts\n",
                     nRuns, mergeSteps, maxChain, boundaryBlocks,
                     fastRows, slowRows, gateCalls, blockedCycles,
-                    rowBuilds, nRegions, sim_s, merge_s, assemble_s,
+                    rowBuilds, scanSteps, nRegions, sim_s, merge_s,
+                    assemble_s,
                     now_sec() - te0);
                 std::fprintf(stderr,
                     "SS_HARD_RULE corpus_suffix_rows_sorted=%" PRIu64
