@@ -393,3 +393,78 @@ hook. The accepted refusal fixture uses exact identity with its committed
 brute-force SHA, not this pending oracle. No signal was sent. All requested
 artifact writes remain under TAPEREADER or this worktree; the frozen bank and
 reserved PILE directory were untouched. This third leg is **incomplete**.
+
+## MODE B (the streaming one-mode machine) — the sandbox rung, 2026-11-20/21
+
+MODE A IS DELETED: the in-RAM intern table (dictMap + internPhrase), the
+resident dictionary text (dictArena), and the post-parse dictionary
+std::sort are gone from the parse. pfp_sort's parse is the streaming
+machine: the trigger window + a bounded advisory 4096-slot recent-phrase
+cache (journaled hits/misses, never load-bearing), every occurrence
+seeded to the disc sink, the 2-byte prefix histogram collected in
+passing. Then: the equalized 2-byte-prefix-range buckets (never bare
+first-byte; boundaries by the measured histogram, sized to the dial's
+sort budget; the 1-byte-phrase cell (b0,0) sorts first = the key order),
+the per-bucket in-RAM key sort (the comparator reads THE CORPUS at the
+references - the dictionary is (first-occurrence position, length)
+REFERENCES ONLY, no byte copies anywhere), dedupe + THE CENSUS as the
+sort's byproducts, byte-order IDs (the IDs ARE the ranks), and the PA
+by a single re-read + per-occurrence dictionary binary search +
+position sort.
+
+THE PHRASEBOOK (explicit, tested): pb.ids (the ID sequence in position
+order), pb.lens (the dictionary's length column), pb.samples (every
+64th prefix sum). Positions are PREFIX SUMS of lengths - never stored
+(the phrasebook gate's brute check: the prefix sums tile the corpus
+exactly). Gate: gates/phrasebook_gate.cpp - random corpus positions
+answered by phrasebook lookup vs the brute parse (the trigger is
+HASH-based (FNV over the k-mers) and the read window applies the REMAP
+before the trigger - the historical, certified convention; the gate
+replicates both), plus the reverse lookup + the dedupe law (the same
+ID's bytes identical at every occurrence). PASS at the mixed fixture
+(4000 tests) and at the sandbox (6000 tests).
+
+PROOFS AT THE SANDBOX (~100 MB of the real pile head, cut at the
+document boundary: doc 16555 of pilemap100, 100,000,503 bytes):
+- (a) G0 ORACLE-EXACT at the default dial: 9/9 fixture arms PASS
+  (adv/docsep/eofrun/internsep/mixed/period2/r0/single + the collision
+  fixture), the brute-matching streams verified.
+- THE SANDBOX AT WIDE (the 12 GB default dial): SS_DONE n=100,000,504
+  rows, total 41.0 s. The phase table (all seconds-class):
+    parse     ~5 s   (3,054,126 phrases, avg 32.75 B, anon peak 35 MB -
+                    the streaming law HOLDS: local state only)
+    key sort  1.60 s (2,946,926 distinct, census 3,054,126,
+                    dict 96,478,666 reference bytes, anon 76 MB)
+    parse-SA  3.21 s (3,054,175 integer rows; anon 202 MB)
+    pairs    17.16 s (96,478,666 pairs, 67,619,925 runs; anon 2.23 GB)
+    emit     ~14 s   (the concat walk; anon 5.53 GB)
+  prefix_relations=0 (the real pile text: the one-sided trigger's
+  prefix-freeness holds in the wild), forced_splits=0.
+  THE CONTAINER: XSA_FINISH_DONE chi=29,716,347 n=100,000,504
+  r=38,647,521; product sha256 6325c843c0d9aa9b...
+- (c) THE DIAL LAW, asserted with numbers at every phase boundary
+  (SS_PHASE_RSS per phase; die-with-numbers on violation):
+    at 512 MB: DIES at pairs_sort - anon peak 2,233,964 kB against the
+    dial 524,288 + eps 131,072.
+    at 16 MB: DIES at parse_sa - 202,332 kB against 16,384 + 65,536.
+    at the 64 MB fixture dial: DIES at emit - 279,292 kB against
+    65,536 + 65,536.
+  THE NAMED REMAINING MODE A SURFACE (each priced by its receipt):
+  the pairs columns (96.5M pairs x 24 B), the parse-SA arrays (M-proportional),
+  the emit's own/finalPos arrays (row-proportional). The census-drawn
+  BINS over the sorted keys shard all three (the vision's BIN -> the
+  per-bin chunk sorts -> the concat); the cross-bin arrival exchange is
+  designed (the landing gallop clamps at the bin boundary; the rows
+  crossing forward park as (P,o,occ) and the landing bin resolves
+  them). That is the next work, and the dial law will certify it.
+- THE LEVEL-2 CENSUS at the sandbox (the measurement, gates/
+  level2_census.cpp): the parse of the parse - the same one-sided
+  trigger over ID k-mers (k=8, w=8), doc-contained (16,545 document
+  boundaries from the level-1 phrase spans):
+    level1_phrases=3,054,126 -> level2_phrases=102,272
+    level2_distinct=102,079, level2_avg_len=29.86 IDs, max 173
+    CONDENSATION = 29.863x, forced=0.
+  THE NUMBER: the level-2 SA at this scale sorts 102K rows instead of
+  3.05M - the condensation is strong in the real pile head. The
+  corpus-level level decision gets re-measured at 3 GB and the 100 GB
+  head (the census is its own feasibility study each time).

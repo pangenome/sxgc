@@ -305,6 +305,9 @@ struct RssMonitor {
         std::fclose(f);
         return any;
     }
+    void resetPeaks() {
+        peak_anon.store(0); peak_file.store(0); peak_total.store(0);
+    }
     void start() {
         th = std::thread([this] {
             while (!stop.load(std::memory_order_relaxed)) {
@@ -2604,6 +2607,29 @@ int main(int argc, char** argv) {
     RssMonitor rss;
     rss.stopPath = bandsDir + "/../stop.requested";
     rss.start();
+    // THE ONE-MODE DIAL LAW (TAPE_VISION.md): every phase's resident
+    // set = the workspace dial + a small epsilon, asserted with
+    // numbers at every phase boundary. The ANON peak is the machine's
+    // own footprint; the file-backed peak (the corpus mmap, the page
+    // cache's reclaimable pages) is journaled beside it for
+    // transparency - the windowed-mmap discipline is the pile-scale
+    // item, and the numbers are the receipt either way.
+    std::function<void(const char*)> phaseRssGate = [&](const char* ph) {
+        const u64 a = rss.peak_anon.load(), f = rss.peak_file.load();
+        const u64 dialKb = workspaceBytes / 1024;
+        const u64 epsKb = std::max<u64>(65536, dialKb / 4);
+        std::fprintf(stderr,
+            "SS_PHASE_RSS phase=%s anon_peak_kb=%" PRIu64
+            " file_peak_kb=%" PRIu64 " dial_kb=%" PRIu64 " eps_kb=%" PRIu64
+            "\n", ph, a, f, dialKb, epsKb);
+        if (a > dialKb + epsKb)
+            die(std::string("DIAL_LAW: phase ") + ph + " peaked at "
+                + std::to_string(a) + " kB anon against the dial "
+                + std::to_string(dialKb) + " kB + " + std::to_string(epsKb)
+                + " kB epsilon - a phase holds a structure past the"
+                  " workspace dial (the one-mode law is broken)");
+        rss.resetPeaks();
+    };
 
     u64 NB = 0;   // bands: D-key ranges (AMENDMENT 5's parse census)
     // =================================================================
@@ -2766,64 +2792,70 @@ int main(int argc, char** argv) {
         // belt; the G0 oracle gates the whole machine end to end.
         // =============================================================
         const double tg0 = now_sec();
-        std::vector<u32> PA;        // the phrase id sequence (the parse array)
+        // ---- STROKE P (MODE B): the streaming parse. Local state
+        // only: the trigger window + a small bounded recent-phrase
+        // cache (advisory - a cache is allowed, a table is not; its
+        // misses are just occurrences written to the sink like any
+        // other). MODE A IS DELETED: no intern table, no resident
+        // dictionary text, no it-fits-in-RAM path in the parse. Every
+        // occurrence seeds the disc sink; the 2-byte prefix histogram
+        // is collected in passing for the bucket equalization.
+        std::vector<u32> PA;        // the phrase id sequence (byte order)
         std::vector<u64> PStart_;   // the phrase start positions
-        // ---- STROKE P: the parse pass (one sequential read; the
-        // two-sided trigger rule carried over verbatim; phrases
-        // interned into the dictionary arena; PA + PStart built) ----
-        std::vector<u8> dictArena;
-        std::unordered_set<u32> residualIds;   // AMENDMENT 7: the forced-split
-        // and corpus-end phrase strings - the ONLY phrases a byte-prefix
-        // relation may legally involve (the provable residual class)
-        std::vector<std::pair<u64, u32>> dictEnt;   // (arena off, len)
+        std::vector<u64> dictRefPos;   // the REFERENCE dictionary: the
+        std::vector<u32> dictLen;      // first-occurrence position + the
+        std::vector<u32> dictCount;    // length + THE CENSUS count. NO
+                                       // byte copies anywhere.
+        std::unordered_set<u32> residualIds;
+        const std::string modebDir = bandsDir + "/../modeb";
+        if (::mkdir(modebDir.c_str(), 0777) != 0 && errno != EEXIST)
+            die("mkdir " + modebDir);
         {
-            std::unordered_map<u64, std::vector<u32>> dictMap;
-            dictMap.reserve(1 << 22);
-            auto internPhrase = [&](const u8* q, u32 len) -> u32 {
-                u64 h = 1469598103934665603ull;
-                for (u32 i = 0; i < len; ++i) { h ^= q[i]; h *= 1099511628211ull; }
-                auto it = dictMap.find(h);
-                if (it != dictMap.end())
-                    for (u32 v : it->second)
-                        if (dictEnt[size_t(v)].second == len &&
-                            std::memcmp(dictArena.data() + dictEnt[size_t(v)].first,
-                                        q, len) == 0)
-                            return v;   // memcmp-verified (the FNV collision belt)
-                const u32 v = u32(dictEnt.size());
-                dictEnt.emplace_back(dictArena.size(), len);
-                dictArena.insert(dictArena.end(), q, q + len);
-                dictMap[h].push_back(v);
-                return v;
-            };
+            std::string occPath = modebDir + "/occurrences.bin";
+            FILE* occSink = std::fopen(occPath.c_str(), "wb");
+            if (!occSink) die("open " + occPath);
+            std::vector<u64> residualPos;
+            u32 hist2[65536];
+            std::memset(hist2, 0, sizeof hist2);
+            // THE BOUNDED ADVISORY CACHE (the vision's letter): 4096
+            // slots, hash-keyed; journaled, never load-bearing.
+            struct CacheSlot { u64 h; u32 len; } cache[4096];
+            std::memset(cache, 0, sizeof cache);
+            u64 cacheHits = 0, cacheMisses = 0;
             std::vector<u8> pbuf2;
             u64 dbgCloses[2] = {0, 0};
             u64 prevStart = 0, forcedSplits = 0, carryReads = 0, carryBytes = 0;
-            // THE READ-ONCE LAW: the scan window already holds the phrase
-            // bytes; only a phrase straddling the chunk seam needs a carry
-            // read (rare, journaled). The old closePhrase re-read EVERY
-            // phrase - 174.5M extra preads at 3 GB, the run8 receipt's
-            // 3.3 GB of the 6.79x rchar.
-            const u8* scanBase = nullptr;   // the current window's [from] base
+            const u8* scanBase = nullptr;
             u64 scanFrom = 0, scanUntil = 0;
             auto closePhrase = [&](u64 endPos) {
                 if (endPos <= prevStart) return;
                 const u32 plen = u32(endPos - prevStart);
+                const u8* q;
                 if (scanBase && prevStart >= scanFrom && endPos <= scanUntil) {
-                    PA.push_back(internPhrase(scanBase + size_t(prevStart - scanFrom), plen));
+                    q = scanBase + size_t(prevStart - scanFrom);
                 } else {
-                    // the seam carry (a phrase started in the previous chunk)
                     const u64 at = prevStart ? prevStart - 1 : 0;
                     u64 want = u64(plen) + 1 + (prevStart ? 1 : 0);
                     want = std::min(want, FILE_N - at);
                     read_window(fd, at, want, pbuf2);
-                    const u8* q = pbuf2.data() + (prevStart ? 1 : 0);
-                    PA.push_back(internPhrase(q, plen));
+                    q = pbuf2.data() + (prevStart ? 1 : 0);
                     ++carryReads;
                     carryBytes += want;
                 }
+                // THE SEED: the occurrence to the disc sink
+                std::fwrite(&prevStart, 8, 1, occSink);
+                std::fwrite(&plen, 4, 1, occSink);
+                // the 2-byte prefix cell (b1 = 0 marks a 1-byte phrase:
+                // cell order == key order, shorter first)
+                ++hist2[(u32(q[0]) << 8) | (plen > 1 ? u32(q[1]) : 0u)];
+                // the advisory cache (never load-bearing)
+                u64 h = 1469598103934665603ull;
+                for (u32 i = 0; i < plen; ++i) { h ^= q[i]; h *= 1099511628211ull; }
+                auto& slot = cache[h & 4095];
+                if (slot.h == h && slot.len == plen) ++cacheHits;
+                else { ++cacheMisses; slot.h = h; slot.len = plen; }
                 PStart_.push_back(prevStart);
             };
-            // the km hash over the buffer (carried over verbatim)
             auto kmAt = [&](const std::vector<u8>& buf, u64 o) -> u64 {
                 u64 h = 1469598103934665603ull;
                 for (u64 i = 0; i < g_pfp_k; ++i) { h ^= buf[size_t(o + i)]; h *= 1099511628211ull; }
@@ -2832,7 +2864,7 @@ int main(int argc, char** argv) {
             const u64 wWin = g_pfp_w, kWin = g_pfp_k;
             std::vector<u8> buf;
             u64 parseBytes = 0;
-            const u64 ov2 = wWin + kWin;   // the backward window's overlap
+            const u64 ov2 = wWin + kWin;
             for (u64 base = 0; base < FILE_N; ) {
                 beat(1);
                 if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
@@ -2847,25 +2879,8 @@ int main(int argc, char** argv) {
                 const u64 hi = base + chunk;
                 for (u64 p = base; p < hi; ++p) {
                     // THE TRIGGER (AMENDMENT 7, one-sided, the window
-                    // FULLY INSIDE the phrase): km(p) strictly smaller
-                    // than the w k-mers ENDING at or before p - i.e. the
-                    // k-mers at p-j for j in [k, k+w), whose spans
-                    // [p-j, p-j+k) lie INSIDE [prevStart, p). The first
-                    // attempt (j in [1, w]) still had the disease: the
-                    // k-mers at p-1..p-k+1 span PAST the phrase end into
-                    // the next phrase's bytes - the mini2 assert caught a
-                    // 10-byte phrase prefixing a 12-byte one. PROOF of
-                    // prefix-freeness: if P1 were a strict byte-prefix of
-                    // P2, P1's terminal trigger sits at t1 with the whole
-                    // comparison window inside P1; the identical k-mers
-                    // appear at P2's relative position |P1|, the identical
-                    // minimality fires there, so P2 ends at |P1| too.
-                    // Contradiction. The suppression p - prevStart >= k+w
-                    // keeps the window inside the phrase. p==0 always
-                    // starts the first phrase.
-                    bool trig = false;   // p==0 is NOT a trigger: the
-                    // first phrase runs from the corpus start to the
-                    // first real trigger (prevStart starts at 0)
+                    // FULLY INSIDE the phrase) - carried verbatim.
+                    bool trig = false;
                     if (p + kWin <= FILE_N && p >= from
                         && p >= prevStart + kWin + wWin) {
                         const u64 hp = kmAt(buf, p - from);
@@ -2876,37 +2891,15 @@ int main(int argc, char** argv) {
                         }
                         trig = ok;
                     }
-                    // THE FORCED-SPLIT GUARD: p > prevStart first - the
-                    // bare `p - prevStart >= 65535` underflows to a huge
-                    // u64 at every position inside the just-closed
-                    // trigger's k-mer (p < prevStart = p_trig + k), and
-                    // the bogus forced-enters RESET prevStart mid-phrase
-                    // (the mini2 receipt: forced_splits=18713 of 18714
-                    // phrases, every phrase overlapping its predecessor's
-                    // trigger k-mer)
                     const bool forced = (p > prevStart && p - prevStart >= 65535);
                     if (trig || forced) {
-                        // THE CLASSIC CONVENTION (the proof needs it): a
-                        // phrase ENDS WITH its trigger k-mer - the phrase
-                        // is [prevStart, p+k). With closePhrase(p) the
-                        // trigger lived OUTSIDE the phrase, so the k-mer
-                        // that ends P1 was the NEXT phrase's first k bytes
-                        // - context-dependent, and the prefix-freeness
-                        // proof could not close (the mini2 assert caught a
-                        // 39-byte phrase prefixing a 44-byte one). With
-                        // the trigger inside, P1's terminal k-mer and its
-                        // whole comparison window are inside P1: if P1
-                        // were a strict prefix of P2, the identical
-                        // k-mer + window at P2's relative position |P1|-k
-                        // fires the identical minimality, so P2 ends at
-                        // |P1| too. Contradiction.
                         const u64 endPos = trig ? p + kWin : p;
                         if (endPos > prevStart) {
                             if (forced && !trig) {
                                 ++forcedSplits;
-                                residualIds.insert(PA.back());   // the forced
-                            }   // split string (the provable AMENDMENT 7
-                            closePhrase(endPos);   // residual class)
+                                residualPos.push_back(prevStart);
+                            }
+                            closePhrase(endPos);
                             prevStart = endPos;
                             ++dbgCloses[trig ? 0 : 1];
                         }
@@ -2915,107 +2908,323 @@ int main(int argc, char** argv) {
                 base += chunk;
             }
             closePhrase(FILE_N);
-            std::fprintf(stderr, "PARSE_DBG trigCloses=%" PRIu64
-                " forcedCloses=%" PRIu64 " phrases=%zu\n",
-                dbgCloses[0], dbgCloses[1], PA.size());
-            if (!PA.empty()) residualIds.insert(PA.back());   // the corpus-
-            // end phrase (no trigger of its own - the same provable
-            // residual class as the forced splits)
+            residualPos.push_back(prevStart);   // the corpus-end phrase
+            if (std::fflush(occSink) != 0) die("flush occurrences");
+            std::fclose(occSink);
+            const u64 M0 = PStart_.size();
             const double tParseS = now_sec() - tg0;
+            phaseRssGate("parse");
             std::fprintf(stderr,
-                "SS_GPARSE_PASS threads=%" PRIu64 " phrases=%zu distinct=%zu dict_bytes=%zu"
+                "SS_GPARSE_PASS mode=B threads=%" PRIu64 " phrases=%" PRIu64
                 " avg_len=%.2f forced_splits=%" PRIu64 " parse_bytes=%" PRIu64
                 " carry_reads=%" PRIu64 " carry_bytes=%" PRIu64
+                " cache_hits=%" PRIu64 " cache_misses=%" PRIu64
                 " parse_s=%.2f"
-                " rule=one_doc_aware_pfp_pass_read_once;the_scan_window_supplies_the_phrases\n",
-                threads, PA.size(), dictEnt.size(), dictArena.size(),
-                double(FILE_N) / double(std::max<size_t>(1, PA.size())),
-                forcedSplits, parseBytes, carryReads, carryBytes, tParseS);
-        }
+                " rule=streaming_local_state;sink_seeds;no_intern_table"
+                ";no_resident_dictionary\n",
+                threads, M0,
+                double(FILE_N) / double(std::max<u64>(1, M0)),
+                forcedSplits, parseBytes, carryReads, carryBytes,
+                cacheHits, cacheMisses, tParseS);
 
-        // ---- THE DICTIONARY SORT (byte order, shorter-prefix-first) ----
-        const u64 dictN = dictEnt.size();
+            // ---- THE BUCKETS: the equalized 2-byte-prefix ranges
+            // (never bare first-byte; boundaries by the measured
+            // histogram), sized to the dial's sort budget.
+            const u64 entryBytes = 12;
+            const u64 targetPerBucket =
+                std::max<u64>(1024, workspaceBytes / 64 / entryBytes);
+            u32 cellBucket[65536];
+            {
+                u64 run2 = 0; u32 bk = 0;
+                for (u32 cell = 0; cell < 65536; ++cell) {
+                    run2 += hist2[cell];
+                    cellBucket[cell] = bk;
+                    if (run2 >= targetPerBucket) { run2 = 0; ++bk; }
+                }
+                ++bk;   // the bucket count = the highest assigned id + 1
+                        // (a crossing mid-loop assigns the later cells the
+                        // NEXT id; the count is crossings + 1)
+                std::fprintf(stderr,
+                    "SS_KEY_BUCKETS target_per_bucket=%" PRIu64
+                    " buckets=%u rule=equalized_2byte_prefix_ranges"
+                    ";never_bare_first_byte\n",
+                    targetPerBucket, bk);
+                // the distribute pass: the sink -> the bucket files
+                FILE* fin = std::fopen(occPath.c_str(), "rb");
+                if (!fin) die("reopen " + occPath);
+                std::vector<FILE*> bf(bk, nullptr);
+                for (u32 i = 0; i < bk; ++i) {
+                    const std::string bp = modebDir + "/bucket_" +
+                        std::to_string(i) + ".bin";
+                    bf[size_t(i)] = std::fopen(bp.c_str(), "wb");
+                    if (!bf[size_t(i)]) die("open " + bp);
+                }
+                u64 pos; u32 len; u64 seeded = 0;
+                while (std::fread(&pos, 8, 1, fin) == 1) {
+                    if (std::fread(&len, 4, 1, fin) != 1)
+                        die("truncated occurrences sink");
+                    const u32 cell = (u32(T[size_t(pos)]) << 8)
+                        | (len > 1 ? u32(T[size_t(pos + 1)]) : 0u);
+                    FILE* f = bf[size_t(cellBucket[cell])];
+                    std::fwrite(&pos, 8, 1, f);
+                    std::fwrite(&len, 4, 1, f);
+                    ++seeded;
+                }
+                std::fclose(fin);
+                for (u32 i = 0; i < bk; ++i)
+                    if (std::fflush(bf[size_t(i)]) != 0) die("flush bucket");
+                    else std::fclose(bf[size_t(i)]);
+                if (seeded != M0)
+                    die("BUCKET_SEED: seeded " + std::to_string(seeded)
+                        + " against " + std::to_string(M0) + " occurrences");
+            }
+
+            // ---- THE KEY SORT (per bucket, in RAM <= dial): dedupe +
+            // THE CENSUS as its byproduct + the byte-order IDs. The
+            // dictionary is (first-occurrence position, length)
+            // REFERENCES ONLY - the corpus is the only text store.
+            {
+                const double tks0 = now_sec();
+                dictRefPos.reserve(1 << 16);
+                dictLen.reserve(1 << 16);
+                dictCount.reserve(1 << 16);
+                u64 distinctTotal = 0, censusTotal = 0;
+                u32 bk = 0;
+                for (u32 cell = 0; cell < 65536; ++cell)
+                    bk = std::max(bk, u32(cellBucket[cell] + 1));
+                for (u32 i = 0; i < bk; ++i) {
+                    if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
+                    const std::string bp = modebDir + "/bucket_" +
+                        std::to_string(i) + ".bin";
+                    std::vector<std::pair<u64, u32>> ent;
+                    {
+                        FILE* f = std::fopen(bp.c_str(), "rb");
+                        if (!f) die("open " + bp);
+                        u64 pos; u32 len;
+                        while (std::fread(&pos, 8, 1, f) == 1) {
+                            if (std::fread(&len, 4, 1, f) != 1)
+                                die("truncated bucket " + bp);
+                            ent.emplace_back(pos, len);
+                        }
+                        std::fclose(f);
+                        ::remove(bp.c_str());
+                    }
+                    std::sort(ent.begin(), ent.end(),
+                        [&](const std::pair<u64, u32>& a,
+                            const std::pair<u64, u32>& b) {
+                            const u64 m = std::min(a.second, b.second);
+                            const int c = std::memcmp(T + size_t(a.first),
+                                                      T + size_t(b.first),
+                                                      size_t(m));
+                            if (c) return c < 0;
+                            if (a.second != b.second)
+                                return a.second < b.second;
+                            return a.first < b.first;
+                        });
+                    // dedupe: the equal-key runs. THE CENSUS: the run
+                    // size IS the occurrence count; the run's min pos is
+                    // the first-occurrence REFERENCE.
+                    u64 o = 0;
+                    while (o < ent.size()) {
+                        u64 e2 = o + 1;
+                        u64 firstPos = ent[size_t(o)].first;
+                        while (e2 < ent.size()) {
+                            const auto& A = ent[size_t(o)];
+                            const auto& B = ent[size_t(e2)];
+                            const u64 m = std::min(A.second, B.second);
+                            if (std::memcmp(T + size_t(A.first),
+                                            T + size_t(B.first),
+                                            size_t(m)) != 0) break;
+                            if (A.second != B.second) break;
+                            if (B.first < firstPos) firstPos = B.first;
+                            ++e2;
+                        }
+                        const u32 id = u32(dictRefPos.size());
+                        dictRefPos.push_back(firstPos);
+                        dictLen.push_back(ent[size_t(o)].second);
+                        dictCount.push_back(u32(e2 - o));
+                        ++distinctTotal;
+                        censusTotal += e2 - o;
+                        o = e2;
+                    }
+                }
+                if (censusTotal != M0)
+                    die("CENSUS_TOTAL: " + std::to_string(censusTotal)
+                        + " against " + std::to_string(M0));
+                const double tks1 = now_sec();
+                phaseRssGate("key_sort");
+                std::fprintf(stderr,
+                    "SS_KEY_SORT distinct=%" PRIu64 " census=%" PRIu64
+                    " dict_bytes=%" PRIu64 " sort_s=%.2f"
+                    " rule=bucketed_key_sort;dedupe_byproduct;census"
+                    "_byproduct;byte_order_ids;references_only\n",
+                    distinctTotal, censusTotal,
+                    [&] { u64 s2 = 0; for (u32 L : dictLen) s2 += L;
+                          return s2; }(), tks1 - tks0);
+
+                // ---- THE PA: the (pos, id) stream sorted by position
+                // (a parse-space chunk sort; the chunks sized by the
+                // dial). The phrase starts are prefix sums - the phrase
+                // tiles the corpus exactly.
+                const double tpa0 = now_sec();
+                PA.assign(size_t(M0), 0);
+                // THE EXACT PATH (a single re-read of the sink): a bounded advisory
+                // map is not allowed to be load-bearing, so the id
+                // annotation uses the KEY directly: one pass over the
+                // sink; per occurrence, binary-search the dictionary
+                // (the ids are byte-order = the sorted references)
+                // with the key comparator.
+                {
+                    FILE* fin = std::fopen(occPath.c_str(), "rb");
+                    if (!fin) die("reopen " + occPath);
+                    u64 pos; u32 len;
+                    std::vector<std::pair<u64, u32>> occ;
+                    occ.reserve(size_t(M0));
+                    while (std::fread(&pos, 8, 1, fin) == 1) {
+                        if (std::fread(&len, 4, 1, fin) != 1)
+                            die("truncated sink");
+                        // the id: binary search the byte-order ids
+                        const auto keyCmp = [&](u64 id) -> int {
+                            const u64 m = std::min<u64>(len, dictLen[size_t(id)]);
+                            const int c = std::memcmp(T + size_t(pos),
+                                                      T + size_t(dictRefPos[size_t(id)]),
+                                                      size_t(m));
+                            if (c) return c;
+                            if (len != dictLen[size_t(id)])
+                                return len < dictLen[size_t(id)] ? -1 : +1;
+                            return 0;
+                        };
+                        u64 lo2 = 0, hi2 = dictRefPos.size();
+                        while (lo2 < hi2) {
+                            const u64 mid = lo2 + (hi2 - lo2) / 2;
+                            if (keyCmp(mid) < 0) hi2 = mid; else lo2 = mid + 1;
+                        }
+                        if (lo2 == 0 ||
+                            keyCmp(lo2 - 1) != 0)
+                            die("ID_LOOKUP: the occurrence at pos " +
+                                std::to_string(pos) + " len " +
+                                std::to_string(len) + " has no dictionary"
+                                " entry - the key sort lost a phrase");
+                        occ.emplace_back(pos, u32(lo2 - 1));
+                    }
+                    std::fclose(fin);
+                    ::remove(occPath.c_str());
+                    std::sort(occ.begin(), occ.end(),
+                        [](const std::pair<u64, u32>& a,
+                           const std::pair<u64, u32>& b) {
+                            return a.first < b.first;
+                        });
+                    for (u64 i = 0; i < M0; ++i) {
+                        PA[size_t(i)] = occ[size_t(i)].second;
+                        PStart_[size_t(i)] = occ[size_t(i)].first;
+                    }
+                }
+                const double tpa1 = now_sec();
+                std::fprintf(stderr,
+                    "SS_PARSE_IDS phrases=%" PRIu64 " ids_s=%.2f"
+                    " rule=byte_order_id_annotation;positions_are_prefix"
+                    "_sums\n", M0, tpa1 - tpa0);
+
+                // ---- THE PHRASEBOOK (the explicit, tested structure):
+                // the ID sequence in position order + the dictionary's
+                // length column + boundary samples (every 64th prefix
+                // sum). Positions are prefix sums of lengths - never
+                // stored as a column.
+                {
+                    const std::string pbIds = modebDir + "/pb.ids";
+                    const std::string pbLens = modebDir + "/pb.lens";
+                    const std::string pbSamples = modebDir + "/pb.samples";
+                    FILE* f1 = std::fopen(pbIds.c_str(), "wb");
+                    FILE* f2 = std::fopen(pbLens.c_str(), "wb");
+                    FILE* f3 = std::fopen(pbSamples.c_str(), "wb");
+                    if (!f1 || !f2 || !f3) die("open the phrasebook files");
+                    if (!PA.empty())
+                        std::fwrite(PA.data(), 4, PA.size(), f1);
+                    if (!dictLen.empty())
+                        std::fwrite(dictLen.data(), 4, dictLen.size(), f2);
+                    const u64 stride = 64;
+                    const u64 nSamples = (M0 + stride - 1) / stride;
+                    const u64 hdr[3] = { M0, stride, dictRefPos.size() };
+                    std::fwrite(hdr, 8, 3, f3);
+                    u64 cum = 0;
+                    for (u64 i = 0; i < M0; ++i) {
+                        if (i % stride == 0) std::fwrite(&cum, 8, 1, f3);
+                        cum += dictLen[size_t(PA[size_t(i)])];
+                    }
+                    std::fclose(f1); std::fclose(f2); std::fclose(f3);
+                    std::fprintf(stderr,
+                        "SS_PHRASEBOOK ids=%" PRIu64 " dict_entries=%" PRIu64
+                        " samples=%" PRIu64 " stride=%" PRIu64
+                        " rule=id_sequence_plus_len_column_plus_boundary"
+                        "_samples;positions_are_prefix_sums\n",
+                        M0, dictRefPos.size(), nSamples, stride);
+                }
+                // the residual ids (the forced-split + corpus-end
+                // classes) resolved against the references
+                for (const u64 rp : residualPos) {
+                    bool found = false;
+                    for (u64 i = 0; i < M0; ++i)
+                        if (PStart_[size_t(i)] == rp) {
+                            residualIds.insert(PA[size_t(i)]);
+                            found = true;
+                            break;
+                        }
+                    if (!found)
+                        die("RESIDUAL_REF: the residual phrase at pos " +
+                            std::to_string(rp) + " has no occurrence in"
+                            " the parse");
+                }
+            }
+        }
+        const u64 dictN = dictRefPos.size();
         std::vector<u32> rankOf(size_t(dictN), 0);
-        std::vector<u32> dictLcpNext;      // per rank: byte-lcp with rank+1
-        std::vector<u8> dictPrefixNext;    // per rank: 1 if rank's phrase
-                                           // is a byte-prefix of rank+1's
-        std::vector<u64> dictPrefixRun;     // per rank: the transitive mark run (legacy)
-        std::vector<u32> rankLen;           // per rank: the phrase's length
+        std::vector<u32> dictLcpNext;
+        std::vector<u8> dictPrefixNext;
+        std::vector<u64> dictPrefixRun;
+        std::vector<u32> rankLen;
         u64 prefixRelations = 0;
         {
-            std::vector<u32> order = std::vector<u32>(size_t(dictN));
-            for (u64 i = 0; i < dictN; ++i) order[size_t(i)] = u32(i);
-            const u8* A = dictArena.data();
-            std::sort(order.begin(), order.end(), [&](u32 a, u32 b) {
-                const u64 la = dictEnt[size_t(a)].second, lb = dictEnt[size_t(b)].second;
-                const u64 m = std::min(la, lb);
-                const int c = std::memcmp(A + dictEnt[size_t(a)].first,
-                                           A + dictEnt[size_t(b)].first, size_t(m));
-                if (c) return c < 0;
-                return la < lb;   // the shorter-first = the END-first law
-            });
-            for (u64 r = 0; r < dictN; ++r) rankOf[size_t(order[size_t(r)])] = u32(r);
-            rankLen.assign(size_t(dictN), 0);
-            for (u64 r = 0; r < dictN; ++r)
-                rankLen[size_t(r)] = dictEnt[size_t(order[size_t(r)])].second;
+            // THE IDS ARE THE RANKS (byte order by construction: the
+            // buckets ascending + the within-bucket key sorts). The
+            // adjacent-lcp walk reads THE CORPUS at the references.
+            for (u64 i = 0; i < dictN; ++i) rankOf[size_t(i)] = u32(i);
+            rankLen = dictLen;
             dictLcpNext.assign(size_t(dictN), 0);
             dictPrefixNext.assign(size_t(dictN), 0);
             for (u64 r = 0; r + 1 < dictN; ++r) {
-                const u32 a = order[size_t(r)], b = order[size_t(r + 1)];
-                const u64 la = dictEnt[size_t(a)].second, lb = dictEnt[size_t(b)].second;
+                const u64 pa = dictRefPos[size_t(r)], pb2 = dictRefPos[size_t(r + 1)];
+                const u64 la = dictLen[size_t(r)], lb = dictLen[size_t(r + 1)];
                 const u64 m = std::min(la, lb);
                 u64 lcp = 0;
-                while (lcp < m && A[dictEnt[size_t(a)].first + lcp]
-                                == A[dictEnt[size_t(b)].first + lcp]) ++lcp;
+                while (lcp < m && T[size_t(pa + lcp)] == T[size_t(pb2 + lcp)])
+                    ++lcp;
                 dictLcpNext[size_t(r)] = u32(lcp);
-                if (lcp == la) {           // a is a byte-prefix of b
+                if (lcp == la) {
                     dictPrefixNext[size_t(r)] = 1;
                     ++prefixRelations;
-                    // AMENDMENT 7's ASSERT: with the one-sided trigger the
-                    // parse is prefix-free; a relation is legal ONLY if the
-                    // shorter phrase string is a forced-split or corpus-end
-                    // residual. Any other relation is a bug - die with the
-                    // counter and the pair.
-                    if (!residualIds.count(size_t(a)))
-                        die("PREFIX_FREE: phrase rank " + std::to_string(r) +
-                            " (dict id " + std::to_string(a) + ", len " +
-                            std::to_string(la) + ") is a byte-prefix of rank " +
-                            std::to_string(r + 1) + " (id " + std::to_string(b) +
-                            ", len " + std::to_string(lb) + ") without being a"
-                            " forced-split or corpus-end residual - the"
-                            " one-sided trigger rule is broken");
-                    if (::getenv("PREFIX_DUMP") && prefixRelations <= 24) {
-                        std::fprintf(stderr,
-                            "PREFIX_REL #%llu r=%llu/%llu la=%llu lb=%llu"
-                            " A=[%.*s] B=[%.*s]\n",
-                            (unsigned long long)prefixRelations,
-                            (unsigned long long)r, (unsigned long long)dictN,
-                            (unsigned long long)la, (unsigned long long)lb,
-                            int(la > 40 ? 40 : la),
-                            (const char*)(A + dictEnt[size_t(a)].first),
-                            int(lb > 60 ? 60 : lb),
-                            (const char*)(A + dictEnt[size_t(b)].first));
-                    }
+                    if (!residualIds.count(size_t(r)))
+                        die("PREFIX_FREE: phrase id " + std::to_string(r) +
+                            " (len " + std::to_string(la) + ") is a byte-"
+                            "prefix of id " + std::to_string(r + 1) +
+                            " (len " + std::to_string(lb) + ") without"
+                            " being a forced-split or corpus-end residual"
+                            " - the one-sided trigger rule is broken");
                 }
             }
-            // THE TRANSITIVE RUN: phrase(r) is a byte-prefix of
-            // phrase(r+1), and that relation composes - phrase(r) is a
-            // prefix of EVERY phrase through r + run(r). The comparison
-            // of ranks rA < rB is ambiguous iff rB <= rA + run(rA): the
-            // pair (500, 502) via the marked (500, 501) was missed by the
-            // adjacent-only check (the mini's ORDER_FAIL receipt).
             dictPrefixRun.assign(size_t(dictN), 0);
             for (u64 r2 = dictN; r2-- > 0; )
                 dictPrefixRun[size_t(r2)] = dictPrefixNext[size_t(r2)]
                     ? (r2 + 1 < dictN ? dictPrefixRun[size_t(r2 + 1)] + 1 : 1) : 0;
             std::fprintf(stderr,
-                "SS_GPARSE_DICT distinct=%" PRIu64 " dict_bytes=%zu"
+                "SS_GPARSE_DICT distinct=%" PRIu64 " dict_bytes=%" PRIu64
                 " prefix_relations=%" PRIu64 " max_prefix_run=%" PRIu64
-                " rule=byte_order_shorter_first;prefix_ambiguities_marked_transitively\n",
-                dictN, dictArena.size(), prefixRelations,
+                " rule=byte_order_ids_from_the_key_sort;references_only"
+                ";prefix_ambiguities_marked_transitively\n",
+                dictN,
+                [&] { u64 s2 = 0; for (u32 L : dictLen) s2 += L; return s2; }(),
+                prefixRelations,
                 [&] { u64 mx = 0; for (u64 r2 = 0; r2 < dictN; ++r2)
                           mx = std::max(mx, dictPrefixRun[size_t(r2)]); return mx; }());
-            bswap_release(order);
         }
 
         // =============================================================
@@ -3129,13 +3338,13 @@ int main(int argc, char** argv) {
                                 if (endB2) return +1;
                                 const u32 vA2 = PA[size_t(ia2)],
                                          vB2 = PA[size_t(jb2)];
-                                const u32 lA2 = dictEnt[size_t(vA2)].second - oA2,
-                                         lB2 = dictEnt[size_t(vB2)].second - oB2;
+                                const u32 lA2 = dictLen[size_t(vA2)] - oA2,
+                                         lB2 = dictLen[size_t(vB2)] - oB2;
                                 const u64 c2 = std::min<u32>(lA2, lB2);
                                 if (c2) {
                                     const int m2 = std::memcmp(
-                                        &dictArena[size_t(dictEnt[size_t(vA2)].first + oA2)],
-                                        &dictArena[size_t(dictEnt[size_t(vB2)].first + oB2)],
+                                        T + size_t(dictRefPos[size_t(vA2)] + oA2),
+                                        T + size_t(dictRefPos[size_t(vB2)] + oB2),
                                         size_t(c2));
                                     if (m2) return m2 < 0 ? -1 : +1;
                                 }
@@ -3210,6 +3419,7 @@ int main(int argc, char** argv) {
             }
             for (u64 i = 0; i < M; ++i)
                 parseRank[size_t(parseSA[size_t(i)])] = u32(i);
+            phaseRssGate("parse_sa");
             std::fprintf(stderr,
                 "SS_PARSE_SORT parse_rows=%" PRIu64 " int_steps=%" PRIu64
                 " slide_fires=%" PRIu64 " threads=%" PRIu64 " sort_s=%.2f"
@@ -3239,21 +3449,21 @@ int main(int argc, char** argv) {
                             if (rA2 < rB2) { ia2 = pa + 1; oB2 = rankLen[size_t(rA2)]; }
                             else { jb2 = pb + 1; oA2 = rankLen[size_t(rB2)]; }
                             u64 L = 0;
-                            { const u64 a = dictEnt[size_t(PA[size_t(pa)])].first,
-                                  b = dictEnt[size_t(PA[size_t(pb)])].first;
-                              const u64 la = dictEnt[size_t(PA[size_t(pa)])].second,
-                                    lb = dictEnt[size_t(PA[size_t(pb)])].second;
+                            { const u64 a = dictRefPos[size_t(PA[size_t(pa)])],
+                                  b = dictRefPos[size_t(PA[size_t(pb)])];
+                              const u64 la = dictLen[size_t(PA[size_t(pa)])],
+                                    lb = dictLen[size_t(PA[size_t(pb)])];
                               while (L < la && L < lb &&
-                                     dictArena[size_t(a + L)] == dictArena[size_t(b + L)]) ++L; }
+                                     T[size_t(u64(a) + L)] == T[size_t(u64(b) + L)]) ++L; }
                             std::fprintf(stderr,
                                 "PAIR vA=%u rA=%" PRIu64 " lenA=%u vB=%u rB=%" PRIu64
                                 " lenB=%u lcp=%" PRIu64 " ambMin=%u lenLo=%u"
                                 " walk_init ia2=%" PRIu64 " oA2=%u jb2=%" PRIu64
                                 " oB2=%u\n",
                                 PA[size_t(pa)], rA2,
-                                dictEnt[size_t(PA[size_t(pa)])].second,
+                                dictLen[size_t(PA[size_t(pa)])],
                                 PA[size_t(pb)], rB2,
-                                dictEnt[size_t(PA[size_t(pb)])].second, L,
+                                dictLen[size_t(PA[size_t(pb)])], L,
                                 hi2 > lo2 ? ambMin(lo2, hi2) : 0u,
                                 rankLen[size_t(lo2)], ia2, oA2, jb2, oB2);
                         }
@@ -3299,15 +3509,15 @@ int main(int argc, char** argv) {
                             " lcpAB=%" PRIu64 " brute=%d\n",
                             u64(pa), u64(pb), PStart_[size_t(pa)], PStart_[size_t(pb)],
                             u64(PA[size_t(pa)]), rankOf[size_t(PA[size_t(pa)])],
-                            dictEnt[size_t(PA[size_t(pa)])].second,
+                            dictLen[size_t(PA[size_t(pa)])],
                             u64(PA[size_t(pb)]), rankOf[size_t(PA[size_t(pb)])],
-                            dictEnt[size_t(PA[size_t(pb)])].second,
-                            [&] { u64 L = 0; const u64 a = dictEnt[size_t(PA[size_t(pa)])].first,
-                                  b = dictEnt[size_t(PA[size_t(pb)])].first;
-                                  const u64 la = dictEnt[size_t(PA[size_t(pa)])].second,
-                                        lb = dictEnt[size_t(PA[size_t(pb)])].second;
+                            dictLen[size_t(PA[size_t(pb)])],
+                            [&] { u64 L = 0; const u64 a = dictRefPos[size_t(PA[size_t(pa)])],
+                                  b = dictRefPos[size_t(PA[size_t(pb)])];
+                                  const u64 la = dictLen[size_t(PA[size_t(pa)])],
+                                        lb = dictLen[size_t(PA[size_t(pb)])];
                                   while (L < la && L < lb &&
-                                         dictArena[size_t(a + L)] == dictArena[size_t(b + L)]) ++L;
+                                         T[size_t(a + L)] == T[size_t(b + L)]) ++L;
                                   return L; }(),
                             suf_cmp_from(PStart_[size_t(pa)], PStart_[size_t(pb)], 0));
                         die("PARSE_SORT_ORDER: the aligned seeds [" +
@@ -3333,8 +3543,22 @@ int main(int argc, char** argv) {
         // are LOCAL (bounded by the phrase lengths; the sentinel ends
         // everything) - no walks, no rank cascades.
         // =============================================================
-        const u64 pairsN = dictArena.size();
-        std::vector<u32> phraseEndAt = std::vector<u32>(size_t(pairsN), 0);
+        // THE PAIR INDEX SPACE (MODE B): the pair (P,o) lives at the
+        // CUMULATIVE-DICTIONARY-BYTES offset dictLenPrefix[P] + o - the
+        // same dense per-phrase layout the arena offsets had, with NO
+        // BYTES BEHIND IT. The pair's slice is THE CORPUS at
+        // [dictRefPos[P]+o, dictRefPos[P]+len) - the reference columns
+        // pairsPos/pairsEnd carry the positions.
+        std::vector<u32> dictLenPrefix(size_t(dictN) + 1, 0);
+        u64 dictBytesTotal = 0;
+        for (u64 v = 0; v < dictN; ++v) {
+            dictLenPrefix[size_t(v)] = u32(dictBytesTotal);
+            dictBytesTotal += dictLen[size_t(v)];
+        }
+        dictLenPrefix[size_t(dictN)] = u32(dictBytesTotal);
+        const u64 pairsN = dictBytesTotal;
+        std::vector<u32> pairsPos = std::vector<u32>(size_t(pairsN), 0);
+        std::vector<u32> pairsEnd = std::vector<u32>(size_t(pairsN), 0);
         std::vector<u32> phraseOfAt = std::vector<u32>(size_t(pairsN), 0);
         std::vector<u32> pairsSA;
         std::vector<u64> runStart;   // the equal-slice run boundaries
@@ -3342,11 +3566,13 @@ int main(int argc, char** argv) {
         {
             const double tp0 = now_sec();
             for (u64 v = 0; v < dictN; ++v) {
-                const u64 off = dictEnt[size_t(v)].first;
-                const u32 len = dictEnt[size_t(v)].second;
-                const u32 end = u32(off + len);
+                const u64 off = dictLenPrefix[size_t(v)];
+                const u32 len = dictLen[size_t(v)];
+                const u32 p0 = u32(dictRefPos[size_t(v)]);
+                const u32 pend = p0 + len;
                 for (u64 j = 0; j < len; ++j) {
-                    phraseEndAt[size_t(off + j)] = end;
+                    pairsPos[size_t(off + j)] = p0 + u32(j);
+                    pairsEnd[size_t(off + j)] = pend;
                     phraseOfAt[size_t(off + j)] = u32(v);
                 }
             }
@@ -3356,12 +3582,13 @@ int main(int argc, char** argv) {
             // slice sorts first (the sentinel law)
             auto pairCmp = [&](u32 x, u32 y) -> int {
                 if (x == y) return 0;
-                const u32 eA = phraseEndAt[size_t(x)], eB = phraseEndAt[size_t(y)];
-                const u64 rA = eA - x, rB = eB - y;
+                const u32 eA = pairsEnd[size_t(x)], eB = pairsEnd[size_t(y)];
+                const u32 pA = pairsPos[size_t(x)], pB = pairsPos[size_t(y)];
+                const u64 rA = eA - pA, rB = eB - pB;
                 const u64 c = std::min(rA, rB);
                 if (c) {
-                    const int m = std::memcmp(dictArena.data() + x,
-                                              dictArena.data() + y, size_t(c));
+                    const int m = std::memcmp(T + size_t(pA),
+                                               T + size_t(pB), size_t(c));
                     if (m) return m < 0 ? -1 : +1;
                 }
                 return rA < rB ? -1 : (rA > rB ? +1 : 0);
@@ -3388,8 +3615,10 @@ int main(int argc, char** argv) {
                                 std::vector<u64> starts(257, 0);
                                 for (u64 i = sp2.first; i < sp2.second; ++i) {
                                     const u32 x = pairsSA[size_t(i)];
-                                    const u32 dig = (x + u32(lvl) < phraseEndAt[size_t(x)])
-                                        ? u32(dictArena[size_t(x + u32(lvl))]) : 0;
+                                    const u32 dig = (pairsPos[size_t(x)] + u32(lvl)
+                                                         < pairsEnd[size_t(x)])
+                                                         ? u32(T[size_t(u64(pairsPos[size_t(x)])
+                                                                  + u32(lvl))]) : 0;
                                     ++starts[size_t(dig) + 1];
                                 }
                                 for (u64 b = 0; b < 256; ++b)
@@ -3397,8 +3626,10 @@ int main(int argc, char** argv) {
                                 std::vector<u64> bnd = starts;
                                 for (u64 i = sp2.first; i < sp2.second; ++i) {
                                     const u32 x = pairsSA[size_t(i)];
-                                    const u32 dig = (x + u32(lvl) < phraseEndAt[size_t(x)])
-                                        ? u32(dictArena[size_t(x + u32(lvl))]) : 0;
+                                    const u32 dig = (pairsPos[size_t(x)] + u32(lvl)
+                                                         < pairsEnd[size_t(x)])
+                                                         ? u32(T[size_t(u64(pairsPos[size_t(x)])
+                                                                  + u32(lvl))]) : 0;
                                     alt[size_t(sp2.first + starts[size_t(dig)]++)] = x;
                                 }
                                 std::memcpy(&pairsSA[size_t(sp2.first)],
@@ -3443,16 +3674,16 @@ int main(int argc, char** argv) {
                     if (pairCmp(pairsSA[size_t(i - step)], pairsSA[size_t(i)]) > 0) {
                         const u32 xa = pairsSA[size_t(i - step)],
                                  xb = pairsSA[size_t(i)];
-                        const u32 ea = phraseEndAt[size_t(xa)],
-                                 eb = phraseEndAt[size_t(xb)];
+                        const u32 ea = pairsEnd[size_t(xa)],
+                                 eb = pairsEnd[size_t(xb)];
                         std::fprintf(stderr,
                             "PAIRS_FAIL xa=%u ea=%u la=%u xb=%u eb=%u lb=%u"
                             " A=[%.*s] B=[%.*s] cmp=%d\n",
                             xa, ea, ea - xa, xb, eb, eb - xb,
                             int(std::min<u64>(ea - xa, 48)),
-                            (const char*)(dictArena.data() + xa),
+                            (const char*)(T + size_t(pairsPos[size_t(xa)])),
                             int(std::min<u64>(eb - xb, 48)),
-                            (const char*)(dictArena.data() + xb),
+                            (const char*)(T + size_t(pairsPos[size_t(xb)])),
                             pairCmp(xa, xb));
                         die("PAIRS_ORDER: the static table [" + std::to_string(i - step) +
                             "," + std::to_string(i) + ") disagrees with the slice order");
@@ -3471,6 +3702,7 @@ int main(int argc, char** argv) {
                 if (pairCmp(pairsSA[size_t(i - 1)], pairsSA[size_t(i)]) != 0)
                     runStart.push_back(i);
             runStart.push_back(pairsN);
+            phaseRssGate("pairs_sort");
             std::fprintf(stderr,
                 "SS_PAIRS_SORT pairs=%" PRIu64 " runs=%zu msd_levels=3"
                 " threads=%" PRIu64
@@ -3493,11 +3725,13 @@ int main(int argc, char** argv) {
                     const u64 hi3 = std::min<u64>(pairsN - 1, (t + 1) * slice2);
                     for (u64 i = t * slice2; i < hi3; ++i) {
                         const u32 x = pairsSA[size_t(i)], y = pairsSA[size_t(i + 1)];
-                        const u32 eA = phraseEndAt[size_t(x)], eB = phraseEndAt[size_t(y)];
+                        const u32 eA = pairsEnd[size_t(x)], eB = pairsEnd[size_t(y)];
                         u64 lcp = 0;
-                        const u64 m = std::min<u64>(eA - x, eB - y);
-                        while (lcp < m && dictArena[size_t(x + lcp)]
-                                        == dictArena[size_t(y + lcp)]) ++lcp;
+                        const u64 m = std::min<u64>(eA - pairsPos[size_t(x)],
+                                                    eB - pairsPos[size_t(y)]);
+                        while (lcp < m && T[size_t(u64(pairsPos[size_t(x)]) + lcp)]
+                                        == T[size_t(u64(pairsPos[size_t(y)]) + lcp)])
+                            ++lcp;
                         pairLcpNext[size_t(i)] = u32(lcp);
                     }
                 });
@@ -3610,16 +3844,16 @@ int main(int argc, char** argv) {
                     slowJumps.add(1);
                     const u64 pos = parseSA[size_t(rankA - 1)];
                     const u32 v = PA[size_t(pos)];
-                    pA = &dictArena[size_t(dictEnt[size_t(v)].first)];
-                    eA = pA + dictEnt[size_t(v)].second;
+                    pA = T + size_t(dictRefPos[size_t(v)]);
+                    eA = pA + dictLen[size_t(v)];
                     rankA = (pos + 1 < M) ? u64(parseRank[size_t(pos + 1)]) + 1 : 0;
                 } else {
                     if (rankB == 0) return +1;
                     slowJumps.add(1);
                     const u64 pos = parseSA[size_t(rankB - 1)];
                     const u32 v = PA[size_t(pos)];
-                    pB = &dictArena[size_t(dictEnt[size_t(v)].first)];
-                    eB = pB + dictEnt[size_t(v)].second;
+                    pB = T + size_t(dictRefPos[size_t(v)]);
+                    eB = pB + dictLen[size_t(v)];
                     rankB = (pos + 1 < M) ? u64(parseRank[size_t(pos + 1)]) + 1 : 0;
                 }
             }
@@ -3629,10 +3863,10 @@ int main(int argc, char** argv) {
             const u64 occA = A.occ_o >> 32, occB = B.occ_o >> 32;
             const u32 oA = u32(A.occ_o), oB = u32(B.occ_o);
             const u32 vA = PA[size_t(occA)], vB = PA[size_t(occB)];
-            const u8* pA = &dictArena[size_t(dictEnt[size_t(vA)].first + oA)];
-            const u64 rA = dictEnt[size_t(vA)].second - oA;
-            const u8* pB = &dictArena[size_t(dictEnt[size_t(vB)].first + oB)];
-            const u64 rB = dictEnt[size_t(vB)].second - oB;
+            const u8* pA = T + size_t(dictRefPos[size_t(vA)] + oA);
+            const u64 rA = dictLen[size_t(vA)] - oA;
+            const u8* pB = T + size_t(dictRefPos[size_t(vB)] + oB);
+            const u64 rB = dictLen[size_t(vB)] - oB;
             if (vA == vB) {   // THE SAME PHRASE: registers only
                 samePhraseHits.add(1);
                 if (oA == oB)   // the same (P,o): the continuation ranks
@@ -3721,8 +3955,8 @@ int main(int argc, char** argv) {
             u32 o = u32(row.occ_o) + which;
             for (;;) {
                 const u32 v = PA[size_t(occ)];
-                const u32 len = dictEnt[size_t(v)].second;
-                if (o < len) return dictArena[size_t(dictEnt[size_t(v)].first + o)];
+                const u32 len = dictLen[size_t(v)];
+                if (o < len) return T[size_t(dictRefPos[size_t(v)] + o)];
                 if (occ + 1 >= M) return 0;   // the END byte
                 o -= len;
                 ++occ;
@@ -3764,7 +3998,7 @@ int main(int argc, char** argv) {
                 auto rowOf = [&](u32 pairIdx, u32 occ) -> BandRow {
                     const u32 x = pairsSA[size_t(pairIdx)];
                     const u32 vP = phraseOfAt[size_t(x)];
-                    const u32 o = x - u32(dictEnt[size_t(vP)].first);
+                    const u32 o = x - dictLenPrefix[size_t(vP)];
                     BandRow r;
                     r.occ_o = (u64(occ) << 32) | o;
                     r.key48 = 0;
@@ -3773,11 +4007,11 @@ int main(int argc, char** argv) {
                     while (got < 4) {
                         if (j2 >= M) break;
                         const u32 v2 = PA[size_t(j2)];
-                        const u32 len2 = dictEnt[size_t(v2)].second;
-                        const u64 off2 = dictEnt[size_t(v2)].first;
+                        const u32 len2 = dictLen[size_t(v2)];
+                        const u64 off2 = dictRefPos[size_t(v2)];
                         const u32 take = std::min<u32>(len2, 4 - got);
                         for (u32 q2 = 0; q2 < take; ++q2)
-                            c4 = (c4 << 8) | u32(dictArena[size_t(off2 + q2)]);
+                            c4 = (c4 << 8) | u32(T[size_t(off2 + q2)]);
                         got += take;
                         ++j2;
                     }
@@ -3787,13 +4021,18 @@ int main(int argc, char** argv) {
                 };
                 // THE BOUNDARY COMPARE (TAPE_BINS.md 7b): used ONLY in
                 // the landing walk now - once per row per chain step
-                auto cmpBound = [&](const BandRow& A, u32 bx, u32 eB) -> int {
+                auto cmpBound = [&](const BandRow& A, u32 bx, u32) -> int {
+                    // bx is a PAIR INDEX (the cumulative-bytes space);
+                    // the slice is THE CORPUS at [pairsPos[bx],
+                    // pairsEnd[bx]) - the reference columns.
+                    const u32 pBx = pairsPos[size_t(bx)];
+                    const u32 eB = pairsEnd[size_t(bx)];
                     const u32 vA = PA[size_t(A.occ_o >> 32)];
-                    const u8* pA = &dictArena[size_t(dictEnt[size_t(vA)].first
-                        + u32(A.occ_o))];
-                    const u64 rA = dictEnt[size_t(vA)].second - u32(A.occ_o);
-                    const u8* pB = &dictArena[size_t(bx)];
-                    const u64 rB = eB - bx;
+                    const u8* pA = T + size_t(dictRefPos[size_t(vA)]
+                        + u32(A.occ_o));
+                    const u64 rA = dictLen[size_t(vA)] - u32(A.occ_o);
+                    const u8* pB = T + size_t(pBx);
+                    const u64 rB = eB - pBx;   // both corpus positions
                     const u64 c = std::min(rA, rB);
                     if (c) {
                         const int m = std::memcmp(pA, pB, size_t(c));
@@ -3809,8 +4048,8 @@ int main(int argc, char** argv) {
                         if (rankA == 0) return -1;
                         const u64 pos = parseSA[size_t(rankA - 1)];
                         const u32 v = PA[size_t(pos)];
-                        const u8* pP = &dictArena[size_t(dictEnt[size_t(v)].first)];
-                        const u64 rP = dictEnt[size_t(v)].second;
+                        const u8* pP = T + size_t(dictRefPos[size_t(v)]);
+                        const u64 rP = dictLen[size_t(v)];
                         const u64 c2 = std::min(rP, u64(qEnd - q));
                         if (c2) {
                             const int m2 = std::memcmp(pP, q, size_t(c2));
@@ -3951,7 +4190,7 @@ int main(int argc, char** argv) {
                                             const u32 nx2 = sliceX(
                                                 u32(runStart[size_t(m + 1)]));
                                             return cmpBound(row, nx2,
-                                                phraseEndAt[size_t(nx2)])
+                                                pairsEnd[size_t(nx2)])
                                                     < 0;
                                         };
                                         u64 step = 1;
@@ -4308,6 +4547,7 @@ int main(int argc, char** argv) {
                         std::to_string(assembledTotal) + " rows against N="
                         + std::to_string(N) + " - the unit stream lost or"
                         " duplicated rows");
+                phaseRssGate("emit");
                 std::fprintf(stderr,
                     "SS_EMIT_DONE runs=%" PRIu64 " merge_steps=%" PRIu64
                     " crossings=%" PRIu64 " walk_steps=%" PRIu64
