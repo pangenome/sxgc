@@ -2652,12 +2652,26 @@ int main(int argc, char** argv) {
         std::vector<u8> bandLcp(size_t(rows), 0);
         for (u64 i = 1; i < rows; ++i) {
             const u64 val = U.lcpv[size_t(i)];
-            if (val >= 255) esc.emplace_back(rankBase + i, val);
-            else bandLcp[size_t(i)] = uint8_t(val);
+            // THE FORMAT CONTRACT (scatter_sort lines 488/839/4099): the
+            // body byte at an escaped rank is the 255 MARKER - the finish
+            // reads the body first and only consults the escape list when
+            // it sees 255. pfp_sort left 0 there, so EVERY escaped lcp
+            // value (>= 255) read as 0 through the finish - the whole G2
+            // m14/m5 delta at every scale, first caught by the 3 GB
+            // reader-vs-main m14 comparison.
+            if (val >= 255) {
+                esc.emplace_back(rankBase + i, val);
+                bandLcp[size_t(i)] = 255;
+            } else {
+                bandLcp[size_t(i)] = uint8_t(val);
+            }
         }
         if (rows && prevLast != ~0ull) {
             bandLcp[0] = uint8_t(std::min<u64>(U.lcpv[0], 255));
-            if (U.lcpv[0] >= 255) esc.emplace_back(rankBase, U.lcpv[0]);
+            if (U.lcpv[0] >= 255) {
+                esc.emplace_back(rankBase, U.lcpv[0]);
+                bandLcp[0] = 255;   // the marker, not the raw body byte
+            }
         }
         std::sort(esc.begin(), esc.end());
         if (u >= lcpSliceWindow) {                // the finish's handshake
