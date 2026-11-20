@@ -108,12 +108,37 @@ static inline u64 unpack_pos(u64 v) { return v & ((1ull << 48) - 1); }
 // dollar-order suffix comparison the tails, the seams and the LCE residual
 // need; the leaf sort itself never calls it for a row the window resolved).
 // ---------------------------------------------------------------------------
-static std::atomic<u64> g_text_walk{0};
+// THE PADDED COUNTER SHARDS: a relaxed atomic RMW on a shared line
+// from every worker was the emit's hidden serialiser at 24 threads
+// (175M gate compares + one walk counter per row). Each thread takes
+// a ticket slot; the totals are the exact sum of the shards.
+struct CtrLine { std::atomic<u64> v{0}; char pad[56]; };
+static constexpr u64 CTR_NS = 64;
+static std::atomic<u32> g_ctr_ticket{0};
+static inline u32 ctr_slot() {
+    static thread_local u32 sl =
+        g_ctr_ticket.fetch_add(1, std::memory_order_relaxed) % CTR_NS;
+    return sl;
+}
+struct CtrShards {
+    static constexpr u64 NS = CTR_NS;
+    CtrLine s[NS];
+    inline void add(u64 n) {
+        s[ctr_slot()].v.fetch_add(n, std::memory_order_relaxed);
+    }
+    u64 total() const {
+        u64 t = 0;
+        for (u64 i = 0; i < NS; ++i)
+            t += s[i].v.load(std::memory_order_relaxed);
+        return t;
+    }
+};
+static CtrShards g_text_walk;
 static inline int suf_cmp_lcp_inner(u64 a, u64 b, u64 from, u64& lcp);
 static inline int suf_cmp_from_counted(u64 a, u64 b, u64 from, u64& walked);
 static inline int suf_cmp_lcp(u64 a, u64 b, u64 from, u64& lcp) {
     const int rc = suf_cmp_lcp_inner(a, b, from, lcp);
-    g_text_walk.fetch_add(lcp - from + 1, std::memory_order_relaxed);
+    g_text_walk.add(lcp - from + 1);
     return rc;
 }
 static inline int suf_cmp_lcp_inner(u64 a, u64 b, u64 from, u64& lcp) {
@@ -153,7 +178,7 @@ static inline int suf_cmp_lcp_inner(u64 a, u64 b, u64 from, u64& lcp) {
 static inline int suf_cmp_from(u64 a, u64 b, u64 from) {
     u64 walked = 0;
     const int rc = suf_cmp_from_counted(a, b, from, walked);
-    g_text_walk.fetch_add(walked, std::memory_order_relaxed);
+    g_text_walk.add(walked);
     return rc;
 }
 static u64 g_wave_fallback_walk_max = 4ull << 30;
@@ -3544,8 +3569,8 @@ int main(int argc, char** argv) {
         auto rowPos = [&](const BandRow& r) -> u64 {
             return PStart_[size_t(r.occ_o >> 32)] + (r.occ_o & 0xFFFFFFFFull);
         };
-        std::atomic<u64> fastBytes{0}, slowJumps{0}, slowBytes{0},
-            samePhraseHits{0}, contHits{0}, rankHits{0};
+        CtrShards fastBytes, slowJumps, slowBytes,
+            samePhraseHits, contHits, rankHits;
         // THE WALK: the induced rank-jump loop over the RAM-resident
         // arrays (the dict arena + parseSA/parseRank). Returns 2 for
         // the equal-continuation structural impossibility (the caller
@@ -3556,7 +3581,7 @@ int main(int argc, char** argv) {
                 const u64 remA = u64(eA - pA), remB2 = u64(eB - pB);
                 const u64 common = std::min(remA, remB2);
                 if (common) {
-                    slowBytes.fetch_add(common, std::memory_order_relaxed);
+                    slowBytes.add(common);
                     const int c = std::memcmp(pA, pB, size_t(common));
                     if (c) return c < 0 ? -1 : +1;
                     pA += common; pB += common;
@@ -3568,7 +3593,7 @@ int main(int argc, char** argv) {
                 }
                 if (dA) {   // RANK-JUMP into the aligned order; the END
                     if (rankA == 0) return -1;   // rank loses vs live bytes
-                    slowJumps.fetch_add(1, std::memory_order_relaxed);
+                    slowJumps.add(1);
                     const u64 pos = parseSA[size_t(rankA - 1)];
                     const u32 v = PA[size_t(pos)];
                     pA = &dictArena[size_t(dictEnt[size_t(v)].first)];
@@ -3576,7 +3601,7 @@ int main(int argc, char** argv) {
                     rankA = (pos + 1 < M) ? u64(parseRank[size_t(pos + 1)]) + 1 : 0;
                 } else {
                     if (rankB == 0) return +1;
-                    slowJumps.fetch_add(1, std::memory_order_relaxed);
+                    slowJumps.add(1);
                     const u64 pos = parseSA[size_t(rankB - 1)];
                     const u32 v = PA[size_t(pos)];
                     pB = &dictArena[size_t(dictEnt[size_t(v)].first)];
@@ -3595,7 +3620,7 @@ int main(int argc, char** argv) {
             const u8* pB = &dictArena[size_t(dictEnt[size_t(vB)].first + oB)];
             const u64 rB = dictEnt[size_t(vB)].second - oB;
             if (vA == vB) {   // THE SAME PHRASE: registers only
-                samePhraseHits.fetch_add(1, std::memory_order_relaxed);
+                samePhraseHits.add(1);
                 if (oA == oB)   // the same (P,o): the continuation ranks
                     return A.nrank < B.nrank ? -1 : (A.nrank > B.nrank ? +1 : 0);
                 const u64 c = std::min(rA, rB);
@@ -3621,7 +3646,7 @@ int main(int argc, char** argv) {
             // DIFFERENT PHRASES: the 16-byte fast path
             {
                 const u64 c0 = std::min(std::min(rA, rB), u64(16));
-                fastBytes.fetch_add(c0, std::memory_order_relaxed);
+                fastBytes.add(c0);
                 if (c0) {
                     const int m = std::memcmp(pA, pB, size_t(c0));
                     if (m) return m < 0 ? -1 : +1;
@@ -3632,11 +3657,11 @@ int main(int argc, char** argv) {
                 // both slices end within 16 bytes
                 if (rA == rB) {   // both continuations start at offset 0
                     if (A.cont4 != B.cont4) {
-                        contHits.fetch_add(1, std::memory_order_relaxed);
+                        contHits.add(1);
                         return A.cont4 < B.cont4 ? -1 : +1;
                     }
                     if (A.nrank != B.nrank) {   // the continuations ARE
-                        rankHits.fetch_add(1, std::memory_order_relaxed);
+                        rankHits.add(1);
                         return A.nrank < B.nrank ? -1 : +1;   // aligned suffixes
                     }
                     // equal slices + equal continuations: one occurrence,
@@ -3651,7 +3676,7 @@ int main(int argc, char** argv) {
                     for (u64 j = 0; j < c1; ++j) {
                         const u8 xa = u8(A.cont4 >> (8 * (3 - j)));
                         if (xa != q[j]) {   // the 0-pad beyond the true
-                            contHits.fetch_add(1, std::memory_order_relaxed);
+                            contHits.add(1);
                             return xa < q[j] ? -1 : +1;   // continuation = the END byte
                         }
                     }
@@ -3667,7 +3692,7 @@ int main(int argc, char** argv) {
                     for (u64 j = 0; j < c1; ++j) {
                         const u8 xb = u8(B.cont4 >> (8 * (3 - j)));
                         if (xb != q[j]) {
-                            contHits.fetch_add(1, std::memory_order_relaxed);
+                            contHits.add(1);
                             return q[j] < xb ? -1 : +1;
                         }
                     }
@@ -3703,70 +3728,25 @@ int main(int argc, char** argv) {
             // whose slice does not prefix the next run's slice closes
             // and MUST be exhausted (die otherwise).
             {
+
                 const double te0 = now_sec();
                 const u64 nRuns = runStart.size() - 1;
                 const u64 batchTarget = std::max<u64>(1, workspaceBytes / 16);
-                std::vector<u64> batchPos;
-                u64 prevEmittedPos = ~0ull;   // the SEAM LCP state (the
-                // container contract: the LCP column is TRUE across the
-                // unit boundaries)
-                auto flushBatch = [&]() {
-                    if (batchPos.empty()) return;
-                    std::vector<u64> lcpv2 = std::vector<u64>(batchPos.size(), 0);
-                    if (prevEmittedPos != ~0ull) {
-                        u64 lcpSeam = 0;
-                        suf_cmp_lcp(prevEmittedPos, batchPos[size_t(0)], 0, lcpSeam);
-                        lcpv2[size_t(0)] = lcpSeam;
-                    }
-                    {
-                        std::atomic<u64> nextPair2{1};
-                        std::vector<std::thread> lpool;
-                        const u64 nPool = std::max<u64>(1,
-                            std::min<u64>(threads, u64(64)));
-                        for (u64 t = 0; t < nPool; ++t)
-                            lpool.emplace_back([&] {
-                                for (;;) {
-                                    const u64 i2 = nextPair2.fetch_add(
-                                        1, std::memory_order_relaxed);
-                                    if (i2 >= batchPos.size()) break;
-                                    u64 lcpTrue = 0;
-                                    suf_cmp_lcp(batchPos[size_t(i2 - 1)],
-                                                batchPos[size_t(i2)], 0, lcpTrue);
-                                    lcpv2[size_t(i2)] = lcpTrue;
-                                }
-                            });
-                        for (auto& th : lpool) th.join();
-                    }
-                    Unit U;
-                    U.bin = 0;
-                    U.Pout.resize(batchPos.size());
-                    for (size_t i2 = 0; i2 < batchPos.size(); ++i2)
-                        U.Pout[size_t(i2)] = pack_sym(
-                            batchPos[size_t(i2)],
-                            batchPos[size_t(i2)]
-                                ? u8(REMAP ? REMAP[T[batchPos[size_t(i2)] - 1]]
-                                          : T[batchPos[size_t(i2)] - 1])
-                                : SENTINEL_SYMBOL);
-                    U.lcpv = std::move(lcpv2);
-                    std::fprintf(stderr,
-                        "SS_EMIT_UNIT unit=%" PRIu64 " rows=%zu"
-                        " rule=the_streaming_merge;no_sorting\n",
-                        nextUnitId, batchPos.size());
-                    emitUnit(U, nextUnitId++);
-                    NB = nextUnitId;
-                    prevEmittedPos = batchPos.back();
-                    std::vector<u64>().swap(batchPos);
+                // ---- the stateless helpers over the shared tables ----
+                auto sliceX = [&](u32 pairIdx) -> u32 {
+                    return pairsSA[size_t(pairIdx)];
                 };
-                auto pushRow = [&](const BandRow& r) {
-                    batchPos.push_back((r.occ_o == 0xFFFFFFFF00000000ull)
-                        ? FILE_N : rowPos(r));
-                    if (batchPos.size() >= batchTarget) flushBatch();
+                auto sliceEndX = [&](u32 pairIdx) -> u32 {
+                    return phraseEndAt[size_t(pairsSA[size_t(pairIdx)])];
                 };
-                {   // the virtual END row first
-                    BandRow vr; vr.occ_o = 0xFFFFFFFF00000000ull;
-                    vr.key48 = 0; vr.nrank = 0; vr.cont4 = 0;
-                    pushRow(vr);
-                }
+                auto pairIsPrefixOfPair = [&](u32 sp, u32 bx2) -> bool {
+                    const u32 x = sliceX(sp);
+                    const u64 rX = sliceEndX(sp) - x;
+                    const u32 eB2 = phraseEndAt[size_t(bx2)];
+                    if (rX > eB2 - bx2) return false;
+                    return std::memcmp(dictArena.data() + x,
+                                       dictArena.data() + bx2, size_t(rX)) == 0;
+                };
                 auto rowOf = [&](u32 pairIdx, u32 occ) -> BandRow {
                     const u32 x = pairsSA[size_t(pairIdx)];
                     const u32 vP = phraseOfAt[size_t(x)];
@@ -3775,29 +3755,28 @@ int main(int argc, char** argv) {
                     r.occ_o = (u64(occ) << 32) | o;
                     r.key48 = 0;
                     r.nrank = (occ + 1 < M) ? parseRank[size_t(occ + 1)] + 1 : 0;
-                    u32 c4 = 0; u32 got = 0; u64 j = u64(occ) + 1;
+                    u32 c4 = 0; u32 got = 0; u64 j2 = u64(occ) + 1;
                     while (got < 4) {
-                        if (j >= M) break;
-                        const u32 v2 = PA[size_t(j)];
+                        if (j2 >= M) break;
+                        const u32 v2 = PA[size_t(j2)];
                         const u32 len2 = dictEnt[size_t(v2)].second;
                         const u64 off2 = dictEnt[size_t(v2)].first;
                         const u32 take = std::min<u32>(len2, 4 - got);
                         for (u32 q2 = 0; q2 < take; ++q2)
                             c4 = (c4 << 8) | u32(dictArena[size_t(off2 + q2)]);
                         got += take;
-                        ++j;
+                        ++j2;
                     }
                     for (; got < 4; ++got) c4 <<= 8;
                     r.cont4 = c4;
                     return r;
                 };
-                // the member's occurrence range
                 auto memberOccEnd = [&](u32 pairIdx) -> u64 {
                     const u32 vP = phraseOfAt[size_t(pairsSA[size_t(pairIdx)])];
                     return occStart[size_t(vP + 1)];
                 };
                 // THE BOUNDARY COMPARE: the row vs the pair bx's slice +
-                // the implicit 0 (see the design notes in TAPE_BINS.md 7b)
+                // the implicit 0 (TAPE_BINS.md 7b)
                 auto cmpBound = [&](const BandRow& A, u32 bx, u32 eB) -> int {
                     const u32 vA = PA[size_t(A.occ_o >> 32)];
                     const u8* pA = &dictArena[size_t(dictEnt[size_t(vA)].first
@@ -3833,9 +3812,6 @@ int main(int argc, char** argv) {
                             ? u64(parseRank[size_t(pos + 1)]) + 1 : 0;
                     }
                 };
-                // THE ACTIVE RUNS (the chain): each carries its INNER
-                // heap - the (member, occLo) entries ordered by the
-                // continuation rank of the member's current occurrence
                 struct Inner { u32 member; u32 occLo; };
                 struct Active {
                     u32 runLo, runHi;
@@ -3849,9 +3825,6 @@ int main(int argc, char** argv) {
                     const u32 ra = rankOfOcc(occList[size_t(a.occLo)]);
                     const u32 rb = rankOfOcc(occList[size_t(b.occLo)]);
                     return ra > rb || (ra == rb && a.member > b.member);
-                };
-                auto innerHead = [&](Active& R) -> int {   // -1 if empty
-                    return R.iheap.empty() ? -1 : 0;
                 };
                 auto innerPop = [&](Active& R) -> Inner {
                     std::pop_heap(R.iheap.begin(), R.iheap.end(),
@@ -3869,143 +3842,374 @@ int main(int argc, char** argv) {
                                        return innerGreater(R, x, y);
                                    });
                 };
-                // the run's current head row (the inner top)
                 auto runHeadRow = [&](Active& R) -> BandRow {
                     const Inner top = R.iheap.front();
                     const u32 pairIdx = R.runLo + top.member;
                     return rowOf(pairIdx, occList[size_t(top.occLo)]);
                 };
-                // THE OUTER HEAP over the active runs' heads; the stale
-                // entries (a run whose head advanced) are dropped on pop
                 struct Out { u32 runLo; u32 occLo; BandRow row; };
                 auto outGreater = [&](const Out& a, const Out& b) -> bool {
                     const int c = inducedCmp(a.row, b.row);
                     return c > 0 || (c == 0 && a.runLo > b.runLo);
                 };
-                std::vector<Out> oheap;
-                auto outPush = [&](Out e) {
-                    oheap.push_back(std::move(e));
-                    std::push_heap(oheap.begin(), oheap.end(), outGreater);
+
+                // ---- THE REGION MAP (the parallel decomposition) ----
+                // The act at any phase is a NESTED PREFIX CHAIN: a run
+                // survives the discipline only while its slice prefixes
+                // the next run's slice, so the survivors are nested and
+                // k-ordered. A conservative stack simulation of the
+                // discipline (every run is assumed to stay open) finds
+                // every span where the act is PROVABLY empty: a run k
+                // really open at phase m has slice_k a prefix of every
+                // slice in (k, m], in particular of slice_m, so the real
+                // act is a subset of the simulated stack. Where the
+                // simulated stack empties, the real act is empty: a
+                // REGION boundary. Regions are then independent - a
+                // region's merge cannot interleave rows outside it
+                // (over-large regions only cost parallelism, they are
+                // exact; a missing boundary would lose rows and the
+                // EMIT_FINAL belts catch that loud).
+                const double tsim0 = now_sec();
+                std::vector<u32> regionStart; regionStart.push_back(0);
+                {
+                    std::vector<u32> stk;
+                    stk.push_back(u32(runStart[0]));
+                    for (u64 r2 = 1; r2 < nRuns; ++r2) {
+                        const u32 nbx = sliceX(u32(runStart[size_t(r2)]));
+                        while (!stk.empty() &&
+                               !pairIsPrefixOfPair(stk.back(), nbx))
+                            stk.pop_back();
+                        if (stk.empty()) regionStart.push_back(u32(r2));
+                        stk.push_back(u32(runStart[size_t(r2)]));
+                        if ((r2 & 0xfffff) == 0 &&
+                            ::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
+                    }
+                }
+                const u64 nRegions = regionStart.size();
+                const double sim_s = now_sec() - tsim0;
+                // the region index holding a given run
+                auto regionOfRun = [&](u64 run) -> u64 {
+                    return u64(std::upper_bound(regionStart.begin(),
+                                                regionStart.end(), u32(run))
+                               - regionStart.begin()) - 1;
                 };
-                auto outPop = [&]() -> Out {
-                    std::pop_heap(oheap.begin(), oheap.end(), outGreater);
-                    Out e = oheap.back();
-                    oheap.pop_back();
-                    return e;
+
+                // ---- THE LOCAL MERGE over a span of runs ----
+                // Identical machinery to the sequential phase loop, but
+                // the span is cut at region boundaries, so the local
+                // drain must find the act empty (the belt dies loud if
+                // the region map ever under-cuts). Rows are packed
+                // (pos | sym<<48) straight into the thread's buffer: the
+                // per-row text read and the LCP walk run IN the worker.
+                struct SpanStats {
+                    u64 rows = 0, blocks = 0, maxChain = 0, fast = 0,
+                        slow = 0, gates = 0, cycles = 0, builds = 0;
                 };
-                std::vector<Active> act;   // the chain (the open runs)
-                u64 maxChain = 0, mergeSteps = 0, boundaryBlocks = 0;
-                auto actFind = [&](u32 runLo) -> int {
-                    for (size_t i = 0; i < act.size(); ++i)
-                        if (act[i].runLo == runLo) return int(i);
-                    return -1;
+                auto packRow = [&](u64 pos) -> u64 {
+                    return pack_sym(pos,
+                        pos ? u8(REMAP ? REMAP[T[size_t(pos) - 1]]
+                                      : T[size_t(pos) - 1])
+                            : SENTINEL_SYMBOL);
                 };
-                auto sliceX = [&](u32 pairIdx) -> u32 {
-                    return pairsSA[size_t(pairIdx)];
+                auto mergeSpan = [&](u64 runLo2, u64 runHi2,
+                                      std::vector<u64>& out,
+                                      std::vector<u64>& lcpv,
+                                      SpanStats& st) {
+                    std::vector<Active> act;
+                    std::unordered_map<u32, size_t> actIdx;
+                    std::vector<Out> oheap;
+                    auto outPush = [&](Out e) {
+                        oheap.push_back(std::move(e));
+                        std::push_heap(oheap.begin(), oheap.end(), outGreater);
+                    };
+                    auto outPop = [&]() -> Out {
+                        std::pop_heap(oheap.begin(), oheap.end(), outGreater);
+                        Out e = oheap.back();
+                        oheap.pop_back();
+                        return e;
+                    };
+                    auto actFind = [&](u32 runLoX) -> int {
+                        auto it = actIdx.find(runLoX);
+                        return it == actIdx.end() ? -1 : int(it->second);
+                    };
+                    auto pushRowLocal = [&](u64 pos) {
+                        out.push_back(packRow(pos));
+                        ++st.rows;
+                    };
+                    for (u64 r2 = runLo2; r2 < runHi2; ++r2) {
+                        if ((r2 & 0xffff) == 0 &&
+                            ::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
+                        const u32 curLo = u32(runStart[size_t(r2)]);
+                        const u32 curHi = u32(runStart[size_t(r2 + 1)]);
+                        // THE DISCIPLINE: pop the non-prefix runs; each
+                        // MUST be exhausted (the boundary rule)
+                        while (!act.empty() &&
+                               !pairIsPrefixOfPair(act.back().runLo,
+                                                   sliceX(curLo))) {
+                            if (!act.back().iheap.empty())
+                                die("EMIT_DISCIPLINE: the run at pair " +
+                                    std::to_string(act.back().runLo) +
+                                    " closes with pending rows - the"
+                                    " boundary rule was violated");
+                            actIdx.erase(act.back().runLo);
+                            act.pop_back();
+                        }
+                        const bool lastRun = (r2 + 1 >= runHi2);
+                        u32 nx = 0, eNx = 0;
+                        if (!lastRun) {
+                            nx = sliceX(u32(runStart[size_t(r2 + 1)]));
+                            eNx = phraseEndAt[size_t(nx)];
+                        }
+                        // THE FAST PATH: a single-member run whose slice
+                        // does not prefix the next run's slice emits its
+                        // whole list DIRECTLY (the interval property:
+                        // the prefix-extension slices are contiguous in
+                        // sorted order, so testing the immediate next
+                        // suffices; no gate, no heap, one PStart_ read).
+                        if (act.empty() && curHi - curLo == 1 && !lastRun &&
+                            !pairIsPrefixOfPair(curLo, nx)) {
+                            const u32 vP =
+                                phraseOfAt[size_t(pairsSA[size_t(curLo)])];
+                            const u32 o = pairsSA[size_t(curLo)]
+                                       - u32(dictEnt[size_t(vP)].first);
+                            for (u64 oi = occStart[size_t(vP)];
+                                 oi < occStart[size_t(vP + 1)]; ++oi) {
+                                const u32 occ = occList[size_t(oi)];
+                                pushRowLocal(PStart_[size_t(occ)] + o);
+                                ++st.fast;
+                            }
+                            continue;
+                        }
+                        Active R;
+                        R.runLo = curLo; R.runHi = curHi;
+                        for (u32 mi = curLo; mi < curHi; ++mi) {
+                            const u32 vP =
+                                phraseOfAt[size_t(pairsSA[size_t(mi)])];
+                            if (occStart[size_t(vP)] < occStart[size_t(vP + 1)])
+                                innerPush(R, Inner{mi - curLo,
+                                                   u32(occStart[size_t(vP)])});
+                        }
+                        if (!R.iheap.empty()) {
+                            ++st.builds;
+                            outPush(Out{curLo, R.iheap.front().occLo,
+                                         runHeadRow(R)});
+                        }
+                        for (;;) {
+                            if (oheap.empty()) break;
+                            Out e = outPop();
+                            const int slot = actFind(e.runLo);
+                            if (e.runLo != curLo && slot < 0)
+                                continue;   // the run closed: stale
+                            Active* RA = (e.runLo == curLo) ? &R
+                                       : &act[size_t(slot)];
+                            if (RA->iheap.empty() ||
+                                RA->iheap.front().occLo != e.occLo)
+                                continue;   // stale: the head advanced
+                            ++st.gates;
+                            if (!lastRun && cmpBound(e.row, nx, eNx) >= 0) {
+                                ++st.blocks; ++st.cycles;
+                                outPush(std::move(e));
+                                break;
+                            }
+                            pushRowLocal((e.row.occ_o == 0xFFFFFFFF00000000ull)
+                                             ? FILE_N : rowPos(e.row));
+                            ++st.slow;
+                            const Inner top = RA->iheap.front();
+                            innerPop(*RA);
+                            const u32 nextOcc = top.occLo + 1;
+                            const u32 pairIdx = RA->runLo + top.member;
+                            if (nextOcc < memberOccEnd(pairIdx))
+                                innerPush(*RA, Inner{top.member, nextOcc});
+                            if (!RA->iheap.empty()) {
+                                ++st.builds;
+                                outPush(Out{e.runLo, RA->iheap.front().occLo,
+                                             runHeadRow(*RA)});
+                            }
+                        }
+                        if (!R.iheap.empty()) {
+                            actIdx[curLo] = act.size();
+                            act.push_back(std::move(R));
+                        }
+                        if (act.size() > st.maxChain) st.maxChain = act.size();
+                    }
+                    // THE LOCAL DRAIN: the span ends at a region
+                    // boundary, so the act MUST be empty here; if the
+                    // region map ever under-cut, this belt dies loud.
+                    for (const auto& R2 : act)
+                        if (!R2.iheap.empty())
+                            die("EMIT_FINAL: the span drain at pair " +
+                                std::to_string(R2.runLo) + " still holds"
+                                " rows - the REGION MAP under-cut");
+                    // the LCP pass (in-thread): the adjacent-row true LCP
+                    lcpv.assign(out.size(), 0);
+                    for (size_t i2 = 1; i2 < out.size(); ++i2) {
+                        u64 lt = 0;
+                        suf_cmp_lcp(unpack_pos(out[size_t(i2 - 1)]),
+                                    unpack_pos(out[size_t(i2)]), 0, lt);
+                        lcpv[size_t(i2)] = lt;
+                    }
                 };
-                auto sliceEndX = [&](u32 pairIdx) -> u32 {
-                    return phraseEndAt[size_t(pairsSA[size_t(pairIdx)])];
-                };
-                auto pairIsPrefixOfPair = [&](u32 sp, u32 bx2) -> bool {
-                    const u32 x = sliceX(sp);
-                    const u64 rX = sliceEndX(sp) - x;
-                    const u32 eB2 = phraseEndAt[size_t(bx2)];
-                    if (rX > eB2 - bx2) return false;
-                    return std::memcmp(dictArena.data() + x,
-                                       dictArena.data() + bx2, size_t(rX)) == 0;
-                };
-                for (u64 r2 = 0; r2 < nRuns; ++r2) {
-                    if ((r2 & 0xffff) == 0) {
+
+                // ---- THE SUPER-STEP DRIVER: parallel spans, thin
+                // serial assembly, one unit per step ----
+                const u64 pairsTotal = u64(runStart[size_t(nRuns)]);
+                const double pairsPerRow = double(pairsTotal) / double(N - 1);
+                const u64 ppt = std::max<u64>(
+                    1, u64(double(batchTarget) / (pairsPerRow > 0
+                             ? pairsPerRow : 1.0)));
+                u64 mergeSteps = 0, boundaryBlocks = 0, maxChain = 0,
+                    fastRows = 0, slowRows = 0, gateCalls = 0,
+                    blockedCycles = 0, rowBuilds = 0, assembledTotal = 0;
+                u64 prevEmittedPos = ~0ull;
+                bool pendingHead = true;   // the virtual END row first
+                const u64 headPacked = packRow(FILE_N);
+                double assemble_s = 0, merge_s = 0;
+                {
+                    u64 stepLo = 0;
+                    while (stepLo < nRuns) {
                         beat(1);
                         if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
-                    }
-                    const u32 curLo = u32(runStart[size_t(r2)]);
-                    const u32 curHi = u32(runStart[size_t(r2 + 1)]);
-                    // THE DISCIPLINE: pop the non-prefix runs; each MUST
-                    // be exhausted (the boundary rule guarantees it)
-                    while (!act.empty() &&
-                           !pairIsPrefixOfPair(act.back().runLo, sliceX(curLo))) {
-                        if (!act.back().iheap.empty())
-                            die("EMIT_DISCIPLINE: the run at pair " +
-                                std::to_string(act.back().runLo) +
-                                " closes with pending rows - the boundary"
-                                " rule was violated");
-                        act.pop_back();
-                    }
-                    // the current run: the inner heap over its members
-                    Active R;
-                    R.runLo = curLo; R.runHi = curHi;
-                    for (u32 mi = curLo; mi < curHi; ++mi) {
-                        const u32 vP = phraseOfAt[size_t(pairsSA[size_t(mi)])];
-                        if (occStart[size_t(vP)] < occStart[size_t(vP + 1)])
-                            innerPush(R, Inner{mi - curLo,
-                                               u32(occStart[size_t(vP)])});
-                    }
-                    const bool lastRun = (r2 + 1 >= nRuns);
-                    u32 nx = 0, eNx = 0;
-                    if (!lastRun) {
-                        nx = sliceX(u32(runStart[size_t(r2 + 1)]));
-                        eNx = phraseEndAt[size_t(nx)];
-                    }
-                    if (!R.iheap.empty())
-                        outPush(Out{curLo, R.iheap.front().occLo,
-                                     runHeadRow(R)});
-                    for (;;) {
-                        if (oheap.empty()) break;
-                        Out e = outPop();
-                        const int slot = actFind(e.runLo);
-                        if (e.runLo != curLo && slot < 0)
-                            continue;   // the run closed: stale
-                        Active* RA = (e.runLo == curLo) ? &R
-                                   : &act[size_t(slot)];
-                        // the freshness: the entry's occLo must match the
-                        // run's inner top (NO row rebuild - the row build
-                        // per pop was ~150 ns of the ~900 ns/row emit)
-                        if (RA->iheap.empty() ||
-                            RA->iheap.front().occLo != e.occLo)
-                            continue;   // stale: the head advanced
-                        if (!lastRun && cmpBound(e.row, nx, eNx) >= 0) {
-                            ++boundaryBlocks;
-                            outPush(std::move(e));   // re-gate at the next run
-                            break;
+                        const u64 rsA = regionOfRun(stepLo);
+                        const u64 pLo = u64(runStart[size_t(stepLo)]);
+                        const u64 pTarget = pLo + ppt;
+                        u64 rsB = rsA;
+                        while (rsB + 1 < nRegions &&
+                               u64(runStart[size_t(regionStart[size_t(rsB + 1)])])
+                                   < pTarget) ++rsB;
+                        if (rsB == rsA && rsA + 1 < nRegions) rsB = rsA + 1;
+                        const u64 stepHi = (rsB + 1 < nRegions)
+                            ? u64(regionStart[size_t(rsB + 1)]) : nRuns;
+                        const u64 pHi = u64(runStart[size_t(stepHi)]);
+                        const u64 T = std::max<u64>(1,
+                            std::min<u64>(threads, stepHi - stepLo));
+                        std::vector<std::vector<u64>> buf{size_t(T)},
+                            lcpBuf{size_t(T)};
+                        std::vector<SpanStats> st{size_t(T)};
+                        const double tm0 = now_sec();
+                        if (T == 1) {
+                            mergeSpan(stepLo, stepHi, buf[0], lcpBuf[0], st[0]);
+                        } else {
+                            std::vector<std::thread> pool;
+                            for (u64 t = 0; t < T; ++t) {
+                                pool.emplace_back([&, t] {
+                                    const u64 pLo2 = pLo, pHi2 = pHi,
+                                        rsA2 = rsA, rsB2 = rsB, T2 = T;
+                                    auto cutAt = [&](u64 pCut) -> u64 {
+                                        auto it = std::lower_bound(
+                                            regionStart.begin()
+                                                + long(rsA2),
+                                            regionStart.begin()
+                                                + long(rsB2) + 1,
+                                            u32(0),
+                                            [&](u32 a, u32) {
+                                                return u64(runStart[
+                                                    size_t(a)]) < pCut;
+                                            });
+                                        // past the step's last region:
+                                        // the cut is the step end (an
+                                        // empty trailing span), never an
+                                        // out-of-range regionStart read
+                                        return (it == regionStart.begin()
+                                                    + long(rsB2) + 1)
+                                            ? stepHi : u64(*it);
+                                    };
+                                    const u64 rA = (t == 0) ? stepLo
+                                        : cutAt(pLo2 + (pHi2 - pLo2) * t / T2);
+                                    const u64 rB = (t + 1 == T2) ? stepHi
+                                        : cutAt(pLo2 + (pHi2 - pLo2)
+                                                    * (t + 1) / T2);
+                                    mergeSpan(rA, rB, buf[size_t(t)],
+                                              lcpBuf[size_t(t)],
+                                              st[size_t(t)]);
+                                });
+                            }
+                            for (auto& th : pool) th.join();
                         }
-                        pushRow(e.row);
-                        ++mergeSteps;
-                        const Inner top = RA->iheap.front();
-                        innerPop(*RA);
-                        const u32 nextOcc = top.occLo + 1;
-                        const u32 pairIdx = RA->runLo + top.member;
-                        if (nextOcc < memberOccEnd(pairIdx))
-                            innerPush(*RA, Inner{top.member, nextOcc});
-                        if (!RA->iheap.empty())
-                            outPush(Out{e.runLo, RA->iheap.front().occLo,
-                                         runHeadRow(*RA)});
+                        merge_s += now_sec() - tm0;
+                        for (const auto& s2 : st) {
+                            mergeSteps += s2.rows;
+                            boundaryBlocks += s2.blocks;
+                            if (s2.maxChain > maxChain) maxChain = s2.maxChain;
+                            fastRows += s2.fast; slowRows += s2.slow;
+                            gateCalls += s2.gates;
+                            blockedCycles += s2.cycles;
+                            rowBuilds += s2.builds;
+                        }
+                        // the thin serial assembly
+                        const double ta0 = now_sec();
+                        u64 rows = pendingHead ? 1 : 0;
+                        for (const auto& b2 : buf) rows += b2.size();
+                        if (rows == 0) { stepLo = stepHi; continue; }
+                        Unit U; U.bin = 0;
+                        U.Pout.resize(rows); U.lcpv.assign(rows, 0);
+                        u64 w = 0; u64 prevPos = prevEmittedPos;
+                        if (pendingHead) {
+                            U.Pout[0] = headPacked; U.lcpv[0] = 0;
+                            pendingHead = false; w = 1;
+                            prevPos = FILE_N;   // the END row precedes
+                        }                       // everything that follows
+                        for (u64 t = 0; t < T; ++t) {
+                            const auto& b2 = buf[size_t(t)];
+                            if (b2.empty()) continue;
+                            if (w > 0) {
+                                u64 seam = 0;
+                                suf_cmp_lcp(prevPos, unpack_pos(b2[0]),
+                                            0, seam);
+                                U.lcpv[w] = seam;
+                            }
+                            std::memcpy(&U.Pout[w], b2.data(),
+                                        b2.size() * 8);
+                            if (b2.size() > 1)
+                                std::memcpy(&U.lcpv[w + 1],
+                                            lcpBuf[size_t(t)].data() + 1,
+                                            (b2.size() - 1) * 8);
+                            w += b2.size();
+                            prevPos = unpack_pos(b2.back());
+                        }
+                        if (w != rows)
+                            die("EMIT_ASSEMBLY: wrote " + std::to_string(w)
+                                + " rows against " + std::to_string(rows));
+                        std::fprintf(stderr,
+                            "SS_EMIT_UNIT unit=%" PRIu64 " rows=%" PRIu64
+                            " rule=the_parallel_region_merge;no_sorting\n",
+                            nextUnitId, rows);
+                        // the last position BEFORE emitUnit (it
+                        // consumes the Unit)
+                        const u64 lastPos =
+                            unpack_pos(U.Pout[size_t(rows - 1)]);
+                        emitUnit(U, nextUnitId++);
+                        NB = nextUnitId;
+                        prevEmittedPos = lastPos;
+                        assembledTotal += rows;
+                        assemble_s += now_sec() - ta0;
+                        stepLo = stepHi;
                     }
-                    if (!R.iheap.empty())
-                        act.push_back(std::move(R));
-                    if (act.size() > maxChain) maxChain = act.size();
                 }
-                // THE FINAL DRAIN: the boundary is past the end; the
-                // remaining live entries emit (the discipline never runs
-                // again, so the chain may hold exhausted runs)
-                for (const auto& R2 : act)
-                    if (!R2.iheap.empty())
-                        die("EMIT_FINAL: the run at pair " +
-                            std::to_string(R2.runLo) + " still holds rows"
-                            " after the drain - the boundary rule was"
-                            " violated");
+                if (pendingHead)
+                    die("EMIT_FINAL: no rows were ever emitted");
                 if (mergeSteps != N - 1)
                     die("EMIT_FINAL: the merge emitted " +
                         std::to_string(mergeSteps) + " rows against N-1=" +
                         std::to_string(N - 1) + " - rows were lost or"
                         " duplicated");
-                flushBatch();
+                if (assembledTotal != N)
+                    die("EMIT_FINAL: assembled " +
+                        std::to_string(assembledTotal) + " rows against N="
+                        + std::to_string(N) + " - the unit stream lost or"
+                        " duplicated rows");
                 std::fprintf(stderr,
                     "SS_EMIT_DONE runs=%" PRIu64 " merge_steps=%" PRIu64
                     " max_chain=%" PRIu64 " boundary_blocks=%" PRIu64
-                    " emit_s=%.2f"
-                    " rule=O(N)_streaming;zero_corpus_suffix_sorts\n",
+                    " fast_rows=%" PRIu64 " slow_rows=%" PRIu64
+                    " gate_calls=%" PRIu64 " blocked_cycles=%" PRIu64
+                    " row_builds=%" PRIu64
+                    " regions=%" PRIu64 " sim_s=%.2f merge_s=%.2f"
+                    " assemble_s=%.2f emit_s=%.2f"
+                    " rule=O(N)_parallel_region_merge;fast_path_singletons"
+                    ";zero_corpus_suffix_sorts\n",
                     nRuns, mergeSteps, maxChain, boundaryBlocks,
+                    fastRows, slowRows, gateCalls, blockedCycles,
+                    rowBuilds, nRegions, sim_s, merge_s, assemble_s,
                     now_sec() - te0);
                 std::fprintf(stderr,
                     "SS_HARD_RULE corpus_suffix_rows_sorted=%" PRIu64
@@ -4135,7 +4339,7 @@ int main(int argc, char** argv) {
         // the parse re-read bug class (run8's closePhrase) or a walk
         // runaway the journal must account. The env override must exceed
         // the plan; the plan line prints the decomposition.
-        const u64 walkBytes = g_text_walk.load(std::memory_order_relaxed);
+        const u64 walkBytes = g_text_walk.total();
         const u64 expectedRchar = FILE_N + 4 * FILE_N + 2 * walkBytes;
         u64 limit = expectedRchar;
         if (const char* limitText = ::getenv("XSA_TAPE_RCHAR_LIMIT")) {
