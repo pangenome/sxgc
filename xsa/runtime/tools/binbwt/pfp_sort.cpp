@@ -3936,6 +3936,34 @@ int main(int argc, char** argv) {
                         out.push_back(packRow(pos));
                         ++st.rows;
                     };
+                    // THE DEFERRED SET: a blocked row's VALUE is fixed,
+                    // so its emission phase is STATIC - the first phase
+                    // whose next-run boundary passes it. Parking it
+                    // (integer-keyed, no induced compares while it
+                    // waits) replaces the K-phase re-gating + outer
+                    // heap churn that was the long-chain crawl: a row
+                    // blocked for K phases paid K full cmpBounds plus
+                    // ~log(heapSize) induced cascades per phase.
+                    std::vector<std::pair<u64, Out>> deferred;
+                    auto defGreater =
+                        [](const std::pair<u64, Out>& a,
+                           const std::pair<u64, Out>& b) -> bool {
+                        return a.first > b.first;
+                    };
+                    auto defPush = [&](u64 phase, Out e) {
+                        deferred.emplace_back(phase, std::move(e));
+                        std::push_heap(deferred.begin(), deferred.end(),
+                                       defGreater);
+                    };
+                    auto defPump = [&](u64 phase) {
+                        while (!deferred.empty() &&
+                               deferred.front().first <= phase) {
+                            std::pop_heap(deferred.begin(), deferred.end(),
+                                          defGreater);
+                            outPush(deferred.back().second);
+                            deferred.pop_back();
+                        }
+                    };
                     for (u64 r2 = runLo2; r2 < runHi2; ++r2) {
                         if ((r2 & 0xffff) == 0 &&
                             ::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
@@ -3960,6 +3988,8 @@ int main(int argc, char** argv) {
                             nx = sliceX(u32(runStart[size_t(r2 + 1)]));
                             eNx = phraseEndAt[size_t(nx)];
                         }
+                        defPump(r2);   // the deferred rows arrive, in
+                                       // value order via the live heap
                         // THE FAST PATH: a single-member run whose slice
                         // does not prefix the next run's slice emits its
                         // whole list DIRECTLY (the interval property:
@@ -4008,7 +4038,24 @@ int main(int argc, char** argv) {
                             ++st.gates;
                             if (!lastRun && cmpBound(e.row, nx, eNx) >= 0) {
                                 ++st.blocks; ++st.cycles;
-                                outPush(std::move(e));
+                                // THE EMIT-PHASE PRECOMPUTE: binary
+                                // search the first phase whose boundary
+                                // passes the row (cmpBound is monotone
+                                // in the sorted slices). lo lands on the
+                                // passing phase; the span's last phase
+                                // has no boundary (the drain passes all).
+                                u64 lo = r2 + 1, hi = runHi2;
+                                while (lo < hi) {
+                                    const u64 mid = lo + (hi - lo) / 2;
+                                    const u32 nx2 = sliceX(
+                                        u32(runStart[size_t(mid + 1)]));
+                                    if (cmpBound(e.row, nx2,
+                                        phraseEndAt[size_t(nx2)]) < 0)
+                                        hi = mid;
+                                    else lo = mid + 1;
+                                }
+                                if (lo >= runHi2) lo = runHi2 - 1;
+                                defPush(lo, std::move(e));
                                 break;
                             }
                             pushRowLocal((e.row.occ_o == 0xFFFFFFFF00000000ull)
@@ -4040,6 +4087,11 @@ int main(int argc, char** argv) {
                             die("EMIT_FINAL: the span drain at pair " +
                                 std::to_string(R2.runLo) + " still holds"
                                 " rows - the REGION MAP under-cut");
+                    if (!deferred.empty())
+                        die("EMIT_FINAL: " +
+                            std::to_string(deferred.size()) + " deferred"
+                            " rows never arrived - the emit-phase"
+                            " precompute leaked");
                     // the LCP pass (in-thread): the adjacent-row true LCP
                     lcpv.assign(out.size(), 0);
                     for (size_t i2 = 1; i2 < out.size(); ++i2) {
