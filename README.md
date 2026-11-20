@@ -271,3 +271,11 @@ scale), not by preference. The product path is `xsa build` end to end.
 License notes: r-pfbwt and pfp++ carry our upstreamable patches (AGC reader
 and tail emission) — forks/PRs under the pangenome org; TeraTools MIT;
 grlBWT GPL-3 (retired from the product path).
+
+## The tape era's entry point
+
+- **TAPE_VISION.md** — the design of record: stream, sort the keys, census
+  bins, parse-space chunk sorts, concat; the parse-of-parse recursion with
+  census-decided levels; one memory mode at every scale.
+- TAPE_BINS.md — the amendment history (why each law exists).
+- RESULTS_TAPE_READER.md — the receipts and the state of record.

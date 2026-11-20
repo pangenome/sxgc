@@ -1,3 +1,4 @@
+<!-- SUPERSEDED: this describes the pull-machine implementation notes. The current machine is TAPE_VISION.md. -->
 # TAPE_READER implementation notes (feat/tape-reader)
 
 TAPE_READER.md is the spec. This file records only the decisions the spec leaves

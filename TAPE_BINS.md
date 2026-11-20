@@ -1,3 +1,11 @@
+# TAPE_BINS.md — SUPERSEDED BY TAPE_VISION.md (kept as the amendment history)
+
+> **READ TAPE_VISION.md FIRST.** It is the consolidated current design. This
+> document is the historical record of how the design got there: the base spec
+> plus seven amendments, each recording the failure or correction that forced it.
+> Details of the base spec (e.g. "256 first-byte bins") were superseded by later
+> amendments — do not implement from this file alone.
+
 # TAPE_BINS.md — the per-bin machine (v2, supersedes the pull-machine section of TAPE_READER.md)
 
 Operator's design, frozen 2026-11-17. THE LAW: every row's bytes are read at most

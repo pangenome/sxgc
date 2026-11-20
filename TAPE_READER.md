@@ -1,3 +1,4 @@
+<!-- SUPERSEDED: this describes the pull machine (deleted from the codebase). The current machine is TAPE_VISION.md. -->
 # THE TAPE READER: the pull machine
 
 The sorter becomes four components. One sequential corpus reader, a request

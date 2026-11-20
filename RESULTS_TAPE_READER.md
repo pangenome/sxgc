@@ -1,3 +1,40 @@
+## STATE OF RECORD — 2026-11-20 (read this first; sections below are the historical log)
+
+The machine as of this date: TAPE_VISION.md is the design of record.
+Implementation: xsa/runtime/tools/binbwt/pfp_sort.cpp (one machine, no flags).
+
+THE RECEIPTS THAT MATTER (all under /mnt/nvme2n1/erikg/TAPEREADER/bins-p1):
+
+- G0 ORACLE-EXACT, 10/10 (8 fixtures + adversarial collision + band
+  invariance SHA), including the boundary shapes (docsep, eofrun,
+  internsep) and the pathological periodic shapes (single, period2).
+- G1 COLD 3 GB COMPLETE: rows 3,000,000,001, rchar/corpus 5.67x
+  (the old design measured 1213x on the same corpus), SS_DONE, all
+  container members written (chi = 843,698,284).
+- G2 IDENTITY CLOSED: SA + BWT + five more members byte-identical to the
+  trusted scatter arm at 3 GB; the m14/m5 delta was root-caused to a
+  single convention bug (the slice body marker: pfp_sort left the
+  zero-initialized byte where the finish expects the 255 escape marker)
+  and fixed (8c095cd). The single-row brute arbitration (SA row 117,721,
+  true lcp 778) proved the reader's LCP data was correct throughout.
+- THE PHASE TABLE (run14e, 3 GB, 24 threads): parse 214 s + dictionary
+  sort 254 s + parse SA 819 s + lcp 47 s + lists 5 s + emit 1,066 s
+  = ~40 minutes core pipeline (was 2h05m-11h in the superseded shapes).
+- PREFIX-FREENESS: production prefix_relations = 0 (the one-sided
+  trigger's lemma holds at scale); the walk remains only for the
+  doc-end residual, journaled.
+
+OPEN ITEMS (the ladder in TAPE_VISION.md):
+1. The one-mode memory law (streaming parse seeds buckets, no RAM intern
+   table, census-drawn bins, per-phase RSS <= dial asserted, and the
+   three-dial byte-identity proof at 512 MB / 2 GB / roomy).
+2. The level-2 census: parse the parse at 3 GB, measure the condensation
+   yield, choose the SA's level once, by number.
+3. The 100 GB head run, then G3's pile projection, then the pile.
+
+The historical log below records every superseded shape with its
+receipts; the failures are load-bearing (each forced an amendment) but
+none of those machines is the machine.
 # Tape reader: scheduling diagnosis attested; P1 still VOID
 
 **Not ready for the pile.** At `93f5656`, the branch-built corrected scatter
