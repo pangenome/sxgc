@@ -4142,17 +4142,27 @@ int main(int argc, char** argv) {
                                         rowOf(pI, occList[size_t(occLo)]);
                                     ++D.mergeBuilds;
                                     // the value position among the merged
-                                    // entries (own rows and the earlier
-                                    // arrivals alike)
+                                    // entries by BINARY SEARCH (the list
+                                    // is value-ordered: the own rows by
+                                    // the continuation rank, the earlier
+                                    // arrivals by their inserts). The
+                                    // linear scan was quadratic in the
+                                    // pathological big groups and cost
+                                    // 1686 s of the 3 GB merge.
                                     u64 at = merged.size();
-                                    for (u64 i2 = 0; i2 < merged.size();
-                                         ++i2) {
-                                        const BandRow& mr = (i2 < ownN)
-                                            ? mrows[size_t(i2)]
-                                            : mrows[size_t(i2)];
-                                        if (inducedCmp(ar, mr) < 0) {
-                                            at = i2; break;
+                                    {
+                                        u64 a3 = 0, b3 = merged.size();
+                                        while (a3 < b3) {
+                                            const u64 mid = a3
+                                                + (b3 - a3) / 2;
+                                            if (inducedCmp(
+                                                    ar, mrows[size_t(mid)])
+                                                    < 0)
+                                                b3 = mid;
+                                            else a3 = mid + 1;
+                                            ++D.mergeBuilds;
                                         }
+                                        at = a3;
                                     }
                                     const u64 pos = PStart_[
                                         size_t(occList[size_t(occLo)])]
