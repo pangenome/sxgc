@@ -3768,8 +3768,11 @@ int main(int argc, char** argv) {
                 for (u64 v = 0; v < dictN; ++v) {
                     const u64 off = dictLenPrefix[size_t(v)];
                     const u32 len = dictLen[size_t(v)];
-                    const u32 p0 = u32(dictRefPos[size_t(v)]);
-                    const u32 pend = p0 + len;
+                    // corpus positions are u64 (the 10 GB rung's
+                    // LANDING_INVERT: the truncated u32 p0 seeded
+                    // pairs above 4.29 GB into WRONG cell bands)
+                    const u64 p0 = dictRefPos[size_t(v)];
+                    const u64 pend = p0 + len;
                     for (u64 j = 0; j < len; ++j) {
                         tbuf.push_back(PEnt{off + j, p0 + j, pend});
                         if (tbuf.size() >= (1u << 16)) flushCells();
