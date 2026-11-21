@@ -582,3 +582,32 @@ Fix during the rung: the oracle band stream (band_*.sa) is a
 TRIE_TAP product - the first two arms ran without it and their
 BAND_STREAM receipt line compared two empty streams (vacuous,
 corrected by the tap arm's stream of record).
+
+## THE CLIMB — RUNG 2 (3 GB) COMPLETE — 2026-11-21
+
+The c3g corpus (KEYRADIX), the certified remap (md5 3fdbdc1e...),
+run14e's exact finish binary + flags, the finish concurrent. THE
+IDENTITY GATE vs the certified anchor (run14e/reader/product.sxi2,
+== run10 main == run13 reader, the G2 9/9 anchors): **ALL NINE
+MEMBERS BYTE-IDENTICAL** - m1 1,005,701,040B ea7f9f74ff5aa5ce,
+m4 12B 0da64314..., m5 394,614,988B cc5d57c8..., m7 256B 38dd65a7...,
+m10 0B, m11 8,405,968B 6fcd1117..., m12 8,537,360B e15f2a57...,
+m13 765,614,752B 4efdb7b4..., m14 780,101,144B 5d2e9aadb4bc6c37 -
+every member == the certified SHAs. chi=828,459,853 n=3,000,000,001
+r=1,075,961,507 (== the certified chi). The banded Mode B machine
+reproduces the certified 3 GB container bit-exactly. Product sha256
+3935e8f1d220092d2cd12081938748e8a62f02e882bd021781ec7c3d0cabe7f3.
+Walls (the finish overlapped from +10s): producer 5,330 s total -
+parse 91,829,161 phrases in ~130 s (forced_splits=2, == the
+certified phrase count), key sort 107.5 s (distinct 86,856,236,
+dict_bytes 2,839,587,878), parse-SA 159.7 s (91,829,161 rows),
+pairs 3,164.7 s (2.84 B pairs, 1,710,902,146 runs, 123 bands,
+~1.1 us/pair), emit ~330 s (rows 3 B, crossings 1,244,015,862,
+45 windows; anon peaks: parse 5 MB / key 488 MB / parse_sa 680 MB /
+emit 4.87 GB against the 12 GB dial). Finish rc=0.
+THE ROW-WALK BATTERY at 3 GB: PASS - 1000 sampled ranks, max walk
+depth 6,907, all symbols correct. BAND STREAM: 45 bands,
+3,000,000,001 rows.
+THE LEVEL-2 CENSUS at 3 GB: level1=91,829,161 -> level2_phrases=
+3,073,276, distinct=3,061,538, avg=29.88 IDs, max=2118, docs=486,937
+-> CONDENSATION 29.88x (29.83x at 1 GB, 29.86x at 100 MB - flat).
