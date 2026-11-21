@@ -547,3 +547,38 @@ rung (u32 pairs space ~2.84 B) ride the same columns + bands; the
 ladder climb is the next rung. ambTree (the ambiguity oracle) is the
 last dictionary-proportional RAM array (24 MB at the sandbox; the
 sort's working structure) - it would map too at the pile.
+
+## THE CLIMB — RUNG 1 (1 GB) COMPLETE — 2026-11-21
+
+The one-mode machine at 10x the sandbox: pile-head slice, document-
+aligned, docs 0..165625 (cut at doc 165626's start = byte
+1,000,000,665; the same slicing method as the sandbox). Remap: the
+certified law (order-preserving over the used set; 230 symbols).
+Three arms, all SS_DONE, all phases under dial:
+  roomy  (wide dial):  total 1,354 s (producer 1,220 s, finish 133 s)
+  tight  (2 GB dial):   total 1,398 s - ALL PHASES UNDER DIAL
+    parse 5,176 / key_sort 240,368 / parse_sa 229,284 /
+    pairs_sort 603,764 / emit 1,090,280 kB against 2,097,152+524,288
+  tap (tight + TRIE_TAP): 25.1 min (writes the oracle band stream)
+  products: ALL THREE BYTE-IDENTICAL sha256 b20ceebe91707dbac80c2ea
+  12c99e704c6b6a734293f3a558c90ce090c21f6a3; chi=283,296,927,
+  n=1,000,000,666, r=368,036,627 (identical).
+  Counters: phrases=30,548,744 (avg 32.73 B), distinct=29,169,346,
+  dict_bytes=pairs=955,321,881, runs=606,145,743, rows=1,000,000,665,
+  crossings=387,234,198, walk_steps=3,500,781,995, slide_fires=1.
+  Pairs at wide: 49 bands, 707.9 s; at tight: 202 bands, 601.1 s.
+  Emit windows: 15 (wide) / 90 (tight).
+THE ROW-WALK BATTERY (gates/rowwalk_gate.cpp - NO brute force: 1000
+random ranks, each verified by ONE suffix walk; adversarial-tested -
+it dies on a swapped row): PASS - all 1000 ordered pairs, max walk
+depth 13,919, all packed symbols correct, row 0 = the END, row count
+= N. BAND STREAM OF RECORD: 90 bands, 1,000,000,666 rows, sha256
+352180c6676eac8f308741d452fd26b2d3d7cca5f7e27d2231f47db65dbe1c6a.
+THE LEVEL-2 CENSUS at 1 GB: level1=30,548,744 -> level2_phrases=
+1,024,248, distinct=1,021,933, avg=29.83 IDs, max=2117, docs=
+165,626 -> CONDENSATION 29.83x (the sandbox: 29.86x - the level
+decision is stable across two decades of scale).
+Fix during the rung: the oracle band stream (band_*.sa) is a
+TRIE_TAP product - the first two arms ran without it and their
+BAND_STREAM receipt line compared two empty streams (vacuous,
+corrected by the tap arm's stream of record).
