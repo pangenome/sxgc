@@ -653,3 +653,66 @@ rung uses (run_162: 1122 units concurrent PASS; rung 2's finish
 concurrent PASS). A timing-dependent race in the finish's band loop
 at very high unit counts on cold start; the fix belongs to the
 finish's owner. The climb runs the finish fused, which avoids it.
+
+## AMENDMENT W (WIDE BLADES) LANDED AT THE SANDBOX — 2026-11-22
+
+The stopped rung 3 (operator order, VOID at emit unit 139/~214, emit
+the dominant phase, root cause the live LCP brute walk) is journaled
+above. AMENDMENT W (c18b535+5f61040+22b6620, the frozen spec) landed
+kernel by kernel, each gated by G0 10/10 + the sandbox SHA
+6325c843...f341 at all three dial arms:
+
+- W5 THE EMIT CARRIES THE LCP (506604f): the parse-LCP array (Kasai
+  over the parse-SA, O(corpus) amortized) + the u64 min segment tree;
+  the row facts (phrase id, offset, continuation rank) carried from
+  the L1 through the L3 merge; the walk bounds every pair by the
+  phrase lengths; the residual (a slice a strict prefix of the next)
+  falls to the seeded walk. text_walk 4,093,684,635 -> 1,503,771,102
+  bytes (-63%); emit 27.14 -> 19.51 s; W3 receipt
+  walk_cores_measured=20.6-21.6 against threads=24.
+- W2 THE PARSE-SA KERNEL IS LIBSAIS (37bc89c with W1): under
+  prefixRelations == 0 (every real-text scale measured) the ID-sequence
+  suffix order IS the byte-true aligned order - ONE libsais_int_omp
+  call over the dense integer alphabet (verified END-FIRST
+  empirically; the vendored copy at bit6/third_party/libsais). Under a
+  prefix-relation class (the fixtures' residuals; the 1 GB corpus-end
+  residual) the CERTIFIED comparator path runs - a measured parse
+  property decides. parse-SA 2.21 -> 0.24 s (9.2x); a permutation belt
+  guards the kernel.
+- W1 THE BAND FAN (37bc89c): the dict key sort's buckets fan across
+  the --threads pool with a flight window (2x threads decoded ahead -
+  the run-ahead would hold the whole dictionary in RAM). THE FIRST
+  SHAPE HUNG SILENTLY at the sandbox (workers exited on empty+closed
+  before the window's tail was pushed; the fixtures' bk=1 passed G0
+  blind to it) - the drain flag now closes only after the last
+  commit. key sort 3.74 -> 2.55 s.
+- W7 IPS4O INTERIORS (97a501d): ips4o (BSD-2, vendored with two
+  recorded local patches + a tbb stub) replaces std::sort at the two
+  hot sites (the pairs chunk sorts, the dict bucket sorts); keys
+  UNIQUE by construction (the idx/pos tie-breaks) - the instability
+  is legal and the SHA proves it. ips2ra vendored for future
+  integer-key interiors (none qualify today - the pairs' keys are
+  byte strings). key sort 2.55 -> 1.74 s, pairs 42.42 -> 40.50 s.
+
+THE WALL TABLE (sandbox 100 MB, wide dial - the certified dial-rung
+machine vs the W machine):
+  key sort 3.74 -> 1.74 | parse-SA 2.21 -> 0.24 | parse-LCP (new) 1.91
+  pairs 126.40 -> 40.50 | occ lists 0.12 -> 0.12
+  resolve 9.59 -> 7.45 | merge 2.98 -> 2.38 | walk 1.95 -> 1.39
+  assemble 6.96 -> 4.90 | emit total 27.14 -> 19.64
+  TOTAL run_s 166.52 -> 69.89 (2.38x)
+  text_walk 4.09e9 -> 1.50e9; walk_cores 21.6/24 (measured).
+Every arm's exit code journaled (the recovery discipline: one arm
+per call, no wrapper loops). G0 10/10 at every kernel step; the
+sandbox SHA 6325c843...f341 at all three dial arms after each.
+W4 (the finish's parallel member streams) is MAIN-SIDE - outside this
+worktree; journaled for the finish's owner.
+
+NEXT: the ladder resumes - 1 GB / 3 GB byte-identity vs the certified
+climb containers (b20ceebe... / the run14e member SHAs), then ONE
+100 GB run vs the banked rehearsal container (Rungs 4+5 collapsed),
+its phase table the G3 launch arithmetic, its census the pile level
+decision. THE 100 GB CAVEAT: the pairs columns + buckets at 95e9
+pairs need ~5 TB of scratch - the census-drawn BINS (the vision's
+design, the next architecture step) or a per-band streaming
+distribution; the wall table at 10 GB will price it precisely.
