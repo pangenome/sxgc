@@ -468,3 +468,82 @@ document boundary: doc 16555 of pilemap100, 100,000,503 bytes):
   3.05M - the condensation is strong in the real pile head. The
   corpus-level level decision gets re-measured at 3 GB and the 100 GB
   head (the census is its own feasibility study each time).
+
+## THE DIAL RUNG (Mode B banded, the rung finished) — 2026-11-21
+
+The three priced Mode A surfaces are banded; no phase holds a corpus-
+proportional anon structure. THE COLUMNS: every corpus-proportional
+array is a mapped file (ColWriter/ColMap, MAP_SHARED; the page cache
+streams it; the DIAL_LAW asserts the anon peak, the file peak journaled
+beside it) - the dictionary reference columns, PA, PStart_, the
+adjacent-lcp columns, the parse-SA/rank, the pairs columns, run_start
+streamed. rankOf/rankLen deleted (the ids ARE the ranks). The dead
+pairLcpNext (386 MB built, never read) deleted. The PA annotation
+streams the position-ordered sink into the mapped column.
+
+pairs_sort: THE CELL-SEEDED BANDS - the pairs seeded by first-2-byte
+cells into equalized band files (cell order == key order; at most 512
+open), each band sorted in RAM under the dial, the ascending band
+concat IS the global order, run boundaries streamed, the PAIR BELT
+sampled at the concat. parse_sa: the shard sort + k-way merge stream
+through the mapped columns. emit: THE WINDOWS - the groups cut into
+windows of bounded row mass; crossings landing beyond the window park
+as (lg, pairIdx, occLo) in the TARGET window's arrival file (forward
+only); the windows run in ascending key order so the concat order IS
+the pairsSA order; bit-identity across dials because a group's row set
+is dial-invariant, the arrivals insert BY VALUE, and the container is
+unit-structure-invariant (run14b/14c).
+
+G0 (gates/tape_bins_g0.sh, BIN=/tmp/pfp_modeb): 10/10 PASS - all 8
+fixture arms oracle-exact + the 64MB-dial arm COMPLETES (was: DIAL_LAW
+death at emit 279,292 kB) + band_invariance PASS sha=31a764b6... (the
+certified value). mixed at a 4MB dial: 276 windows, 897,124 forward
+arrivals, byte-identical to wide.
+
+THE SANDBOX RUNG (~100 MB real pile head), three arms, producer
+/tmp/pfp_modeb + finish /tmp/xsa_finish_cur (main-repo source)
+concurrent (--poll-timeout 0; the finish streams the pieces):
+  ALL THREE SS_DONE. ALL THREE PRODUCTS BYTE-IDENTICAL:
+  product.sxi2 sha256 6325c843c0d9aa9be00d69260aafdd794936e2e79f16174
+  ef00c43db831f341 == the certified run_wide container of the
+  PRE-BANDING machine (the regression anchor).
+  chi=29,716,347 n=100,000,504 r=38,647,521 all three (identical).
+
+  run_162 (dial 16,384 kB, budget 16,384 + 65,536 = 81,920 kB):
+    parse     anon 5,172 kB   key_sort  35,660   parse_sa 24,420
+    pairs_sort anon 62,156     emit      74,108    <- ALL UNDER DIAL
+    pairs 96,478,666 in 265 bands (188,434/band), runs 67,457,648
+    resolve rows=100,000,503 crossings_in=26,646,576 fwd=6,731,374
+    windows=1,122 (87,381 rows/window) units=1,122
+    walls: total 178.4 s (pairs sort 55.4, resolve 42.2, emit 114.2
+    - the finish ran concurrently, competing for I/O)
+  run_5122 (dial 524,288, budget 524,288 + 131,072):
+    pairs_sort anon 90,132 (104 bands) emit anon 187,668 (36 windows)
+    total 189.8 s
+  run_wide2 (dial 12 GB): pairs 6 bands, emit 2 windows, total 166.6 s
+  Counter invariance across all three dials: phrases=3,054,126,
+  distinct=2,946,926, dict_bytes=96,478,666, pairs=96,478,666,
+  runs=67,457,648, rows=100,000,503, crossings=33,377,950,
+  walk_steps=254,750,366 - identical everywhere; the container
+  identical. THE DIAL LAW HOLDS at 16 MB on a 100 MB corpus.
+
+  THE PRICE (journaled honestly): the wide-dial pairs phase costs
+  126.4 s vs the old in-RAM MSD's 16.5 s (the per-band std::sort over
+  12 B entries pays page-cache compares; at the 16 MB dial the small
+  cache-resident bands sort FASTER, 55.4 s). A radix front-end per
+  band would recover it; not done (no gate-tuning, the banding is the
+  work). The emit's per-window L1 sweep costs resolve 42 s at 16 MB vs
+  9.6 s at wide.
+
+THE PHRASEBOOK GATE at the sandbox (run_162/modeb, the streamed
+columns): PHRASEBOOK_GATE_DONE tests=12000 (6000 forward position
+lookups vs the brute parse + 6000 reverse+dedupe) PASS, rc=0.
+THE LEVEL-2 CENSUS at the sandbox (run_162/modeb): level1=3,054,126
+-> level2_phrases=102,272, distinct=102,079, avg=29.86 IDs, max=173,
+docs=16,545, forced=0 - CONDENSATION 29.863x, the certified number.
+
+RESIDUAL: the 100 GB head's ~90 GB dictionary references and the 3 GB
+rung (u32 pairs space ~2.84 B) ride the same columns + bands; the
+ladder climb is the next rung. ambTree (the ambiguity oracle) is the
+last dictionary-proportional RAM array (24 MB at the sandbox; the
+sort's working structure) - it would map too at the pile.
