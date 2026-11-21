@@ -3630,6 +3630,123 @@ int main(int argc, char** argv) {
         // (the emit's induced comparator never consults it)
         bswap_release(ambTree);
 
+        // ---- AMENDMENT W5: THE PARSE-LCP ARRAY (Kasai over the
+        //      parse-SA) + the min segment tree. The aligned suffixes'
+        //      byte-LCP L[i] = lcp(parseSA[i-1], parseSA[i]) computed
+        //      in O(corpus) amortized (h drops by the leading phrase
+        //      per parse step, the extensions compare phrase bytes
+        //      linearly - both sides advance through the parse, no
+        //      rank jumps needed for LCP). The emit's walk then bounds
+        //      every row's byte-work by the phrase lengths and takes
+        //      the continuation LCP from this array: the walk becomes
+        //      a bounded copy (the concat law completed). u64 values:
+        //      at 10 GB the aligned lcps exceed u32.
+        u64* parseLcp = nullptr;    // L[1..M-1] (L[0] unused)
+        u64* lcpTree = nullptr;     // the iterative min segment tree
+        u64 lcpSegN = 0;
+        std::function<u64(u64, u64, u64)> alignedLcp = nullptr;
+        std::function<u64(u64, u64)> lcpRange = nullptr;
+        {
+            const double tk0 = now_sec();
+            ColMap m1; m1.mapRW(modebDir + "/parse_lcp.bin", M, 8);
+            parseLcp = m1.as<u64>();
+            lcpSegN = M > 1 ? M - 1 : 1;
+            ColMap m2; m2.mapRW(modebDir + "/lcp_tree.bin", 2 * lcpSegN, 8);
+            lcpTree = m2.as<u64>();
+            // lcp of the aligned suffixes at parse positions i, j
+            // from byte offset `from` (both sides walk the parse
+            // linearly; mismatch returns mid-phrase)
+            alignedLcp = [&](u64 i, u64 j, u64 from) -> u64 {
+                u64 pi, off, pj, oj;
+                {   // resolve byte offset `from` into (pos, phrase off)
+                    u64 target = PStart_[size_t(i)] + from;
+                    u64 lo = i, hi = M;
+                    while (lo + 1 < hi) {
+                        const u64 mid = lo + (hi - lo) / 2;
+                        if (PStart_[size_t(mid)] <= target) lo = mid;
+                        else hi = mid;
+                    }
+                    pi = lo; off = target - PStart_[size_t(lo)];
+                }
+                {
+                    u64 target = PStart_[size_t(j)] + from;
+                    u64 lo = j, hi = M;
+                    while (lo + 1 < hi) {
+                        const u64 mid = lo + (hi - lo) / 2;
+                        if (PStart_[size_t(mid)] <= target) lo = mid;
+                        else hi = mid;
+                    }
+                    pj = lo; oj = target - PStart_[size_t(lo)];
+                }
+                u64 lcp = from;
+                for (;;) {
+                    if (pi >= M || pj >= M) return lcp;   // a prefix
+                    const u32 v1 = PA[size_t(pi)], v2 = PA[size_t(pj)];
+                    const u64 r1 = u64(dictLen[size_t(v1)]) - off,
+                              r2 = u64(dictLen[size_t(v2)]) - oj;
+                    const u64 m3 = std::min(r1, r2);
+                    if (m3) {
+                        const u8* q1 = T + size_t(dictRefPos[size_t(v1)] + off);
+                        const u8* q2 = T + size_t(dictRefPos[size_t(v2)] + oj);
+                        const int c = std::memcmp(q1, q2, size_t(m3));
+                        if (c) {
+                            u64 k = 0;
+                            while (q1[k] == q2[k]) ++k;
+                            g_text_walk.add(k + 1);
+                            return lcp + k;
+                        }
+                        g_text_walk.add(m3);
+                    }
+                    lcp += m3;
+                    if (r1 < r2) { ++pi; off = 0; oj += m3; }
+                    else if (r2 < r1) { ++pj; oj = 0; off += m3; }
+                    else { ++pi; ++pj; off = oj = 0; }
+                }
+            };
+            // Kasai over the parse: h drops by the leading phrase
+            u64 h = 0, lcpMax = 0;
+            for (u64 i = 0; i < M; ++i) {
+                if (i) {
+                    const u64 drop = dictLen[size_t(PA[size_t(i - 1)])];
+                    h = h > drop ? h - drop : 0;
+                }
+                const u64 r = parseRank[size_t(i)];
+                if (r == 0) continue;
+                const u64 j = parseSA[size_t(r - 1)];
+                const u64 got = alignedLcp(i, j, h);
+                parseLcp[size_t(r)] = got;
+                if (got > lcpMax) lcpMax = got;
+                h = got;
+                if ((i & 0xfffff) == 0 &&
+                    ::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
+            }
+            // the min segment tree over L[1..M-1]
+            for (u64 k = 0; k < lcpSegN; ++k)
+                lcpTree[size_t(lcpSegN + k)] =
+                    parseLcp[size_t(k + 1)];
+            for (u64 k = lcpSegN; k > 1; --k)
+                lcpTree[size_t(k - 1)] = std::min(
+                    lcpTree[size_t(2 * (k - 1))],
+                    lcpTree[size_t(2 * (k - 1) + 1)]);
+            // the range min over L[a..b] (inclusive, 1 <= a <= b <= M-1)
+            lcpRange = [&](u64 a, u64 b) -> u64 {
+                u64 lo = lcpSegN + a - 1, hi = lcpSegN + b;  // half-open
+                u64 best = ~0ull;
+                while (lo < hi) {
+                    if (lo & 1) best = std::min(best, lcpTree[size_t(lo++)]);
+                    if (hi & 1) best = std::min(best, lcpTree[size_t(--hi)]);
+                    lo >>= 1; hi >>= 1;
+                }
+                return best;
+            };
+            phaseRssGate("parse_lcp");
+            std::fprintf(stderr,
+                "SS_PARSE_LCP rows=%" PRIu64 " lcp_max=%" PRIu64
+                " kasai_s=%.2f rule=amendment_w5;bounds_the_emit_walk"
+                ";aligned_suffix_lcps_as_mapped_columns\n",
+                M, lcpMax, now_sec() - tk0);
+        }
+
         // =============================================================
         // AMENDMENT 7b: THE STATIC TABLE + THE O(N) EMIT. The band loop
         // that enumerated and sorted all 3e9 corpus suffixes is DELETED
@@ -4442,10 +4559,15 @@ int main(int argc, char** argv) {
                 // unit-structure-invariant (run14b/14c: the 24-unit
                 // and the 4-unit readers byte-identical).
                 struct Cross { u32 lg; u64 pairIdx; u32 occLo; };
+                // AMENDMENT W5: the row facts the walk needs to bound
+                // its byte-work: the leading phrase id + the offset +
+                // the continuation's aligned rank (0 = the END)
+                struct FactRow { u32 v; u32 o; u32 n; };
                 struct SpanL1 {
                     std::vector<u64> ownPos;   // the positions, in order
                     std::vector<u64> ownIds;   // the pairIdx column
                     std::vector<u32> ownOcc;   // the occLo column
+                    std::vector<FactRow> ownFacts;  // the W5 carry
                     std::vector<u32> ownCnt;
                     std::vector<Cross> cross;  // lands inside the window
                     std::vector<Cross> fwd;    // lands in a LATER window
@@ -4485,6 +4607,9 @@ int main(int argc, char** argv) {
                 const std::string arrPrefix = modebDir + "/arr_w";
                 u64 totalRows = 0, totalCrossIn = 0, totalCrossFwd = 0,
                     totalWalk = 0, totalBuilds = 0, totalMergeBuilds = 0;
+                u64 w5FastTotal = 0, w5BoundedTotal = 0, w5GroupTotal = 0,
+                    w5ResidualTotal = 0;
+                double walkCoresMeasured = 0;   // W3: busy cores ~= threads
                 u64 assembledTotal = 0, emitRows = 0;
                 u64 prevEmittedPos = ~0ull;
                 const u64 headPacked = packRow(FILE_N);
@@ -4616,6 +4741,11 @@ int main(int argc, char** argv) {
                                             S.ownPos.push_back(rowPos(row));
                                             S.ownIds.push_back(pairIdx);
                                             S.ownOcc.push_back(top.occLo);
+                                            S.ownFacts.push_back(FactRow{
+                                                phraseOfAt[size_t(
+                                                    pairsSA[size_t(pairIdx)])],
+                                                u32(row.occ_o),
+                                                row.nrank});
                                             ++S.ownCnt[size_t(g - gLo)];
                                         } else if (lg < G1) {
                                             S.cross.push_back(
@@ -4734,6 +4864,7 @@ int main(int argc, char** argv) {
                     //      every arrival inserted by value)
                     struct SpanL3 {
                         std::vector<u64> finalPos;
+                        std::vector<FactRow> finalFacts;  // the W5 carry
                         u64 mergeBuilds = 0;
                     };
                     std::vector<SpanL3> L3out{size_t(T1)};
@@ -4748,6 +4879,7 @@ int main(int argc, char** argv) {
                                           gHi = spanLo[size_t(t + 1)];
                                 u64 ownOff = 0;
                                 std::vector<u64> merged;
+                                std::vector<FactRow> mergedFacts;
                                 std::vector<BandRow> mrows;
                                 for (u64 g = gLo; g < gHi; ++g) {
                                     if ((g & 0xffff) == 0 &&
@@ -4760,15 +4892,22 @@ int main(int argc, char** argv) {
                                     if (arrA == arrB) {
                                         // no arrivals: the rank order IS
                                         // the final order
-                                        for (u32 i2 = 0; i2 < ownN; ++i2)
+                                        for (u32 i2 = 0; i2 < ownN; ++i2) {
                                             D.finalPos.push_back(
                                                 S.ownPos[size_t(ownOff + i2)]);
+                                            D.finalFacts.push_back(
+                                                S.ownFacts[size_t(ownOff + i2)]);
+                                        }
                                         ownOff += ownN;
                                         continue;
                                     }
                                     merged.assign(
                                         S.ownPos.begin() + long(ownOff),
                                         S.ownPos.begin()
+                                            + long(ownOff + ownN));
+                                    mergedFacts.assign(
+                                        S.ownFacts.begin() + long(ownOff),
+                                        S.ownFacts.begin()
                                             + long(ownOff + ownN));
                                     mrows.resize(size_t(ownN));
                                     for (u32 i2 = 0; i2 < ownN; ++i2) {
@@ -4807,11 +4946,23 @@ int main(int argc, char** argv) {
                                             + u32(ar.occ_o);
                                         merged.insert(
                                             merged.begin() + long(at), pos);
+                                        mergedFacts.insert(
+                                            mergedFacts.begin() + long(at),
+                                            FactRow{
+                                                phraseOfAt[size_t(
+                                                    pairsSA[size_t(pI)])],
+                                                u32(ar.occ_o),
+                                                ar.nrank});
                                         mrows.insert(
                                             mrows.begin() + long(at), ar);
                                     }
-                                    for (const u64 p : merged)
-                                        D.finalPos.push_back(p);
+                                    for (size_t z2 = 0; z2 < merged.size();
+                                         ++z2) {
+                                        D.finalPos.push_back(
+                                            merged[size_t(z2)]);
+                                        D.finalFacts.push_back(
+                                            mergedFacts[size_t(z2)]);
+                                    }
                                     ownOff += ownN;
                                 }
                             });
@@ -4824,43 +4975,161 @@ int main(int argc, char** argv) {
                         std::vector<u64>().swap(S.ownPos);
                         std::vector<u64>().swap(S.ownIds);
                         std::vector<u32>().swap(S.ownOcc);
+                        std::vector<FactRow>().swap(S.ownFacts);
                         std::vector<u32>().swap(S.ownCnt);
                         std::vector<Cross>().swap(S.cross);
                     }
                     std::vector<std::pair<u64, u32>>().swap(arrBuf);
                     std::vector<u32>().swap(arrStart);
-                    // ---- THE WALK + THE ASSEMBLY: per-span pack + lcp
-                    //      (parallel), then ONE unit per window (the
-                    //      spans concatenated in group order)
+                    // ---- THE WALK + THE ASSEMBLY: per-span pack +
+                    //      the W5 LCP (parallel), then ONE unit per
+                    //      window (the spans in group order).
+                    //      AMENDMENT W5: the LCP is CARRIED, not
+                    //      walked. The row facts (phrase id, offset,
+                    //      continuation rank) bound every pair's
+                    //      byte-work: identical leading (P,o) -> the
+                    //      slices are equal by the dedupe law, lcp =
+                    //      the slice length + the continuation LCP
+                    //      from the parse-LCP tree (O(log)); else a
+                    //      memcmp bounded by min(len1,len2) - never
+                    //      past the phrase boundary; the residual
+                    //      (a slice a strict prefix of the next)
+                    //      falls to the old walk seeded at the bound.
+                    //      g_text_walk journals only the residual now.
                     {
                         std::vector<std::vector<u64>> buf{size_t(T1)},
                             lcpBuf{size_t(T1)};
+                        // the W5 counters (per window, accumulated)
+                        std::atomic<u64> w5Fast{0}, w5Bounded{0},
+                            w5Group{0}, w5Residual{0};
                         const double tw0 = now_sec();
+                        struct rusage rw0{};
+                        ::getrusage(RUSAGE_SELF, &rw0);
                         std::vector<std::thread> pool;
                         for (u64 t = 0; t < T1; ++t)
                             pool.emplace_back([&, t] {
                                 auto& out = buf[size_t(t)];
                                 auto& lcpv = lcpBuf[size_t(t)];
                                 const auto& fp = L3out[size_t(t)].finalPos;
+                                const auto& ff =
+                                    L3out[size_t(t)].finalFacts;
                                 out.reserve(fp.size());
                                 for (size_t i2 = 0; i2 < fp.size(); ++i2) {
                                     if ((i2 & 0xfffff) == 0 &&
-                                        ::access(stopFlag.c_str(), F_OK) == 0)
+                                        ::access(stopFlag.c_str(), F_OK)
+                                            == 0)
                                         ::_exit(75);
                                     out.push_back(packRow(fp[size_t(i2)]));
                                 }
                                 lcpv.assign(out.size(), 0);
+                                u64 locFast = 0, locBounded = 0,
+                                    locGroup = 0, locResidual = 0;
+                                // the continuation LCP for two rows
+                                // with EQUAL slices: the parse-LCP tree
+                                // (n = the continuation's aligned rank
+                                // + 1; 0 = the END)
+                                auto contLcpW5 = [&](const FactRow& A,
+                                                     const FactRow& B,
+                                                     u64 e) -> u64 {
+                                    if (A.n == 0)
+                                        return e;   // A's value ends
+                                    if (B.n == 0)
+                                        die("W5_ORDER: the row with the"
+                                            " END continuation sorts"
+                                            " after a longer equal-"
+                                            "slice row - the order is"
+                                            " broken");
+                                    const u64 r1 = u64(A.n) - 1,
+                                              r2 = u64(B.n) - 1;
+                                    const u64 ra = std::min(r1, r2),
+                                              rb = std::max(r1, r2);
+                                    return e + lcpRange(ra + 1, rb);
+                                };
                                 for (size_t i2 = 1; i2 < out.size(); ++i2) {
+                                    const FactRow& A = ff[size_t(i2 - 1)];
+                                    const FactRow& B = ff[size_t(i2)];
+                                    const u64 e1 =
+                                        u64(dictLen[size_t(A.v)]) - A.o;
+                                    const u64 e2 =
+                                        u64(dictLen[size_t(B.v)]) - B.o;
                                     u64 lt = 0;
-                                    suf_cmp_lcp(
-                                        unpack_pos(out[size_t(i2 - 1)]),
-                                        unpack_pos(out[size_t(i2)]),
-                                        0, lt);
+                                    if (A.v == B.v && A.o == B.o) {
+                                        // identical leading slices
+                                        // (the dedupe law)
+                                        lt = contLcpW5(A, B, e1);
+                                        ++locFast;
+                                    } else {
+                                        const u64 m3 = std::min(e1, e2);
+                                        u64 k = m3;
+                                        if (m3) {
+                                            const u8* q1 = T + size_t(
+                                                dictRefPos[size_t(A.v)]
+                                                + A.o);
+                                            const u8* q2 = T + size_t(
+                                                dictRefPos[size_t(B.v)]
+                                                + B.o);
+                                            u64 z = 0;
+                                            while (z < m3
+                                                   && q1[z] == q2[z]) ++z;
+                                            k = z;
+                                            g_text_walk.add(k + 1);
+                                        }
+                                        if (k < m3) {
+                                            // the divergence is INSIDE
+                                            // the phrases - bounded
+                                            lt = k;
+                                            ++locBounded;
+                                        } else if (e1 == e2) {
+                                            // equal slices, different
+                                            // (P,o): same group
+                                            lt = contLcpW5(A, B, e1);
+                                            ++locGroup;
+                                        } else {
+                                            // the residual: a slice a
+                                            // strict prefix of the
+                                            // next - the old walk,
+                                            // seeded at the bound
+                                            suf_cmp_lcp(
+                                                fp[size_t(i2 - 1)],
+                                                fp[size_t(i2)],
+                                                m3, lt);
+                                            ++locResidual;
+                                        }
+                                    }
                                     lcpv[size_t(i2)] = lt;
                                 }
+                                w5Fast.fetch_add(locFast);
+                                w5Bounded.fetch_add(locBounded);
+                                w5Group.fetch_add(locGroup);
+                                w5Residual.fetch_add(locResidual);
                             });
                         for (auto& th : pool) th.join();
-                        walk_s += now_sec() - tw0;
+                        const double tw1 = now_sec();
+                        struct rusage rw1{};
+                        ::getrusage(RUSAGE_SELF, &rw1);
+                        walk_s += tw1 - tw0;
+                        // W3's parallelism receipt: the walk phase's
+                        // average busy cores (process CPU time over
+                        // wall - a measured number, not a claim)
+                        {
+                            const double cpuS =
+                                double(rw1.ru_utime.tv_sec
+                                       + rw1.ru_stime.tv_sec)
+                                + double(rw1.ru_utime.tv_usec
+                                         + rw1.ru_stime.tv_usec) / 1e6
+                                - double(rw0.ru_utime.tv_sec
+                                         + rw0.ru_stime.tv_sec)
+                                - double(rw0.ru_utime.tv_usec
+                                         + rw0.ru_stime.tv_usec) / 1e6;
+                            if (tw1 > tw0)
+                                walkCoresMeasured =
+                                    std::max(walkCoresMeasured,
+                                             cpuS / (tw1 - tw0));
+                        }
+                        w5FastTotal += w5Fast.load();
+                        w5BoundedTotal += w5Bounded.load();
+                        w5GroupTotal += w5Group.load();
+                        w5ResidualTotal += w5Residual.load();
                         // the serial assembly: one unit per window
                         const double ta0 = now_sec();
                         u64 spanRows = 0;
@@ -4964,12 +5233,20 @@ int main(int argc, char** argv) {
                     " crossings=%" PRIu64 " walk_steps=%" PRIu64
                     " row_builds=%" PRIu64
                     " walk_s=%.2f assemble_s=%.2f emit_s=%.2f"
+                    " w5_fast=%" PRIu64 " w5_bounded=%" PRIu64
+                    " w5_group=%" PRIu64 " w5_residual=%" PRIu64
+                    " text_walk_bytes=%" PRIu64
+                    " walk_cores_measured=%.1f threads=%" PRIu64
                     " rule=O(N)_the_concat_walk;the_lists_carry_the"
                     "_resolved_order;zero_corpus_suffix_sorts"
-                    ";windows_under_the_dial\n",
+                    ";windows_under_the_dial;amendment_w5_the_lcp_is"
+                    "_carried;w3_cores_is_measured\n",
                     nRuns, emitRows, totalCrossIn + totalCrossFwd,
                     totalWalk, totalBuilds + totalMergeBuilds, walk_s,
-                    assemble_s, now_sec() - te0);
+                    assemble_s, now_sec() - te0,
+                    w5FastTotal, w5BoundedTotal, w5GroupTotal,
+                    w5ResidualTotal, g_text_walk.total(),
+                    walkCoresMeasured, threads);
                 std::fprintf(stderr,
                     "SS_HARD_RULE corpus_suffix_rows_sorted=%" PRIu64
                     " == phrase_count=%" PRIu64
@@ -5104,8 +5381,12 @@ int main(int argc, char** argv) {
         // read + the sorted-chunk read are one extra full pass over
         // the pair entries (24 B each) beyond the old in-RAM band sort
         const u64 pairsSpill = dictStaticPairs * 24;
+        // AMENDMENT W5: the parse-LCP column + its min tree (24 B per
+        // parse row) fault in once, and the Kasai + the bounded slice
+        // compares are counted as text walks (the 2x term covers them)
+        const u64 w5Columns = 24 * u64(M);
         const u64 expectedRchar = FILE_N + 4 * FILE_N + 2 * walkBytes
-            + pairsSpill;
+            + pairsSpill + w5Columns;
         u64 limit = expectedRchar;
         if (const char* limitText = ::getenv("XSA_TAPE_RCHAR_LIMIT")) {
             const u64 envLimit = std::strtoull(limitText, nullptr, 10);
@@ -5117,15 +5398,17 @@ int main(int argc, char** argv) {
                 " = parse_1x(" + std::to_string(FILE_N) + ") + margin_4x(" +
                 std::to_string(4 * FILE_N) + ") + 2x_measured_walks(" +
                 std::to_string(walkBytes) + ") + pairs_spill_24B(" +
-                std::to_string(pairsSpill) + ") - refusing a stale bar");
+                std::to_string(pairsSpill) + ") + w5_columns_24B(" +
+                std::to_string(w5Columns) + ") - refusing a stale bar");
         std::fprintf(stderr,
             "RCHAR_PLAN expected=%" PRIu64 " limit=%" PRIu64
             " arithmetic=parse_1x=%" PRIu64 "+margin_4x=%" PRIu64
             "+2x_measured_walks=%" PRIu64 "+pairs_spill_24B=%" PRIu64
+            "+w5_columns_24B=%" PRIu64
             " actual=%" PRIu64
             " rule=a_refusal_means_reality_exceeded_the_plan\n",
             expectedRchar, limit, FILE_N, 4 * FILE_N, 2 * walkBytes,
-            pairsSpill, (u64)rchar);
+            pairsSpill, w5Columns, (u64)rchar);
         if (rchar > limit)
             die("TAPE_RCHAR_LIMIT: rchar=" + std::to_string(rchar) +
                 " limit=" + std::to_string(limit) +
