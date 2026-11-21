@@ -442,6 +442,7 @@ static ColMap colFreeze(std::vector<T>& v, const std::string& path) {
     return m;
 }
 
+#include "ips4o/ips4o.hpp"   // AMENDMENT W7: the sort kernels
 // AMENDMENT W2: libsais (vendored at bit6/third_party/libsais,
 // Apache-2.0, upstream (c) Ilya Grebnov) - the integer-alphabet
 // OpenMP SA construction over the dense phrase-ID sequence. The
@@ -3148,7 +3149,10 @@ int main(int argc, char** argv) {
                                     std::fclose(f);
                                     ::remove(bp.c_str());
                                 }
-                                std::sort(ent.begin(), ent.end(),
+                                // AMENDMENT W7: ips4o (sequential);
+                                // the pos tie-break makes the keys
+                                // UNIQUE (one entry per occurrence)
+                                ips4o::sort(ent.begin(), ent.end(),
                                     [&](const std::pair<u64, u32>& a,
                                         const std::pair<u64, u32>& b) {
                                         const u64 m =
@@ -3248,9 +3252,11 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr,
                     "SS_KEY_SORT distinct=%" PRIu64 " census=%" PRIu64
                     " dict_bytes=%" PRIu64 " sort_s=%.2f"
-                    " rule=amendment_w1_fanned_buckets;dedupe_byproduct"
-                    ";census_byproduct;byte_order_ids;references_only"
-                    ";columns_mapped;committed_in_bucket_order\n",
+                    " kernel=ips4o_unique_keys_pos_tiebreak"
+                    " rule=amendment_w1_fanned_buckets;amendment_w7"
+                    "_ips4o_interiors;dedupe_byproduct;census_byproduct"
+                    ";byte_order_ids;references_only;columns_mapped"
+                    ";committed_in_bucket_order\n",
                     distinctTotal, censusTotal, dictBytesTotal, tks1 - tks0);
 
                 // ---- THE PA: the (pos, id) stream sorted by position
@@ -4087,6 +4093,12 @@ int main(int argc, char** argv) {
             //     order; the equal-slice run boundaries stream out;
             //     the PAIR BELT samples the concat.
             struct PEnt { u64 idx; u64 pos; u64 end; };
+            // AMENDMENT W7: the keys are made UNIQUE by construction
+            // (the idx tie-break) - the unstable kernel is legal and
+            // the byte-identity gate proves it. The within-group order
+            // of pairsSA changes to idx order; the emit output is
+            // invariant to it (a group's rows order by continuation
+            // rank; the landing reads slice VALUES, not indices)
             const auto entLess = [&](const PEnt& a, const PEnt& b) -> bool {
                 const u64 rA = a.end - a.pos, rB = b.end - b.pos;
                 const u64 c = std::min<u32>(rA, rB);
@@ -4095,7 +4107,8 @@ int main(int argc, char** argv) {
                                                T + size_t(b.pos), size_t(c));
                     if (m) return m < 0;
                 }
-                return rA < rB;
+                if (rA != rB) return rA < rB;
+                return a.idx < b.idx;
             };
             const auto entEq = [&](const PEnt& a, const PEnt& b) -> bool {
                 const u64 rA = a.end - a.pos, rB = b.end - b.pos;
@@ -4251,7 +4264,10 @@ int main(int argc, char** argv) {
                             }
                             std::fclose(f);
                         }
-                        std::sort(ent.begin(), ent.end(), entLess);
+                        // AMENDMENT W7: the chunk interior runs ips4o
+                        // (sequential - the sort-ahead pool fans the
+                        // chunks); keys unique by the idx tie-break
+                        ips4o::sort(ent.begin(), ent.end(), entLess);
                         {
                             FILE* g = std::fopen(cpath.c_str(), "wb");
                             if (!g) die("open " + cpath);
@@ -4345,7 +4361,7 @@ int main(int argc, char** argv) {
                 "SS_PAIRS_SORT pairs=%" PRIu64 " runs=%" PRIu64
                 " bands=%u merged_bands=%" PRIu64
                 " target_per_band=%" PRIu64 " belt=%" PRIu64
-                " threads=%" PRIu64
+                " kernel=ips4o_unique_keys_idx_tiebreak threads=%" PRIu64
                 " sort_s=%.2f rule=cell_seeded_bands;sort_per_band;stream"
                 ";slice_plus_sentinel;local_comparisons_only"
                 ";the_static_dictionary_table_as_mapped_columns\n",
