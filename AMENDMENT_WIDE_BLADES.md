@@ -64,6 +64,33 @@ use word-at-a-time (u64 xor + ctz) instead of the byte/pair loop as a
 stacking kernel win; g_text_walk keeps journaling walked bytes and
 must show the collapse (receipt: text_walk before/after at sandbox).
 
+## W7 — The tail kernels: ips4o / ips2oRa replace std::sort interiors
+
+Today every partition interior — every sort the bands, cells, and
+buckets hand off — runs std::sort (introsort), 20 call sites. The
+machine's hand-rolled radix head (census-drawn buckets, cell-seeded
+bands) already did the partitioning; the interiors are independent,
+near-uniform, dial-bounded — ideal sample-sort input. W1's fan makes
+each interior a single-threaded call inside a parallel pool, so
+determinism stays trivial.
+
+  - dictionary phrase sort interiors -> ips4o (byte comparator, 2-4x)
+  - fixed-width u64 interiors (pairs residual) -> ips2oRa if receipts
+    show it hot after cell seeding
+  - small leaf/tail sorts -> unchanged std::sort
+
+RULES:
+  - Determinism is a law: keys are unique by construction (position
+    bits in the low end). ips4o/ips2oRa are unstable; legal ONLY because
+    the keys are unique. The receipt states the invariant, not an
+    assumption.
+  - Safety argument same as W2: unique keys, unique total order — a
+    kernel swap can only break loudly; the identity ladder gates it.
+  - Swap ONLY the interiors the per-phase wall table names hot.
+  - Vendor as source in xsa/runtime/tools/binbwt/ (licenses recorded).
+  - Verified at sandbox scale BEFORE any climb continuation: SHA
+    6325c843…f341 all dial arms + per-phase walls before/after.
+
 ## W6 — Parse parallelism: DEFERRED
 
 The parse is the cheapest phase (130 s at 10 GB). Only if a profile at
