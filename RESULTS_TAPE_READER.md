@@ -716,3 +716,32 @@ decision. THE 100 GB CAVEAT: the pairs columns + buckets at 95e9
 pairs need ~5 TB of scratch - the census-drawn BINS (the vision's
 design, the next architecture step) or a per-band streaming
 distribution; the wall table at 10 GB will price it precisely.
+
+## THE W MACHINE ON THE LADDER — RUNG 1 RE-GATE (1 GB) — 2026-11-22
+
+The W machine (W1 fan + W2 libsais + W5 the LCP carry + W7 ips4o)
+at the 1 GB rung, wide dial, one arm, exit codes journaled:
+  producer exit 0, SS_DONE, run_s 967.00 s (old 1219.62 s, 1.26x);
+  finish exit 0; PRODUCT BYTE-IDENTICAL to the certified rung-1
+  container: sha256 b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558
+  c90ce090c21f6a3 (chi=283,296,927 n=1,000,000,666 r=368,036,627).
+THE WALL TABLE (1 GB, wide dial, old vs W):
+  parse 14.13 -> 12.09 | key sort 24.04 -> 12.78 (the fan + ips4o)
+  parse-SA 32.30 -> 53.41 (kernel=comparator_shards - the 1 GB
+  corpus-end residual, prefix_relations=1, takes the CERTIFIED
+  fallback; the std::function wrap of the ambiguity oracle costs
+  ~65% on that path - the fix candidate is noted; at 3 GB rel=0 and
+  libsais runs)
+  parse-LCP (new) 25.89 | pairs 707.86 -> 386.26 (1.83x, the pool)
+  lists 1.81 -> 1.47 | resolve 149.74 -> 189.50 | merge 27.11 -> 29.30
+  walk 10.22 -> 17.65 | assemble 54.60 -> 52.26
+  emit total 390.58 -> 408.98 | TOTAL 1219.62 -> 967.00
+HONEST JOURNAL: at 1 GB the whole corpus sits in the page cache, so
+the OLD brute LCP walk was cheap (10.22 s) and W5's carry costs more
+than it saves (the facts' extra mapped read per own row in the
+resolve +40 s; the parse-LCP tree lookups +7 s): the emit regressed
+~5% at THIS scale. W5's payoff is at 10 GB+ where the stopped rung
+paid ~4 h of cache-cold text walks. The DIAL_LAW receipts: all
+phases under the wide dial (key_sort 871 MB, parse_sa 575 MB,
+pairs 3.14 GB, emit 3.01 GB against 12 GB).
+Row-walk battery (ride-along): 1000 sampled ranks PASS.
