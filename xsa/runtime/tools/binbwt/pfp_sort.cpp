@@ -3626,6 +3626,10 @@ int main(int argc, char** argv) {
             }
         }
 
+        // the ambiguity oracle's lifetime ended with the parse sort
+        // (the emit's induced comparator never consults it)
+        bswap_release(ambTree);
+
         // =============================================================
         // AMENDMENT 7b: THE STATIC TABLE + THE O(N) EMIT. The band loop
         // that enumerated and sorted all 3e9 corpus suffixes is DELETED
@@ -3647,18 +3651,25 @@ int main(int argc, char** argv) {
         // BYTES BEHIND IT. The pair's slice is THE CORPUS at
         // [dictRefPos[P]+o, dictRefPos[P]+len) - the reference columns
         // pairsPos/pairsEnd carry the positions.
-        std::vector<u32> dictLenPrefix(size_t(dictN) + 1, 0);
+        // the pair index space: u64 (the 10 GB rung's dictionary
+        // bytes exceed u32); the prefix column maps out to disc so
+        // no phase holds it in anon
+        const u64* dictLenPrefix = nullptr;
         {
+            std::vector<u64> dlp(size_t(dictN) + 1, 0);
             u64 cum = 0;
             for (u64 v = 0; v < dictN; ++v) {
-                dictLenPrefix[size_t(v)] = u32(cum);
+                dlp[size_t(v)] = cum;
                 cum += dictLen[size_t(v)];
             }
-            dictLenPrefix[size_t(dictN)] = u32(cum);
+            dlp[size_t(dictN)] = cum;
             if (cum != dictBytesTotal)
                 die("PAIR_SPACE: the prefix-sum walk gives " +
                     std::to_string(cum) + " dictionary bytes against " +
                     std::to_string(dictBytesTotal) + " from the key sort");
+            ColMap dlpM = colFreeze(dlp,
+                modebDir + "/dict_lenprefix.bin");
+            dictLenPrefix = dlpM.as<u64>();
         }
         const u64 pairsN = dictBytesTotal;
         // THE MAPPED COLUMNS (bands, not tables): the pair columns and
@@ -3669,19 +3680,20 @@ int main(int argc, char** argv) {
         // bare first byte), each bucket sorted in RAM under the dial,
         // the ascending bucket concat IS the global pair order, and the
         // equal-slice run boundaries stream out as they are found.
-        u32* pairsPos = nullptr;
-        u32* pairsEnd = nullptr;
-        u32* phraseOfAt = nullptr;
-        u32* pairsSA = nullptr;       // the sorted pair order
+        u64* pairsPos = nullptr;   // corpus positions: u64 (the
+        u64* pairsEnd = nullptr;    // corpora past 4 GB overflow u32)
+        u32* phraseOfAt = nullptr;  // phrase ids (u32 carries the
+        u64* pairsSA = nullptr;     // pile: distinct < 4.29e9)
+                                    // the sorted pair order (u64)
         {
-            ColMap m1; m1.mapRW(modebDir + "/pairs_pos.bin", pairsN, 4);
-            pairsPos = m1.as<u32>();
-            ColMap m2; m2.mapRW(modebDir + "/pairs_end.bin", pairsN, 4);
-            pairsEnd = m2.as<u32>();
+            ColMap m1; m1.mapRW(modebDir + "/pairs_pos.bin", pairsN, 8);
+            pairsPos = m1.as<u64>();
+            ColMap m2; m2.mapRW(modebDir + "/pairs_end.bin", pairsN, 8);
+            pairsEnd = m2.as<u64>();
             ColMap m3; m3.mapRW(modebDir + "/phrase_of_at.bin", pairsN, 4);
             phraseOfAt = m3.as<u32>();
-            ColMap m4; m4.mapRW(modebDir + "/pairs_sa.bin", pairsN, 4);
-            pairsSA = m4.as<u32>();
+            ColMap m4; m4.mapRW(modebDir + "/pairs_sa.bin", pairsN, 8);
+            pairsSA = m4.as<u64>();
         }
         const u64* runStart = nullptr;   // the equal-slice run boundaries
         u64 nRuns = 0;                   // (mapped; streamed out at sort time)
@@ -3696,10 +3708,10 @@ int main(int argc, char** argv) {
             for (u64 v = 0; v < dictN; ++v) {
                 const u64 off = dictLenPrefix[size_t(v)];
                 const u32 len = dictLen[size_t(v)];
-                const u32 p0 = u32(dictRefPos[size_t(v)]);
-                const u32 pend = p0 + len;
+                const u64 p0 = dictRefPos[size_t(v)];
+                const u64 pend = p0 + len;
                 for (u64 j = 0; j < len; ++j) {
-                    pairsPos[size_t(off + j)] = p0 + u32(j);
+                    pairsPos[size_t(off + j)] = p0 + j;
                     pairsEnd[size_t(off + j)] = pend;
                     phraseOfAt[size_t(off + j)] = u32(v);
                     const u32 b1 = (j + 1 < len) ? u32(T[size_t(p0 + j + 1)]) : 0u;
@@ -3709,7 +3721,7 @@ int main(int argc, char** argv) {
             // (b) the equalized bucket map (cell order == key order);
             //     at most 512 open bucket files, at least dial-sized
             //     bands
-            const u64 entryBytes = 12;
+            const u64 entryBytes = 24;   // PEnt (u64 idx, u64 pos, u64 end)
             const u64 targetPair =
                 std::max<u64>(1024,
                     std::max<u64>(pairsN / 512,
@@ -3741,7 +3753,7 @@ int main(int argc, char** argv) {
                     bf[size_t(i)] = std::fopen(bp.c_str(), "wb");
                     if (!bf[size_t(i)]) die("open " + bp);
                 }
-                struct PEnt { u32 idx; u32 pos; u32 end; };
+                struct PEnt { u64 idx; u64 pos; u64 end; };
                 std::vector<PEnt> tbuf;
                 tbuf.reserve(1 << 16);
                 auto flushCells = [&]() {
@@ -3749,7 +3761,7 @@ int main(int argc, char** argv) {
                         const u32 b1 = (e.pos + 1 < e.end)
                             ? u32(T[size_t(e.pos + 1)]) : 0u;
                         FILE* f = bf[size_t(cellBucketP[(u32(T[size_t(e.pos)]) << 8) | b1])];
-                        if (std::fwrite(&e, 12, 1, f) != 1) die("pair bucket write");
+                        if (std::fwrite(&e, sizeof(PEnt), 1, f) != 1) die("pair bucket write");
                     }
                     tbuf.clear();
                 };
@@ -3759,7 +3771,7 @@ int main(int argc, char** argv) {
                     const u32 p0 = u32(dictRefPos[size_t(v)]);
                     const u32 pend = p0 + len;
                     for (u64 j = 0; j < len; ++j) {
-                        tbuf.push_back(PEnt{u32(off + j), p0 + u32(j), pend});
+                        tbuf.push_back(PEnt{off + j, p0 + j, pend});
                         if (tbuf.size() >= (1u << 16)) flushCells();
                     }
                 }
@@ -3768,14 +3780,19 @@ int main(int argc, char** argv) {
                     if (std::fflush(bf[size_t(i)]) != 0) die("flush pair bucket");
                     else std::fclose(bf[size_t(i)]);
             }
-            // (d) the per-band sort: read a band into a dial-sized
-            //     vector, sort by (slice + implicit sentinel 0) - the
-            //     shorter slice first - append the sorted pairIdx to
-            //     the global order, stream the equal-slice run
-            //     boundaries out, sample the PAIR BELT.
-            struct PEnt { u32 idx; u32 pos; u32 end; };
+            // (d) the per-band sort: dial-bounded. A band whose
+            //     entries fit the sort budget sorts in RAM; a bigger
+            //     band (a hot cell run can far exceed the equalizer's
+            //     target - a cell is never split, cell order == key
+            //     order) sorts in CHUNKS + a K-WAY MERGE with the same
+            //     exact comparator - the merge preserves the band's
+            //     order law, and the RAM stays at K x chunk <= the
+            //     budget. The sorted pairIdx appends to the global
+            //     order; the equal-slice run boundaries stream out;
+            //     the PAIR BELT samples the concat.
+            struct PEnt { u64 idx; u64 pos; u64 end; };
             const auto entLess = [&](const PEnt& a, const PEnt& b) -> bool {
-                const u32 rA = a.end - a.pos, rB = b.end - b.pos;
+                const u64 rA = a.end - a.pos, rB = b.end - b.pos;
                 const u64 c = std::min<u32>(rA, rB);
                 if (c) {
                     const int m = std::memcmp(T + size_t(a.pos),
@@ -3785,7 +3802,7 @@ int main(int argc, char** argv) {
                 return rA < rB;
             };
             const auto entEq = [&](const PEnt& a, const PEnt& b) -> bool {
-                const u32 rA = a.end - a.pos, rB = b.end - b.pos;
+                const u64 rA = a.end - a.pos, rB = b.end - b.pos;
                 if (rA != rB) return false;
                 return std::memcmp(T + size_t(a.pos), T + size_t(b.pos),
                                    size_t(rA)) == 0;
@@ -3797,47 +3814,227 @@ int main(int argc, char** argv) {
             PEnt prevEnt{}; bool havePrev = false;
             const u64 beltStep = std::max<u64>(1, pairsN / 4096);
             PEnt beltPrev{}; u64 beltPrevPos = 0; bool beltHave = false;
+            // the per-entry output: the run boundaries + the belt
+            auto emitEntry = [&](const PEnt& e) {
+                pairsSA[size_t(outPos)] = e.idx;
+                if (havePrev && !entEq(prevEnt, e)) {
+                    rw.put(outPos); ++nRuns;   // a new key begins here
+                }
+                prevEnt = e; havePrev = true;
+                // THE PAIR BELT: the sampled adjacent order
+                if (outPos >= beltPrevPos + beltStep) {
+                    if (beltHave && !entLess(beltPrev, e)
+                        && !entEq(beltPrev, e)) {
+                        std::fprintf(stderr,
+                            "PAIRS_FAIL at=%" PRIu64 " A=(pos=%" PRIu64 " end=%" PRIu64 ")"
+                            " B=(pos=%" PRIu64 " end=%" PRIu64 ")\n",
+                            outPos, beltPrev.pos, beltPrev.end,
+                            e.pos, e.end);
+                        die("PAIRS_ORDER: the band concat at " +
+                            std::to_string(beltPrevPos) + ".." +
+            std::to_string(outPos) + " disagrees with the slice order");
+                    }
+                    beltPrev = e; beltPrevPos = outPos;
+                    beltHave = true; ++beltChecks;
+                }
+                ++outPos;
+            };
+            // ---- THE SORT-AHEAD POOL (the climb's wall breaker):
+            //      the per-chunk sorts run in parallel, every sorted
+            //      chunk UNIFORMLY SPILLED to its file (the flight
+            //      cap then bounds only the workers' in-flight sort
+            //      buffers, and the FIFO task order guarantees the
+            //      emit's head band always progresses - no deadlock
+            //      shape). The emit loop consumes bands IN ORDER, so
+            //      the runStart stream stays sequential and the
+            //      concat order is exactly the band order.
+            const u64 perChunk = std::max<u64>(
+                1024, workspaceBytes / 64 / sizeof(PEnt));
+            const u64 flightCap = std::max<u64>(
+                threads * 2, workspaceBytes / 4 / sizeof(PEnt));
+            const u64 nSortThreads = std::max<u64>(1,
+                std::min<u64>(threads, u64(16)));
+            struct ChunkFut {
+                std::mutex mu; std::condition_variable cv;
+                bool done = false;
+                std::string path;
+                u64 n = 0;
+            };
+            struct BandSub {
+                u64 K = 0, nEnt = 0;
+                std::vector<std::unique_ptr<ChunkFut>> f;
+            };
+            std::mutex tmu; std::condition_variable tcv;
+            struct SortTask { u32 band; u64 c; u64 at; u64 n;
+                              ChunkFut* cf; };
+            std::deque<SortTask> tasks;
+            std::map<u32, BandSub> subs;
+            std::mutex smu;
+            std::mutex fmu; std::condition_variable fcv;
+            u64 flightUsed = 0;
+            std::atomic<bool> submitClosed{false};
+            auto flightAcquire = [&](u64 n) {
+                std::unique_lock<std::mutex> g(fmu);
+                while (flightUsed + n > flightCap) fcv.wait(g);
+                flightUsed += n;
+            };
+            auto flightRelease = [&](u64 n) {
+                { std::lock_guard<std::mutex> g(fmu); flightUsed -= n; }
+                fcv.notify_all();
+            };
+            auto submitBand = [&](u32 band) {
+                if (band >= pbk) return;
+                struct stat sb{};
+                const std::string bp = modebDir + "/pairbucket_" +
+                    std::to_string(band) + ".bin";
+                if (::stat(bp.c_str(), &sb) != 0) die("stat " + bp);
+                BandSub su;
+                su.nEnt = u64(sb.st_size) / sizeof(PEnt);
+                su.K = (su.nEnt + perChunk - 1) / perChunk;
+                for (u64 c = 0; c < su.K; ++c) {
+                    auto fut = std::make_unique<ChunkFut>();
+                    fut->n = std::min(perChunk, su.nEnt - c * perChunk);
+                    fut->path = modebDir + "/pchunk_" +
+                        std::to_string(band) + "_" + std::to_string(c)
+                        + ".bin";
+                    su.f.push_back(std::move(fut));
+                }
+                // the band's slot map entry MUST land before any task
+                // is visible to the workers (map::at would throw)
+                {
+                    std::lock_guard<std::mutex> g(smu);
+                    subs.emplace(band, std::move(su));
+                }
+                {
+                    std::lock_guard<std::mutex> g(tmu);
+                    const BandSub& sb = subs.at(band);
+                    for (u64 c = 0; c < sb.K; ++c)
+                        tasks.push_back(SortTask{
+                            band, c, c * perChunk,
+                            sb.f[size_t(c)]->n, sb.f[size_t(c)].get()});
+                }
+                tcv.notify_all();
+            };
+            std::vector<std::thread> sortPool;
+            for (u64 t = 0; t < nSortThreads; ++t)
+                sortPool.emplace_back([&] {
+                    for (;;) {
+                        SortTask t2;
+                        {
+                            std::unique_lock<std::mutex> g(tmu);
+                            if (tasks.empty()) {
+                                if (submitClosed.load()) return;
+                                tcv.wait(g);
+                                continue;
+                            }
+                            t2 = tasks.front(); tasks.pop_front();
+                        }
+                        if ((t2.c & 0x3f) == 0 &&
+                            ::access(stopFlag.c_str(), F_OK) == 0)
+                            ::_exit(75);
+                        flightAcquire(t2.n);
+                        const std::string bp = modebDir + "/pairbucket_"
+                            + std::to_string(t2.band) + ".bin";
+                        // the worker holds its ChunkFut DIRECTLY (the
+                        // emit may have moved the band's sub out of
+                        // the map already - never touch the map here)
+                        const std::string cpath = t2.cf->path;
+                        const u64 cn = t2.cf->n;
+                        std::vector<PEnt> ent;
+                        ent.reserve(size_t(cn));
+                        {
+                            FILE* f = std::fopen(bp.c_str(), "rb");
+                            if (!f) die("open " + bp);
+                            if (::fseeko(f, off_t(t2.at * sizeof(PEnt)),
+                                         SEEK_SET) != 0) die("seek " + bp);
+                            PEnt e;
+                            for (u64 r = 0; r < cn; ++r) {
+                                if (std::fread(&e, sizeof(PEnt), 1, f) != 1)
+                                    die("truncated band " + bp);
+                                ent.push_back(e);
+                            }
+                            std::fclose(f);
+                        }
+                        std::sort(ent.begin(), ent.end(), entLess);
+                        {
+                            FILE* g = std::fopen(cpath.c_str(), "wb");
+                            if (!g) die("open " + cpath);
+                            if (!ent.empty() &&
+                                std::fwrite(ent.data(), sizeof(PEnt),
+                                            ent.size(), g) != ent.size())
+                                die("write " + cpath);
+                            std::fclose(g);
+                            std::vector<PEnt>().swap(ent);
+                        }
+                        flightRelease(t2.n);
+                        {
+                            std::lock_guard<std::mutex> g3(t2.cf->mu);
+                            t2.cf->done = true;
+                            t2.cf->cv.notify_all();
+                        }
+                    }
+                });
+            u64 mergedBands = 0;
+            u32 nextSubmit = 0;
             for (u32 i = 0; i < pbk; ++i) {
                 if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
-                const std::string bp = modebDir + "/pairbucket_" +
-                    std::to_string(i) + ".bin";
-                std::vector<PEnt> ent;
+                while (nextSubmit < pbk &&
+                       nextSubmit <= u32(i) + nSortThreads * 2) {
+                    submitBand(nextSubmit);
+                    ++nextSubmit;
+                }
+                BandSub su;
                 {
-                    FILE* f = std::fopen(bp.c_str(), "rb");
-                    if (!f) die("open " + bp);
-                    PEnt e;
-                    while (std::fread(&e, 12, 1, f) == 1) ent.push_back(e);
-                    std::fclose(f);
-                    ::remove(bp.c_str());
+                    std::lock_guard<std::mutex> g(smu);
+                    su = std::move(subs.at(i));
+                    subs.erase(i);
                 }
-                std::sort(ent.begin(), ent.end(), entLess);
-                for (size_t k = 0; k < ent.size(); ++k) {
-                    const PEnt& e = ent[k];
-                    pairsSA[size_t(outPos)] = e.idx;
-                    if (havePrev && !entEq(prevEnt, e)) {
-                        rw.put(outPos); ++nRuns;   // a new key begins here
-                    }
-                    prevEnt = e; havePrev = true;
-                    // THE PAIR BELT: the sampled adjacent order
-                    if (outPos >= beltPrevPos + beltStep) {
-                        if (beltHave && !entLess(beltPrev, e)
-                            && !entEq(beltPrev, e)) {
-                            std::fprintf(stderr,
-                                "PAIRS_FAIL at=%" PRIu64 " A=(pos=%u end=%u)"
-                                " B=(pos=%u end=%u)\n",
-                                outPos, beltPrev.pos, beltPrev.end,
-                                e.pos, e.end);
-                            die("PAIRS_ORDER: the band concat at " +
-                                std::to_string(beltPrevPos) + ".." +
-                                std::to_string(outPos) +
-                                " disagrees with the slice order");
-                        }
-                        beltPrev = e; beltPrevPos = outPos;
-                        beltHave = true; ++beltChecks;
-                    }
-                    ++outPos;
+                if (su.K > 1) ++mergedBands;
+                for (u64 c = 0; c < su.K; ++c) {
+                    ChunkFut& cf = *su.f[size_t(c)];
+                    std::unique_lock<std::mutex> g3(cf.mu);
+                    while (!cf.done) cf.cv.wait(g3);
                 }
+                // the heap merge over the K sorted chunk files (K == 1
+                // is a straight stream); exact, O(log K) per entry
+                struct Stream { FILE* f; PEnt head; u64 left; };
+                auto streamLess = [&](const Stream& a, const Stream& b) {
+                    return entLess(b.head, a.head);   // min-heap
+                };
+                std::vector<Stream> st;
+                st.reserve(size_t(su.K));
+                for (u64 c = 0; c < su.K; ++c) {
+                    FILE* f = std::fopen(su.f[size_t(c)]->path.c_str(),
+                                         "rb");
+                    if (!f) die("reopen " + su.f[size_t(c)]->path);
+                    Stream S{f, PEnt{}, su.f[size_t(c)]->n};
+                    if (S.left &&
+                        std::fread(&S.head, sizeof(PEnt), 1, f) != 1)
+                        die("read " + su.f[size_t(c)]->path);
+                    if (S.left) st.push_back(std::move(S));
+                }
+                std::make_heap(st.begin(), st.end(), streamLess);
+                while (!st.empty()) {
+                    std::pop_heap(st.begin(), st.end(), streamLess);
+                    Stream& S = st.back();
+                    emitEntry(S.head);
+                    if (--S.left) {
+                        if (std::fread(&S.head, sizeof(PEnt), 1, S.f) != 1)
+                            die("chunk read");
+                        std::push_heap(st.begin(), st.end(), streamLess);
+                    } else {
+                        std::fclose(S.f);
+                        st.pop_back();
+                    }
+                }
+                for (u64 c = 0; c < su.K; ++c)
+                    ::remove(su.f[size_t(c)]->path.c_str());
+                ::remove((modebDir + "/pairbucket_" +
+                          std::to_string(i) + ".bin").c_str());
             }
+            submitClosed.store(true);
+            tcv.notify_all();
+            for (auto& th : sortPool) th.join();
             if (outPos != pairsN)
                 die("PAIRS_TOTAL: sorted " + std::to_string(outPos) +
                     " pairs against " + std::to_string(pairsN));
@@ -3850,12 +4047,14 @@ int main(int argc, char** argv) {
             phaseRssGate("pairs_sort");
             std::fprintf(stderr,
                 "SS_PAIRS_SORT pairs=%" PRIu64 " runs=%" PRIu64
-                " bands=%u target_per_band=%" PRIu64 " belt=%" PRIu64
+                " bands=%u merged_bands=%" PRIu64
+                " target_per_band=%" PRIu64 " belt=%" PRIu64
                 " threads=%" PRIu64
                 " sort_s=%.2f rule=cell_seeded_bands;sort_per_band;stream"
                 ";slice_plus_sentinel;local_comparisons_only"
                 ";the_static_dictionary_table_as_mapped_columns\n",
-                pairsN, nRuns, pbk, targetPair, beltChecks, threads,
+                pairsN, nRuns, pbk, mergedBands, targetPair,
+                beltChecks, threads,
                 now_sec() - tp0);
         }
 
@@ -3864,22 +4063,23 @@ int main(int argc, char** argv) {
         // first). One list per phrase, shared by all its offsets. The
         // keyed sort (the rank is an integer key) is NOT a corpus-suffix
         // sort - the receipt carries it as its own counter.
-        std::vector<u32> occStart, occList;
+        const u32* occStart = nullptr;   // mapped columns (no
+        const u32* occList = nullptr;    // parse-proportional anon)
         {
             const double to0 = now_sec();
-            occStart.assign(size_t(dictN) + 1, 0);
+            std::vector<u32> oStart(size_t(dictN) + 1, 0);
             std::vector<u32> freq2 = std::vector<u32>(size_t(dictN), 0);
             for (u64 i = 0; i < M; ++i) ++freq2[size_t(PA[size_t(i)])];
             u64 tot = 0;
             for (u64 v = 0; v < dictN; ++v) {
-                occStart[size_t(v)] = u32(tot);
+                oStart[size_t(v)] = u32(tot);
                 tot += freq2[size_t(v)];
             }
-            occStart[size_t(dictN)] = u32(tot);
-            occList = std::vector<u32>(size_t(tot), 0);
-            std::vector<u32> fill2 = occStart;   // the per-phrase cursors
+            oStart[size_t(dictN)] = u32(tot);
+            std::vector<u32> oList(size_t(tot), 0);
+            std::vector<u32> fill2 = oStart;   // the per-phrase cursors
             for (u64 i = 0; i < M; ++i)
-                occList[size_t(fill2[size_t(PA[size_t(i)])]++)] = u32(i);
+                oList[size_t(fill2[size_t(PA[size_t(i)])]++)] = u32(i);
             // sort each phrase's list by the continuation rank (pooled;
             // the lists are independent)
             std::atomic<u64> nextPhrase{0};
@@ -3890,9 +4090,9 @@ int main(int argc, char** argv) {
                     for (;;) {
                         const u64 v = nextPhrase.fetch_add(1, std::memory_order_relaxed);
                         if (v >= dictN) break;
-                        const u64 a = occStart[size_t(v)], b = occStart[size_t(v + 1)];
+                        const u64 a = oStart[size_t(v)], b = oStart[size_t(v + 1)];
                         if (b - a > 1)
-                            std::sort(occList.begin() + size_t(a), occList.begin() + size_t(b),
+                            std::sort(oList.begin() + size_t(a), oList.begin() + size_t(b),
                                       [&](u32 i2, u32 j2) {
                                           const u32 rA = (i2 + 1 < M)
                                               ? parseRank[size_t(i2 + 1)] + 1 : 0;
@@ -3908,6 +4108,13 @@ int main(int argc, char** argv) {
                 " lists_s=%.2f rule=keyed_by_the_continuation_rank;one_list"
                 "_per_phrase_shared_by_all_its_offsets\n",
                 dictN, tot, now_sec() - to0);
+            bswap_release(fill2); bswap_release(freq2);
+            ColMap m1 = colFreeze(oStart,
+                modebDir + "/occ_start.bin");
+            occStart = m1.as<u32>();
+            ColMap m2 = colFreeze(oList,
+                modebDir + "/occ_list.bin");
+            occList = m2.as<u32>();
         }
 
         // ---- THE INDUCED COMPARATOR (AMENDMENT 6): the row
@@ -4109,14 +4316,18 @@ int main(int argc, char** argv) {
                 // deleted, not tuned.
                 const double te0 = now_sec();
                 // nRuns (outer, mapped) = the equal-slice groups
-                auto sliceX = [&](u32 pairIdx) -> u32 {
+                auto sliceX = [&](u64 pairIdx) -> u64 {
                     return pairsSA[size_t(pairIdx)];
                 };
-                auto rowOf = [&](u32 pairIdx, u32 occ) -> BandRow {
-                    const u32 x = pairsSA[size_t(pairIdx)];
+                auto rowOf = [&](u64 pairIdx, u32 occ) -> BandRow {
+                    const u64 x = pairsSA[size_t(pairIdx)];
                     const u32 vP = phraseOfAt[size_t(x)];
-                    const u32 o = x - dictLenPrefix[size_t(vP)];
+                    const u64 o = x - dictLenPrefix[size_t(vP)];
                     BandRow r;
+                    if (o >= (1ull << 32))
+                        die("PAIR_OFFSET: o=" + std::to_string(o)
+                            + " exceeds the occ_o pack - a phrase longer"
+                              " than 4 GB");
                     r.occ_o = (u64(occ) << 32) | o;
                     r.key48 = 0;
                     r.nrank = (occ + 1 < M) ? parseRank[size_t(occ + 1)] + 1 : 0;
@@ -4138,12 +4349,12 @@ int main(int argc, char** argv) {
                 };
                 // THE BOUNDARY COMPARE (TAPE_BINS.md 7b): used ONLY in
                 // the landing walk now - once per row per chain step
-                auto cmpBound = [&](const BandRow& A, u32 bx, u32) -> int {
+                auto cmpBound = [&](const BandRow& A, u64 bx, u32) -> int {
                     // bx is a PAIR INDEX (the cumulative-bytes space);
                     // the slice is THE CORPUS at [pairsPos[bx],
                     // pairsEnd[bx]) - the reference columns.
-                    const u32 pBx = pairsPos[size_t(bx)];
-                    const u32 eB = pairsEnd[size_t(bx)];
+                    const u64 pBx = pairsPos[size_t(bx)];
+                    const u64 eB = pairsEnd[size_t(bx)];
                     const u32 vA = PA[size_t(A.occ_o >> 32)];
                     const u8* pA = T + size_t(dictRefPos[size_t(vA)]
                         + u32(A.occ_o));
@@ -4180,7 +4391,7 @@ int main(int argc, char** argv) {
                 };
                 struct Inner { u32 member; u32 occLo; };
                 struct Active {
-                    u32 runLo, runHi;
+                    u64 runLo, runHi;   // sorted-order positions (u64)
                     std::vector<Inner> iheap;
                 };
                 auto rankOfOcc = [&](u32 occ) -> u32 {
@@ -4227,10 +4438,11 @@ int main(int argc, char** argv) {
                 // VALUE (order-independent), and the container is
                 // unit-structure-invariant (run14b/14c: the 24-unit
                 // and the 4-unit readers byte-identical).
-                struct Cross { u32 lg; u32 pairIdx; u32 occLo; };
+                struct Cross { u32 lg; u64 pairIdx; u32 occLo; };
                 struct SpanL1 {
                     std::vector<u64> ownPos;   // the positions, in order
-                    std::vector<u64> ownIds;   // (pairIdx<<32)|occLo
+                    std::vector<u64> ownIds;   // the pairIdx column
+                    std::vector<u32> ownOcc;   // the occLo column
                     std::vector<u32> ownCnt;
                     std::vector<Cross> cross;  // lands inside the window
                     std::vector<Cross> fwd;    // lands in a LATER window
@@ -4239,8 +4451,11 @@ int main(int argc, char** argv) {
                 // (a) the window boundaries: a streaming mass pass over
                 //     the mapped columns (own-rows per group; the
                 //     arrivals add a bounded slack the dial absorbs)
+                // ~80 B/row of window state (own 20 B + CSR 16 B +
+                // fwd 24 B + finalPos 8 B + buf 16 B) + the arrival
+                // slack; the dial absorbs the estimate's miss
                 const u64 winRowsTarget = std::max<u64>(4096,
-                    workspaceBytes / 2 / 96);
+                    workspaceBytes / 2 / 128);
                 std::vector<u64> winG;
                 winG.push_back(0);
                 {
@@ -4314,21 +4529,21 @@ int main(int argc, char** argv) {
                                     if ((g & 0xffff) == 0 &&
                                         ::access(stopFlag.c_str(), F_OK) == 0)
                                         ::_exit(75);
-                                    const u32 curLo = u32(runStart[size_t(g)]);
-                                    const u32 curHi = u32(runStart[size_t(g + 1)]);
+                                    const u64 curLo = runStart[size_t(g)];
+                                    const u64 curHi = runStart[size_t(g + 1)];
                                     Active R;
                                     R.runLo = curLo; R.runHi = curHi;
-                                    for (u32 mi = curLo; mi < curHi; ++mi) {
+                                    for (u64 mi = curLo; mi < curHi; ++mi) {
                                         const u32 vP =
                                             phraseOfAt[size_t(pairsSA[size_t(mi)])];
                                         if (occStart[size_t(vP)] <
                                             occStart[size_t(vP + 1)])
-                                            innerPush(R, Inner{mi - curLo,
+                                            innerPush(R, Inner{u32(mi - curLo),
                                                 u32(occStart[size_t(vP)])});
                                     }
                                     while (!R.iheap.empty()) {
                                         const Inner top = R.iheap.front();
-                                        const u32 pairIdx = curLo + top.member;
+                                        const u64 pairIdx = curLo + top.member;
                                         const u32 occ = occList[size_t(top.occLo)];
                                         ++S.rows;
                                         ++S.rowBuilds;
@@ -4346,8 +4561,8 @@ int main(int argc, char** argv) {
                                             auto passAt = [&](u64 m) -> bool {
                                                 if (m + 1 >= nRuns)
                                                     return true;  // drain
-                                                const u32 nx2 = sliceX(
-                                                    u32(runStart[size_t(m + 1)]));
+                                                const u64 nx2 = sliceX(
+                                                    runStart[size_t(m + 1)]);
                                                 return cmpBound(row, nx2,
                                                     pairsEnd[size_t(nx2)])
                                                         < 0;
@@ -4396,9 +4611,8 @@ int main(int argc, char** argv) {
                                         }
                                         if (lg == g) {
                                             S.ownPos.push_back(rowPos(row));
-                                            S.ownIds.push_back(
-                                                (u64(pairIdx) << 32)
-                                                    | top.occLo);
+                                            S.ownIds.push_back(pairIdx);
+                                            S.ownOcc.push_back(top.occLo);
                                             ++S.ownCnt[size_t(g - gLo)];
                                         } else if (lg < G1) {
                                             S.cross.push_back(
@@ -4446,7 +4660,8 @@ int main(int argc, char** argv) {
                                 + std::to_string(k3) + ".bin").c_str(),
                                 "ab");
                             if (!f) die("open the arrival file");
-                            if (std::fwrite(&S.fwd[size_t(i5)], 12,
+                            if (std::fwrite(&S.fwd[size_t(i5)],
+                                           sizeof(Cross),
                                            j5 - i5, f) != j5 - i5)
                                 die("write the arrival file");
                             std::fclose(f);
@@ -4463,7 +4678,7 @@ int main(int argc, char** argv) {
                     //      the window + the inbound file from the
                     //      earlier windows)
                     std::vector<u32> arrStart;
-                    std::vector<std::pair<u32, u32>> arrBuf;
+                    std::vector<std::pair<u64, u32>> arrBuf;
                     {
                         const double t2 = now_sec();
                         std::vector<Cross> inbound;
@@ -4473,7 +4688,8 @@ int main(int argc, char** argv) {
                             FILE* f = std::fopen(ip.c_str(), "rb");
                             if (f) {
                                 Cross c;
-                                while (std::fread(&c, 12, 1, f) == 1)
+                                while (std::fread(&c, sizeof(Cross), 1, f)
+                                       == 1)
                                     inbound.push_back(c);
                                 std::fclose(f);
                                 ::remove(ip.c_str());
@@ -4553,11 +4769,10 @@ int main(int argc, char** argv) {
                                             + long(ownOff + ownN));
                                     mrows.resize(size_t(ownN));
                                     for (u32 i2 = 0; i2 < ownN; ++i2) {
-                                        const u64 id =
-                                            S.ownIds[size_t(ownOff + i2)];
                                         mrows[size_t(i2)] = rowOf(
-                                            u32(id >> 32),
-                                            occList[size_t(u32(id))]);
+                                            S.ownIds[size_t(ownOff + i2)],
+                                            occList[size_t(
+                                                S.ownOcc[size_t(ownOff + i2)])]);
                                         ++D.mergeBuilds;
                                     }
                                     for (u64 a = arrA; a < arrB; ++a) {
@@ -4605,10 +4820,11 @@ int main(int argc, char** argv) {
                     for (auto& S : L1out) {
                         std::vector<u64>().swap(S.ownPos);
                         std::vector<u64>().swap(S.ownIds);
+                        std::vector<u32>().swap(S.ownOcc);
                         std::vector<u32>().swap(S.ownCnt);
                         std::vector<Cross>().swap(S.cross);
                     }
-                    std::vector<std::pair<u32, u32>>().swap(arrBuf);
+                    std::vector<std::pair<u64, u32>>().swap(arrBuf);
                     std::vector<u32>().swap(arrStart);
                     // ---- THE WALK + THE ASSEMBLY: per-span pack + lcp
                     //      (parallel), then ONE unit per window (the
@@ -4881,7 +5097,12 @@ int main(int argc, char** argv) {
         // runaway the journal must account. The env override must exceed
         // the plan; the plan line prints the decomposition.
         const u64 walkBytes = g_text_walk.total();
-        const u64 expectedRchar = FILE_N + 4 * FILE_N + 2 * walkBytes;
+        // THE PAIRS SPILL ROUND TRIP (the sort-ahead pool): the bucket
+        // read + the sorted-chunk read are one extra full pass over
+        // the pair entries (24 B each) beyond the old in-RAM band sort
+        const u64 pairsSpill = dictStaticPairs * 24;
+        const u64 expectedRchar = FILE_N + 4 * FILE_N + 2 * walkBytes
+            + pairsSpill;
         u64 limit = expectedRchar;
         if (const char* limitText = ::getenv("XSA_TAPE_RCHAR_LIMIT")) {
             const u64 envLimit = std::strtoull(limitText, nullptr, 10);
@@ -4892,13 +5113,16 @@ int main(int argc, char** argv) {
                 " is below the plan-derived expectation " + std::to_string(expectedRchar) +
                 " = parse_1x(" + std::to_string(FILE_N) + ") + margin_4x(" +
                 std::to_string(4 * FILE_N) + ") + 2x_measured_walks(" +
-                std::to_string(walkBytes) + ") - refusing a stale bar");
+                std::to_string(walkBytes) + ") + pairs_spill_24B(" +
+                std::to_string(pairsSpill) + ") - refusing a stale bar");
         std::fprintf(stderr,
             "RCHAR_PLAN expected=%" PRIu64 " limit=%" PRIu64
             " arithmetic=parse_1x=%" PRIu64 "+margin_4x=%" PRIu64
-            "+2x_measured_walks=%" PRIu64 " actual=%" PRIu64
+            "+2x_measured_walks=%" PRIu64 "+pairs_spill_24B=%" PRIu64
+            " actual=%" PRIu64
             " rule=a_refusal_means_reality_exceeded_the_plan\n",
-            expectedRchar, limit, FILE_N, 4 * FILE_N, 2 * walkBytes, (u64)rchar);
+            expectedRchar, limit, FILE_N, 4 * FILE_N, 2 * walkBytes,
+            pairsSpill, (u64)rchar);
         if (rchar > limit)
             die("TAPE_RCHAR_LIMIT: rchar=" + std::to_string(rchar) +
                 " limit=" + std::to_string(limit) +

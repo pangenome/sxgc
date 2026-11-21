@@ -611,3 +611,45 @@ depth 6,907, all symbols correct. BAND STREAM: 45 bands,
 THE LEVEL-2 CENSUS at 3 GB: level1=91,829,161 -> level2_phrases=
 3,073,276, distinct=3,061,538, avg=29.88 IDs, max=2118, docs=486,937
 -> CONDENSATION 29.88x (29.83x at 1 GB, 29.86x at 100 MB - flat).
+
+## THE CLIMB — THE 64-BIT PAIR SPACE + THE SORT-AHEAD POOL — 2026-11-21
+
+RUNG 3's wall: at 10 GB the dictionary bytes (~9.5e9 pairs) exceed
+u32, and the corpora's positions exceed u32. THE WIDENING: the pair
+index space + the pairs columns' corpus positions + the sorted pair
+order are u64 (dictLenPrefix, pairsPos/pairsEnd/pairsSA as u64
+columns; Cross 24 B; ownIds/ownOcc split; cmpBound/sliceX/rowOf on
+u64; PEnt 24 B). The bases map out: dictLenPrefix + occStart +
+occList freeze to mapped columns; ambTree released at the parse sort's
+end (the emit never consults it). THE HOT-CELL WALL: a single 2-byte
+cell can hold ~4% of the pairs (a band far over the equalizer target;
+a cell is never split - cell order == key order), so every band sorts
+via dial-bounded chunks + a heap merge.
+
+THE SORT-AHEAD POOL: the per-chunk sorts run in parallel across the
+upcoming bands, every sorted chunk UNIFORMLY SPILLED (the flight cap
+= workspace/4 bounds only the workers' in-flight sort buffers; the
+FIFO task order guarantees the emit's head band progresses - no
+deadlock shape); the emit loop consumes bands IN ORDER so the
+runStart stream stays sequential. Three bugs found and fixed in
+bring-up: the subs/map ordering race (map::at abort, G0 caught it),
+the emit-vs-worker map lifetime race (the worker holds its ChunkFut
+directly), and the RCHAR_PLAN (the spill round trip added as its own
+term: + pairs x 24 B).
+
+RE-GATES (byte-identity preserved at every anchor):
+  G0 10/10 PASS; sandbox wide = 6325c843... (the certified container);
+  sandbox 16 MB dial = 6325c843... (pairs_sort anon 8.8 MB, emit
+  21.7 MB against the 81.9 MB budget); 1 GB wide = b20ceebe...
+  (== rung 1); row-walk battery 500 samples PASS.
+  THE POOL'S SPEED: pairs at 1 GB 707.9 s -> 361.9 s (1.96x; the
+  merge/emit stream is the new serial fraction). At 10 GB the sort
+  fraction dominates: the sequential estimate was ~2.9 h.
+RESIDUAL (main-side, journaled): the finish exited 1 silently twice on
+a COLD start at >1400 units (1526-unit 16 MB-dial arm; pieces
+partially consumed - the arm must be re-run); the same shape passed
+under strace (slowed) and in the concurrent/fused mode every climb
+rung uses (run_162: 1122 units concurrent PASS; rung 2's finish
+concurrent PASS). A timing-dependent race in the finish's band loop
+at very high unit counts on cold start; the fix belongs to the
+finish's owner. The climb runs the finish fused, which avoids it.
