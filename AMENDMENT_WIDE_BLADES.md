@@ -45,13 +45,36 @@ m1..m9 are independent members; the finish streams them concurrently
 while remaining overlapped with emit. Container format v10 forward-only
 is untouched; member order within the container is unchanged.
 
-## W5 — Parse parallelism: DEFERRED
+## W5 — Emit carries the LCP (the concat law, completed)
+
+The emit's row ORDER is precomputed (the lists carry it), but each
+row's LCP vs its predecessor is recomputed live by walking corpus
+bytes (suf_cmp_lcp), unbounded on repetitive text — the measured emit
+wall. Fix: carry the LCP like the order. The parse LCP array (already
+computed in the LCP phase) bounds every row's byte-work:
+
+  - leading phrase IDs equal: lcp = phrase_len + parse_lcp lookup — O(1)
+  - leading phrase IDs differ: byte-compare inside the two phrases,
+    bounded by min(len(P1), len(P2)) — never past the phrase boundary
+  - induced/unaligned rows: same induction locally within the phrase
+
+Emit per-row work becomes a bounded copy — every fact precomputed and
+pre-ordered, as the concat law demands. The residual byte-compare may
+use word-at-a-time (u64 xor + ctz) instead of the byte/pair loop as a
+stacking kernel win; g_text_walk keeps journaling walked bytes and
+must show the collapse (receipt: text_walk before/after at sandbox).
+
+## W6 — Parse parallelism: DEFERRED
 
 The parse is the cheapest phase (130 s at 10 GB). Only if a profile at
 100 GB says otherwise, parallelize by document boundary (the no-cross
 law gives free split points). No work under this amendment.
 
 ## Verification — small scale FIRST, speed is a receipt
+
+   Emit receipts must additionally journal text_walk totals and per-phase
+walk_s/assemble_s before and after W5 (the LCP carry), so the collapse is
+a number, not a claim.
 
 1. Sandbox (100 MB), same dial arms (16 MB / 512 MB / wide):
    - byte-identity: SHA must equal the certified 6325c843…f341, all arms
