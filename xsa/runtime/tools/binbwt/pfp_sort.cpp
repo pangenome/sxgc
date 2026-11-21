@@ -442,6 +442,15 @@ static ColMap colFreeze(std::vector<T>& v, const std::string& path) {
     return m;
 }
 
+// AMENDMENT W2: libsais (vendored at bit6/third_party/libsais,
+// Apache-2.0, upstream (c) Ilya Grebnov) - the integer-alphabet
+// OpenMP SA construction over the dense phrase-ID sequence. The
+// convention is END-FIRST (verified empirically: T=[2,1,2] ->
+// SA=[1,2,0], the parseCmp law) - our exact order, zero adapter.
+extern "C" {
+int32_t libsais_int_omp(int32_t* T, int32_t* SA, int32_t n, int32_t k,
+                        int32_t fs, int32_t threads);
+}
 static std::atomic<u64> FD_PEAK{0};
 static u64 liveFdCount() {
     DIR* d = ::opendir("/proc/self/fd");
@@ -3057,10 +3066,14 @@ int main(int argc, char** argv) {
                         + " against " + std::to_string(M0) + " occurrences");
             }
 
-            // ---- THE KEY SORT (per bucket, in RAM <= dial): dedupe +
-            // THE CENSUS as its byproduct + the byte-order IDs. The
-            // dictionary is (first-occurrence position, length)
-            // REFERENCES ONLY - the corpus is the only text store.
+            // ---- THE KEY SORT (AMENDMENT W1: the buckets fan
+            //      across the --threads pool; per bucket, in RAM <=
+            //      dial): dedupe + THE CENSUS as its byproduct + the
+            //      byte-order IDs (the workers sort + dedupe; the
+            //      main thread commits the buckets IN ORDER so the
+            //      ids stay byte-order). The dictionary is
+            //      (first-occurrence position, length) REFERENCES
+            //      ONLY - the corpus is the only text store.
             {
                 const double tks0 = now_sec();
                 ColWriter dwPos, dwLen, dwCnt;
@@ -3071,63 +3084,152 @@ int main(int argc, char** argv) {
                 u32 bk = 0;
                 for (u32 cell = 0; cell < 65536; ++cell)
                     bk = std::max(bk, u32(cellBucket[cell] + 1));
-                for (u32 i = 0; i < bk; ++i) {
-                    if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
-                    const std::string bp = modebDir + "/bucket_" +
-                        std::to_string(i) + ".bin";
-                    std::vector<std::pair<u64, u32>> ent;
-                    {
-                        FILE* f = std::fopen(bp.c_str(), "rb");
-                        if (!f) die("open " + bp);
-                        u64 pos; u32 len;
-                        while (std::fread(&pos, 8, 1, f) == 1) {
-                            if (std::fread(&len, 4, 1, f) != 1)
-                                die("truncated bucket " + bp);
-                            ent.emplace_back(pos, len);
-                        }
-                        std::fclose(f);
-                        ::remove(bp.c_str());
-                    }
-                    std::sort(ent.begin(), ent.end(),
-                        [&](const std::pair<u64, u32>& a,
-                            const std::pair<u64, u32>& b) {
-                            const u64 m = std::min(a.second, b.second);
-                            const int c = std::memcmp(T + size_t(a.first),
-                                                      T + size_t(b.first),
-                                                      size_t(m));
-                            if (c) return c < 0;
-                            if (a.second != b.second)
-                                return a.second < b.second;
-                            return a.first < b.first;
+                struct KBucket {
+                    std::mutex mu;
+                    std::condition_variable cv;
+                    bool done = false;
+                    std::vector<std::pair<u64, u32>> ded;  // (firstPos,
+                    std::vector<u32> cnt;                  //  len) + count
+                };
+                std::vector<std::unique_ptr<KBucket>> kb{size_t(bk)};
+                for (u32 i = 0; i < bk; ++i)
+                    kb[size_t(i)] = std::make_unique<KBucket>();
+                {
+                    std::mutex qmu; std::condition_variable qcv;
+                    std::deque<u32> queue;
+                    std::atomic<bool> closed{false};
+                    // THE FLIGHT WINDOW: at most W buckets decoded
+                    // ahead of the commit cursor, so the held dedupe
+                    // results + the workers' entry vectors stay
+                    // dial-bounded (the run-ahead would otherwise
+                    // hold the whole dictionary in RAM)
+                    const u32 W = u32(std::max<u64>(32, threads * 2));
+                    u64 committed = 0;
+                    for (u32 i = 0; i < bk && i < W; ++i)
+                        queue.push_back(i);
+                    const u64 nKeyThreads = std::max<u64>(1,
+                        std::min<u64>(threads, u64(16)));
+                    std::vector<std::thread> kpool;
+                    for (u64 t = 0; t < nKeyThreads; ++t)
+                        kpool.emplace_back([&] {
+                            for (;;) {
+                                u32 i;
+                                {
+                                    std::unique_lock<std::mutex> g(qmu);
+                                    // the queue may still grow: the
+                                    // commit loop pushes the window's
+                                    // tail. Exit ONLY on the drain flag
+                                    // (set after all bk commits) - the
+                                    // early exit on empty+closed hung
+                                    // the first shape (workers left
+                                    // before buckets >= W were pushed)
+                                    while (queue.empty()) {
+                                        if (closed.load()) return;
+                                        qcv.wait(g);
+                                    }
+                                    i = queue.front(); queue.pop_front();
+                                }
+                                if ((i & 0x3f) == 0 &&
+                                    ::access(stopFlag.c_str(), F_OK) == 0)
+                                    ::_exit(75);
+                                const std::string bp = modebDir +
+                                    "/bucket_" + std::to_string(i)
+                                    + ".bin";
+                                std::vector<std::pair<u64, u32>> ent;
+                                {
+                                    FILE* f = std::fopen(bp.c_str(), "rb");
+                                    if (!f) die("open " + bp);
+                                    u64 pos; u32 len;
+                                    while (std::fread(&pos, 8, 1, f) == 1) {
+                                        if (std::fread(&len, 4, 1, f) != 1)
+                                            die("truncated bucket " + bp);
+                                        ent.emplace_back(pos, len);
+                                    }
+                                    std::fclose(f);
+                                    ::remove(bp.c_str());
+                                }
+                                std::sort(ent.begin(), ent.end(),
+                                    [&](const std::pair<u64, u32>& a,
+                                        const std::pair<u64, u32>& b) {
+                                        const u64 m =
+                                            std::min(a.second, b.second);
+                                        const int c =
+                                            std::memcmp(T + size_t(a.first),
+                                                        T + size_t(b.first),
+                                                        size_t(m));
+                                        if (c) return c < 0;
+                                        if (a.second != b.second)
+                                            return a.second < b.second;
+                                        return a.first < b.first;
+                                    });
+                                KBucket& K = *kb[size_t(i)];
+                                // dedupe: the equal-key runs; the run
+                                // size IS the census count; the run's
+                                // min pos is the first-occurrence
+                                // REFERENCE
+                                u64 o = 0;
+                                while (o < ent.size()) {
+                                    u64 e2 = o + 1;
+                                    u64 firstPos = ent[size_t(o)].first;
+                                    while (e2 < ent.size()) {
+                                        const auto& A = ent[size_t(o)];
+                                        const auto& B = ent[size_t(e2)];
+                                        const u64 m =
+                                            std::min(A.second, B.second);
+                                        if (std::memcmp(
+                                                T + size_t(A.first),
+                                                T + size_t(B.first),
+                                                size_t(m)) != 0) break;
+                                        if (A.second != B.second) break;
+                                        if (B.first < firstPos)
+                                            firstPos = B.first;
+                                        ++e2;
+                                    }
+                                    K.ded.emplace_back(firstPos,
+                                        ent[size_t(o)].second);
+                                    K.cnt.push_back(u32(e2 - o));
+                                    o = e2;
+                                }
+                                std::vector<std::pair<u64, u32>>().swap(ent);
+                                {
+                                    std::lock_guard<std::mutex> g(K.mu);
+                                    K.done = true;
+                                }
+                                K.cv.notify_all();
+                            }
                         });
-                    // dedupe: the equal-key runs. THE CENSUS: the run
-                    // size IS the occurrence count; the run's min pos is
-                    // the first-occurrence REFERENCE.
-                    u64 o = 0;
-                    while (o < ent.size()) {
-                        u64 e2 = o + 1;
-                        u64 firstPos = ent[size_t(o)].first;
-                        while (e2 < ent.size()) {
-                            const auto& A = ent[size_t(o)];
-                            const auto& B = ent[size_t(e2)];
-                            const u64 m = std::min(A.second, B.second);
-                            if (std::memcmp(T + size_t(A.first),
-                                            T + size_t(B.first),
-                                            size_t(m)) != 0) break;
-                            if (A.second != B.second) break;
-                            if (B.first < firstPos) firstPos = B.first;
-                            ++e2;
+                    // the commit loop: buckets IN ORDER (byte-order
+                    // ids); the drain flag is set only AFTER the last
+                    // commit, so the workers stay alive for the
+                    // window's tail pushes
+                    // the commit loop: buckets IN ORDER (byte-order ids)
+                    for (u32 i = 0; i < bk; ++i) {
+                        KBucket& K = *kb[size_t(i)];
+                        {
+                            std::unique_lock<std::mutex> g(K.mu);
+                            while (!K.done) K.cv.wait(g);
                         }
-                        const u32 id = u32(dictN);
-                        dwPos.put(firstPos);
-                        dwLen.put(ent[size_t(o)].second);
-                        dwCnt.put(u32(e2 - o));
-                        dictBytesTotal += ent[size_t(o)].second;
-                        ++dictN;
-                        ++distinctTotal;
-                        censusTotal += e2 - o;
-                        o = e2;
+                        for (size_t z = 0; z < K.ded.size(); ++z) {
+                            const u32 id = u32(dictN);
+                            dwPos.put(K.ded[size_t(z)].first);
+                            dwLen.put(K.ded[size_t(z)].second);
+                            dwCnt.put(K.cnt[size_t(z)]);
+                            dictBytesTotal += K.ded[size_t(z)].second;
+                            ++dictN;
+                            ++distinctTotal;
+                            censusTotal += K.cnt[size_t(z)];
+                        }
+                        ++committed;
+                        {
+                            std::lock_guard<std::mutex> g(qmu);
+                            if (committed + W <= bk)
+                                queue.push_back(u32(committed + W - 1));
+                        }
+                        qcv.notify_all();
                     }
+                    closed.store(true);   // the drain: no pushes remain
+                    qcv.notify_all();
+                    for (auto& th : kpool) th.join();
                 }
                 dwPos.close(); dwLen.close(); dwCnt.close();
                 {
@@ -3146,9 +3248,9 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr,
                     "SS_KEY_SORT distinct=%" PRIu64 " census=%" PRIu64
                     " dict_bytes=%" PRIu64 " sort_s=%.2f"
-                    " rule=bucketed_key_sort;dedupe_byproduct;census"
-                    "_byproduct;byte_order_ids;references_only"
-                    ";columns_mapped\n",
+                    " rule=amendment_w1_fanned_buckets;dedupe_byproduct"
+                    ";census_byproduct;byte_order_ids;references_only"
+                    ";columns_mapped;committed_in_bucket_order\n",
                     distinctTotal, censusTotal, dictBytesTotal, tks1 - tks0);
 
                 // ---- THE PA: the (pos, id) stream sorted by position
@@ -3347,9 +3449,19 @@ int main(int argc, char** argv) {
         // branch of the walk test once ASSUMED the prefix relation and
         // the mini2 belt caught it comparing lcp=0 phrases through the
         // walk state - PARSE_SORT_FAIL ia=17387 ib=4776). O(log) per
-        // divergence, O(dictN) memory.
+        // divergence, O(dictN) memory. AMENDMENT W2: under
+        // prefixRelations == 0 the ambiguity is IMPOSSIBLE (no mark
+        // exists anywhere in the dictionary, so no adjacency test can
+        // pass) and the tree is not built; the belt would die loudly
+        // if that reasoning were wrong.
         std::vector<u32> ambTree;
-        {
+        std::function<u32(u64, u64)> ambMin = [&](u64, u64) -> u32 {
+            die("AMB_UNREACHABLE: the ambiguity oracle was consulted"
+                " with prefixRelations == 0 - the W2 branch reasoning"
+                " is wrong");
+            return 0;
+        };
+        if (prefixRelations != 0) {
             const u64 segN = dictN > 1 ? dictN - 1 : 1;
             ambTree.assign(size_t(2 * segN), 0xFFFFFFFFu);
             for (u64 j = 0; j + 1 < dictN; ++j)
@@ -3357,18 +3469,18 @@ int main(int argc, char** argv) {
             for (u64 j = segN; j-- > 1; )
                 ambTree[size_t(j)] = std::min(ambTree[size_t(2 * j)],
                                               ambTree[size_t(2 * j + 1)]);
+            const u64 segN2 = dictN > 1 ? dictN - 1 : 1;
+            ambMin = [&, segN2](u64 lo2, u64 hi2) -> u32 {
+                u32 best = 0xFFFFFFFFu;
+                u64 l = lo2 + segN2, r = hi2 + segN2;
+                while (l < r) {
+                    if (l & 1) best = std::min(best, ambTree[size_t(l++)]);
+                    if (r & 1) best = std::min(best, ambTree[size_t(--r)]);
+                    l >>= 1; r >>= 1;
+                }
+                return best;
+            };
         }
-        auto ambMin = [&](u64 lo2, u64 hi2) -> u32 {   // min over [lo2, hi2)
-            const u64 segN = dictN > 1 ? dictN - 1 : 1;
-            u32 best = 0xFFFFFFFFu;
-            u64 l = lo2 + segN, r = hi2 + segN;
-            while (l < r) {
-                if (l & 1) best = std::min(best, ambTree[size_t(l++)]);
-                if (r & 1) best = std::min(best, ambTree[size_t(--r)]);
-                l >>= 1; r >>= 1;
-            }
-            return best;
-        };
         {
             const double tps0 = now_sec();
             // THE PARSE COMPARATOR: integer rank sequences; the divergence
@@ -3460,11 +3572,69 @@ int main(int argc, char** argv) {
                     ++i; ++j;   // equal phrases: an integer advance
                 }
             };
-            // THE SHARD SORT + K-WAY MERGE: an MSD over the first rank
-            // would split at AMBIGUOUS rank boundaries (a prefix relation
-            // across buckets breaks the order - the docsep receipt: the
-            // seeds [141930,142020) disagreed with the brute). The exact
-            // comparator runs in every shard and in the merge.
+            // ---- AMENDMENT W2: the per-band SA kernel. Under
+            //      prefixRelations == 0 (every real-text scale
+            //      measured: the sandbox 0, 3 GB 0, 10 GB 0; the
+            //      one-sided trigger's law) the ID-sequence suffix
+            //      order IS the byte-true aligned order, so ONE
+            //      libsais_int_omp call over the dense integer
+            //      alphabet replaces the comparator sort - no shards,
+            //      no ambiguity branch, no k-way merge. Under a
+            //      prefix-relation class (the fixtures' residual
+            //      classes; the 1 GB corpus-end residual) the
+            //      certified comparator path runs - a measured
+            //      parse property decides, like the modality slide.
+            if (prefixRelations == 0) {
+                // the writable int32 copy of PA (libsais modifies T)
+                ColMap ti;
+                ti.mapRW(modebDir + "/pa_int32.bin", M, 4);
+                int32_t* Ti = ti.as<int32_t>();
+                for (u64 i = 0; i < M; ++i) {
+                    if ((i & 0xfffff) == 0 &&
+                        ::access(stopFlag.c_str(), F_OK) == 0)
+                        ::_exit(75);
+                    Ti[size_t(i)] = int32_t(PA[size_t(i)]);
+                }
+                const int32_t lrc = libsais_int_omp(
+                    Ti, (int32_t*)parseSA, int32_t(M),
+                    int32_t(dictN), 0, int32_t(threads));
+                if (lrc != 0)
+                    die("LIBSAIS_INT rc=" + std::to_string(lrc)
+                        + " - the O(n) induced kernel refused");
+                // BELT: the SA must be a permutation of 0..M-1 (a
+                // mapped bitmap pass; the sampled order belt below
+                // then checks the byte order against parseCmp)
+                {
+                    const u64 words = (M + 63) / 64;
+                    ColMap bm;
+                    bm.mapRW(modebDir + "/sa_perm.bin", words, 8);
+                    u64* Bm = bm.as<u64>();
+                    for (u64 i = 0; i < M; ++i) {
+                        const u64 v = parseSA[size_t(i)];
+                        if (v >= M)
+                            die("LIBSAIS_RANGE: row " + std::to_string(v)
+                                + " at rank " + std::to_string(i)
+                                + " exceeds M");
+                        if ((Bm[size_t(v >> 6)] >> (v & 63)) & 1)
+                            die("LIBSAIS_PERM: row " + std::to_string(v)
+                                + " appears twice");
+                        Bm[size_t(v >> 6)] |= 1ull << (v & 63);
+                        if ((i & 0xfffff) == 0 &&
+                            ::access(stopFlag.c_str(), F_OK) == 0)
+                            ::_exit(75);
+                    }
+                    bm.unmap();
+                    ::remove((modebDir + "/sa_perm.bin").c_str());
+                }
+                ti.unmap();
+                ::remove((modebDir + "/pa_int32.bin").c_str());
+            } else {
+            // THE SHARD SORT + K-WAY MERGE (the certified fallback):
+            // an MSD over the first rank would split at AMBIGUOUS rank
+            // boundaries (a prefix relation across buckets breaks the
+            // order - the docsep receipt: the seeds [141930,142020)
+            // disagreed with the brute). The exact comparator runs in
+            // every shard and in the merge.
             for (u32 i = 0; i < M; ++i) parseSA[size_t(i)] = i;
             {
                 const u64 nShard = std::max<u64>(1, std::min<u64>(threads, u64(64)));
@@ -3515,14 +3685,20 @@ int main(int argc, char** argv) {
                 altCol.unmap();
                 ::remove((modebDir + "/parse_alt.bin").c_str());
             }
+            }   // the W2 else (the certified comparator fallback)
             for (u64 i = 0; i < M; ++i)
                 parseRank[size_t(parseSA[size_t(i)])] = u32(i);
             phaseRssGate("parse_sa");
             std::fprintf(stderr,
                 "SS_PARSE_SORT parse_rows=%" PRIu64 " int_steps=%" PRIu64
                 " slide_fires=%" PRIu64 " threads=%" PRIu64 " sort_s=%.2f"
-                " rule=integer_rank_sequences;the_aligned_order\n",
-                M, parseIntSteps, slideFires, threads, now_sec() - tps0);
+                " kernel=%s prefix_relations=%" PRIu64
+                " rule=amendment_w2_libsais_int_omp|the_comparator"
+                "_fallback_under_prefix_classes;the_aligned_order\n",
+                M, parseIntSteps, slideFires, threads, now_sec() - tps0,
+                prefixRelations == 0 ? "libsais_int_omp"
+                                    : "comparator_shards",
+                prefixRelations);
             // THE FULL BRUTE VERIFY (mini scale, env-guarded): the sort
             // can order two rows transitively without ever comparing
             // them directly - a victim pair proves nothing about the
