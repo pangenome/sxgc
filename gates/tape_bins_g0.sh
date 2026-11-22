@@ -37,10 +37,20 @@ run_one() {
   rm -rf "$rd"; mkdir -p "$rd/bands" "$rd/merged"
   local log="$rd/pfp_sort.log"
   say "START name=$name corpus=$corpus bytes=$(stat -c %s "$corpus" 2>/dev/null)"
+  # AMENDMENT B4 OPERATOR'S CLAUSE: the budget is the law. TWO
+  # harness-shape allowances are DECLARED and journaled here, both
+  # absent in the real arms: (a) the pathological fixtures
+  # (single/period2/r0) hold their whole pairs mass in 1-4 cells and
+  # the census cannot split cells (A5): up to 16xN; (b) G0 runs NO
+  # FINISH, so the TRIE_TAP band stream (the oracle's input, ~25
+  # B/row) accumulates instead of being consumed concurrently: up to
+  # 25xN. Declared: 48xN. The real arms run the strict 2xN.
+  local bytes=$(stat -c %s "$corpus" 2>/dev/null || echo 0)
+  local sb=$(( 48 * bytes ))
   env XSA_MEM_GUARD_MB=16384 "$@" TRIE_TAP=1 XSA_WAVEKEY_VERIFY=1 \
     SS_LCP_SLICE_WINDOW=1048576 CROSS_V2_PIECE_WINDOW=1000000 \
     "$BIN" --corpus "$corpus" --out-prefix "$rd/merged/frag" --bands "$rd/bands" \
-    --budget-bytes 16000000000 --threads 8 \
+    --budget-bytes 16000000000 --scratch-budget-bytes $sb --threads 8 \
     > "$log" 2>&1
   local rc=$?
   if [ $rc -ne 0 ]; then

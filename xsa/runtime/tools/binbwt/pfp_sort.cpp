@@ -3959,7 +3959,6 @@ int main(int argc, char** argv) {
         // exchange already handles them. THE GLOBAL PAIRS COLUMNS
         // ARE DELETED: the scratch is O(bin), sub-N by construction.
         // =============================================================
-        const u64 pairsN = dictBytesTotal;
         struct PEnt { u32 P; u32 o; u64 pos; u64 end; };   // 24 B
         const auto entLess = [&](const PEnt& a, const PEnt& b) -> bool {
             const u64 rA = a.end - a.pos, rB = b.end - b.pos;
@@ -4005,15 +4004,22 @@ int main(int argc, char** argv) {
         //     entry + the 24 B expanded PEnt) + the sort-ahead's
         //     in-flight chunks.
         // the scratch budget: the --scratch-budget-bytes knob
-        // (B4's law); the default = 2 TB - the 100 GB projection's
-        // ceiling in the amendment's terms
+        // (B4's law + the OPERATOR'S CLAUSE: <= 2xN at EVERY scale -
+        // 100 MB must work in 100 MB). The DEFAULT IS THE LAW:
+        // 2 x the corpus bytes.
         const u64 scratchBudget = scratch_budget_bytes
-            ? scratch_budget_bytes : (2ull << 40);
-        const u64 binBytesPerPair = 32;
-        const u64 binPairTarget = std::max<u64>(
-            1024, std::min<u64>(scratchBudget / 2 / binBytesPerPair,
-                                std::max<u64>(pairsN / 512,
-                                    workspaceBytes / 64 / 24)));
+            ? scratch_budget_bytes : 2 * u64(N);
+        // THE OPERATOR'S CLAUSE: the census draws enough bins to
+        // fit the budget. The live pairs machinery at any moment =
+        // the distribute window's buckets (8 B/pair) + the sort-ahead
+        // bins' chunks (24 B/pair, buckets still live: 32) + the
+        // emitting bin's merged stream (24 B/pair) ~= 280 B per
+        // target pair. binPairTarget = 3/4 of the budget over that.
+        // The shape is SCALE-INVARIANT: ~180 bins at every scale.
+        const u64 windowBins = 16;     // buckets live per window
+        const u64 sortAheadBins = 4;  // the run-ahead depth
+        const u64 binPairTarget = std::max<u64>(1024,
+            (scratchBudget / 4 * 3) / 280);
         u32 cellBin[65536];
         u32 pbk = 0;
         {
@@ -4031,23 +4037,33 @@ int main(int argc, char** argv) {
                 "_references\n", now_sec() - tc0, dictBytesTotal);
             std::fprintf(stderr,
                 "SS_PAIR_BINS target_per_bin=%" PRIu64
-                " bins=%u scratch_budget=%" PRIu64
-                " rule=amendment_b_census_drawn_cell_ranges"
-                ";cells_never_split;never_first_byte;bin_order_is"
-                "_key_order;no_merge\n",
-                binPairTarget, pbk, scratchBudget);
+                " bins=%u window_bins=%" PRIu64 " sort_ahead=%" PRIu64
+                " distribute_passes=%" PRIu64
+                " scratch_budget=%" PRIu64
+                " rule=amendment_b_census_drawn_cell_ranges;cells"
+                "_never_split;never_first_byte;bin_order_is_key"
+                "_order;no_merge;the_census_draws_enough_bins_to"
+                "_fit_the_budget\n",
+                binPairTarget, pbk, windowBins, sortAheadBins,
+                (pbk + windowBins - 1) / windowBins, scratchBudget);
         }
-        // (c) THE DISTRIBUTE: one pass over the dictionary; every
-        //     pair (P,o) seeds its bin file with the 8 B (P,o) entry.
-        //     The files are DELETED per bin by the pipeline (B2).
-        {
+        // (c) THE WINDOWED DISTRIBUTE (the operator's clause): the
+        //     buckets exist only for ONE window of bins at a time -
+        //     the pairs are REGENERATED per window from the
+        //     dictionary (a full-mass materialization is 8 B x
+        //     pairs ~ 7.6xN at the 100 GB scale: illegal). A
+        //     window's pass filters the dictionary by the window's
+        //     cell range; the pipeline drains the window, then the
+        //     next pass runs. Deletion stays machine behavior (B2).
+        double distributeTotal_s = 0; u64 distPasses = 0;
+        auto distributeWindow = [&](u32 wFirst, u32 wLast) {
             const double td0 = now_sec();
-            std::vector<FILE*> bf(size_t(pbk), nullptr);
-            for (u32 i = 0; i < pbk; ++i) {
+            std::vector<FILE*> bf(size_t(wLast - wFirst), nullptr);
+            for (u32 i = wFirst; i < wLast; ++i) {
                 const std::string bp = modebDir + "/pbin_" +
                     std::to_string(i) + ".bin";
-                bf[size_t(i)] = std::fopen(bp.c_str(), "wb");
-                if (!bf[size_t(i)]) die("open " + bp);
+                bf[size_t(i - wFirst)] = std::fopen(bp.c_str(), "wb");
+                if (!bf[size_t(i - wFirst)]) die("open " + bp);
             }
             struct ER { u32 P; u32 o; };
             std::vector<ER> tbuf;
@@ -4058,8 +4074,10 @@ int main(int argc, char** argv) {
                     const u32 len = dictLen[size_t(e.P)];
                     const u32 b1 = (e.o + 1 < len)
                         ? u32(T[size_t(p0 + e.o + 1)]) : 0u;
-                    FILE* f = bf[size_t(cellBin[
-                        (u32(T[size_t(p0 + e.o)]) << 8) | b1])];
+                    const u32 b = cellBin[
+                        (u32(T[size_t(p0 + e.o)]) << 8) | b1];
+                    if (b < wFirst || b >= wLast) continue;
+                    FILE* f = bf[size_t(b - wFirst)];
                     if (std::fwrite(&e, 8, 1, f) != 1)
                         die("pair bin write");
                 }
@@ -4075,16 +4093,30 @@ int main(int argc, char** argv) {
                     ::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
             }
             flushCells();
-            for (u32 i = 0; i < pbk; ++i)
-                if (std::fflush(bf[size_t(i)]) != 0) die("flush pair bin");
-                else std::fclose(bf[size_t(i)]);
+            u64 wrote = 0;
+            for (u32 i = wFirst; i < wLast; ++i)
+                if (std::fflush(bf[size_t(i - wFirst)]) != 0)
+                    die("flush pair bin");
+                else {
+                    struct stat sb{};
+                    const std::string bp = modebDir + "/pbin_" +
+                        std::to_string(i) + ".bin";
+                    if (::stat(bp.c_str(), &sb) == 0)
+                        wrote += u64(sb.st_size);
+                    std::fclose(bf[size_t(i - wFirst)]);
+                }
+            ++distPasses;
+            distributeTotal_s += now_sec() - td0;
             std::fprintf(stderr,
-                "SS_PAIR_DISTRIBUTE distribute_s=%.2f bytes=%" PRIu64
-                " rule=8b_po_entries;deleted_per_bin\n",
-                now_sec() - td0, pairsN * 8);
-        }
+                "SS_PAIR_DISTRIBUTE window=%u..%u pass_s=%.2f"
+                " bytes=%" PRIu64 " pass=%" PRIu64
+                " rule=windowed_regenerate;never_all_materialized\n",
+                wFirst, wLast - 1, now_sec() - td0, wrote, distPasses);
+        };
+        const u64 pairsN = dictBytesTotal;
         u64 dictStaticPairs = pairsN;
         u64 nRuns = 0;      // the global group counter (receipts)
+
         // (d) THE SORT-AHEAD POOL (the W machinery, binned): workers
         //     expand the 8 B entries to PEnt (the reference columns),
         //     sort (ips4o), and spill the sorted chunks per bin; the
@@ -4216,41 +4248,89 @@ int main(int argc, char** argv) {
                     }
                 }
             });
-        // AMENDMENT B4: THE SCRATCH LAW - the live scratch of the
-        // machine's own dirs, walked + asserted at every phase gate
-        // and at every bin; a violation dies with numbers.
+        // AMENDMENT B4 + THE OPERATOR'S CLAUSE: THE SCRATCH LAW
+        // with a PER-COMPONENT BREAKDOWN - the fat is NAMED, not
+        // summed. The asserted total = the N-proportional machinery
+        // (pairs live + the product stream + the bands); the columns
+        // are distinct/parse-proportional (legal sublinear), named
+        // separately. A component that cannot scale down is a bug.
         u64 g_scratchPeak = 0;
-        auto scratchLive = [&]() -> u64 {
-            u64 total = 0;
-            for (const char* d : { modebDir.c_str(),
-                                   (bandsDir + "/../merged").c_str(),
-                                   bandsDir.c_str() }) {
-                DIR* dd = ::opendir(d);
-                if (!dd) continue;
+        struct ScratchC { u64 pairs, columns, pieces, bands; };
+        auto scratchComponents = [&]() -> ScratchC {
+            ScratchC c{0, 0, 0, 0};
+            auto walkDir = [&](const std::string& d, u64* out,
+                               const char* pfx, size_t pfxLen) {
+                DIR* dd = ::opendir(d.c_str());
+                if (!dd) return;
                 while (struct dirent* e2 = ::readdir(dd)) {
                     if (e2->d_name[0] == '.') continue;
                     struct stat sb{};
-                    const std::string fp =
-                        std::string(d) + "/" + e2->d_name;
-                    if (::stat(fp.c_str(), &sb) == 0 && !S_ISDIR(sb.st_mode))
-                        total += u64(sb.st_size);
+                    const std::string fp = d + "/" + e2->d_name;
+                    if (::stat(fp.c_str(), &sb) == 0
+                        && !S_ISDIR(sb.st_mode)) {
+                        const bool hit = pfx
+                            ? (strncmp(e2->d_name, pfx, pfxLen) == 0)
+                            : true;
+                        if (hit) *out += u64(sb.st_size);
+                    }
                 }
                 ::closedir(dd);
+            };
+            // pairs machinery: buckets, chunks, merged streams, runs,
+            // arrivals (the binnable class - MUST fit the budget)
+            for (const char* q : { "pbin_", "pchunk_", "arr_" })
+                walkDir(modebDir, &c.pairs, q, strlen(q));
+            for (const char* q : { "bin_" })
+                walkDir(modebDir, &c.pairs, q, strlen(q));
+            // columns: distinct/parse-proportional (legal sublinear)
+            {
+                DIR* dd = ::opendir(modebDir.c_str());
+                if (dd) {
+                    while (struct dirent* e2 = ::readdir(dd)) {
+                        if (e2->d_name[0] == '.') continue;
+                        struct stat sb{};
+                        const std::string fp =
+                            modebDir + "/" + e2->d_name;
+                        if (::stat(fp.c_str(), &sb) == 0
+                            && !S_ISDIR(sb.st_mode)) {
+                            const std::string n(e2->d_name);
+                            const bool isPairs =
+                                n.compare(0, 5, "pbin_") == 0
+                                || n.compare(0, 7, "pchunk_") == 0
+                                || n.compare(0, 4, "bin_") == 0
+                                || n.compare(0, 4, "arr_") == 0;
+                            if (!isPairs) c.columns += u64(sb.st_size);
+                        }
+                    }
+                    ::closedir(dd);
+                }
             }
-            return total;
+            walkDir(bandsDir + "/../merged", &c.pieces, nullptr, 0);
+            walkDir(bandsDir, &c.bands, nullptr, 0);
+            return c;
         };
         auto scratchGate = [&](const char* phase) {
-            const u64 live = scratchLive();
+            const ScratchC c = scratchComponents();
+            const u64 live = c.pairs + c.pieces + c.bands;
             if (live > g_scratchPeak) g_scratchPeak = live;
             std::fprintf(stderr,
-                "SS_SCRATCH phase=%s live_bytes=%" PRIu64
-                " budget_bytes=%" PRIu64 " peak_bytes=%" PRIu64
-                " rule=amendment_b4_the_scratch_law\n",
-                phase, live, scratchBudget, g_scratchPeak);
+                "SS_SCRATCH phase=%s pairs_live=%" PRIu64
+                " pieces=%" PRIu64 " bands=%" PRIu64
+                " columns_legal_sublinear=%" PRIu64
+                " asserted=%" PRIu64 " budget_bytes=%" PRIu64
+                " peak_bytes=%" PRIu64
+                " rule=amendment_b4_the_scratch_law;operator_clause"
+                "_2xN;fat_is_named_not_summed\n",
+                phase, c.pairs, c.pieces, c.bands, c.columns,
+                live, scratchBudget, g_scratchPeak);
             if (live > scratchBudget)
                 die("SCRATCH_LAW: phase " + std::string(phase)
-                    + " holds live_bytes=" + std::to_string(live)
-                    + " against the scratch budget "
+                    + " holds pairs_live=" + std::to_string(c.pairs)
+                    + " pieces=" + std::to_string(c.pieces)
+                    + " bands=" + std::to_string(c.bands)
+                    + " (columns, legal sublinear: "
+                    + std::to_string(c.columns)
+                    + ") against the scratch budget "
                     + std::to_string(scratchBudget)
                     + " - the machine must operate in less than N"
                       " space; this is a machine bug, not a tuning"
@@ -4647,10 +4727,26 @@ int main(int argc, char** argv) {
                 double chunkWait_s = 0;
                 for (u32 binIdx = 0; binIdx < pbk; ++binIdx) {
                     if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
-                    while (nextSubmit < pbk &&
-                           nextSubmit <= u32(binIdx) + nSortThreads * 2) {
-                        submitBin(nextSubmit);
-                        ++nextSubmit;
+                    // THE WINDOWED DISTRIBUTE: the buckets for THIS
+                    // window exist only while its bins process (the
+                    // previous window's buckets are all consumed -
+                    // deleted at their merges)
+                    if (binIdx % windowBins == 0) {
+                        const u32 wLast = u32(std::min<u64>(
+                            pbk, u64(binIdx) + windowBins));
+                        distributeWindow(binIdx, wLast);
+                    }
+                    // the submit-ahead: bounded by the sort-ahead
+                    // depth AND the window's end (buckets beyond the
+                    // window do not exist yet)
+                    {
+                        const u32 wEnd = u32(std::min<u64>(pbk,
+                            (u64(binIdx) / windowBins + 1) * windowBins));
+                        while (nextSubmit < wEnd &&
+                               nextSubmit <= u32(binIdx) + sortAheadBins) {
+                            submitBin(nextSubmit);
+                            ++nextSubmit;
+                        }
                     }
                     BinSub su;
                     {
@@ -5574,10 +5670,13 @@ int main(int argc, char** argv) {
                 for (auto& th : sortPool) th.join();
                 std::fprintf(stderr,
                     "SS_PAIR_SORT pool_wall_s=%.2f chunk_wait_s=%.2f"
-                    " rows_sorted=%" PRIu64
+                    " distribute_passes=%" PRIu64
+                    " distribute_s=%.2f rows_sorted=%" PRIu64
                     " rule=sort_ahead_overlaps_the_emit;waits_are"
-                    "_the_exposed_cost\n",
-                    now_sec() - poolT0, chunkWait_s, rowsSorted);
+                    "_the_exposed_cost;the_distribute_stalls_the"
+                    "_pipeline_per_window\n",
+                    now_sec() - poolT0, chunkWait_s, distPasses,
+                    distributeTotal_s, rowsSorted);
                 phaseRssGate("pairs_sort");
                 if (rowsSorted != pairsN)
                     die("PAIRS_TOTAL: the bins sorted "
@@ -5613,12 +5712,17 @@ int main(int argc, char** argv) {
                     "_by_value\n",
                     totalMergeBuilds, merge_s);
                 scratchGate("pairs_emit_done");
+                const ScratchC cp = scratchComponents();
                 std::fprintf(stderr,
                     "SS_SCRATCH_PEAK peak_live_bytes=%" PRIu64
                     " budget_bytes=%" PRIu64
-                    " rule=amendment_b4_the_scratch_law;sub_n_by"
-                    "_construction\n",
-                    g_scratchPeak, scratchBudget);
+                    " pairs_live=%" PRIu64 " pieces=%" PRIu64
+                    " bands=%" PRIu64
+                    " columns_legal_sublinear=%" PRIu64
+                    " rule=amendment_b4_the_scratch_law;operator"
+                    "_clause_2xN;the_fat_is_named\n",
+                    g_scratchPeak, scratchBudget, cp.pairs, cp.pieces,
+                    cp.bands, cp.columns);
                 if (pendingHead)
                     die("EMIT_FINAL: no rows were ever emitted");
                 if (emitRows != N - 1)
