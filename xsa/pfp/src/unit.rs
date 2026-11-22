@@ -428,10 +428,27 @@ impl<'a> RowMach<'a> {
     }
 
     fn suf_lcp(&self, a: u64, b: u64, from: u64, lcp: &mut u64) -> i32 {
+        // THE WORD-CHUNK LAW (the C++ suf_cmp_from_counted shape): the
+        // residual LCP walk goes 8 bytes at a time
         let c = self.c;
         let cap = (c.file_n - a).min(c.file_n - b);
         *lcp = from;
         let mut i = from;
+        while i + 8 <= cap {
+            let x: [u8; 8] = c.t[(a + i) as usize..(a + i + 8) as usize]
+                .try_into().unwrap();
+            let y: [u8; 8] = c.t[(b + i) as usize..(b + i + 8) as usize]
+                .try_into().unwrap();
+            if x != y {
+                for j in 0..8usize {
+                    if x[j] != y[j] {
+                        *lcp = i + j as u64;
+                        return if x[j] < y[j] { -1 } else { 1 };
+                    }
+                }
+            }
+            i += 8;
+        }
         while i < cap {
             let xb = c.t[(a + i) as usize];
             let yb = c.t[(b + i) as usize];
@@ -761,7 +778,15 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
     let head_pos = ctx.file_n;   // the virtual END row first
 
     // ---- (c) THE BIN LOOP
+    let mut bin_iter: u64 = 0;
     for bin_idx in 0..pbk {
+        bin_iter += 1;
+        if bin_iter > pbk as u64 + 1 {
+            die(&format!("BIN_LOOP_STALL: iter={} pbk={} - the bin \
+                          loop cannot exceed its census", bin_iter, pbk));
+        }
+        eprintln!("SS_BIN_START bin={} of {} rule=bin_order_is_key_order",
+                  bin_idx, pbk);
         laws.stop_check("bin");
         let w_end = {
             let w0 = win_start_of[bin_idx as usize];
@@ -972,7 +997,22 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
             let mut fwd: Vec<(u64, u32, u32, u32)> = Vec::new();
             let mut bin_fwd: Vec<(u64, u32, u32, u32)> = Vec::new();
             let mut rows_total = 0u64;
+            let l1_t0 = std::time::Instant::now();
+            let mut l1_rows: u64 = 0;
+            let mut l1_gdone: u64 = 0;
+            let l1_mark = std::time::Instant::now();
+            let mut l1_lastmark = std::time::Duration::ZERO;
             for g in g0..g1 {
+                l1_gdone += 1;
+                if l1_mark.elapsed() >= l1_lastmark
+                    + std::time::Duration::from_secs(30) {
+                    l1_lastmark = l1_mark.elapsed();
+                    eprintln!("SS_L1_PROGRESS groups={}/{} rows={} \
+                               elapsed_s={:.1} \
+                               rule=the_walk_is_linear;stalls_die",
+                              l1_gdone, g1 - g0, l1_rows,
+                              l1_t0.elapsed().as_secs_f64());
+                }
                 let lo = starts[g as usize];
                 let hi = starts[g as usize + 1];
                 // THE RANK MERGE (the C++'s inner heap): the group's
@@ -999,6 +1039,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                     let occ = ctx.olist[oi as usize];
                     let row = mach.row_of_po(pe.p, pe.o, occ);
                     rows_total += 1;
+                    l1_rows += 1;
                     let lg = gallop(&mach, &row, g,
                                     bin_g_end, &starts, &ent);
                     // THE BIN CLAMP TEST (B3)
@@ -1205,6 +1246,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                     };
                     for fp in &final_pos { pout.push(pack(*fp)); }
                     // the per-row LCPs (the W5 carry)
+                    let mut lcp_class = (0u64, 0u64, 0u64, 0u64);
                     let mut lcpv: Vec<u64> = vec![0; span_rows];
                     for i2 in 1..span_rows {
                         let a = &final_facts[i2 - 1];
@@ -1216,23 +1258,32 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                         let lt: u64;
                         if a.v == b.v && a.o == b.o {
                             lt = cont_lcp_w5(&mach, a, b, e1);
+                            lcp_class.0 += 1;
                         } else {
                             let m3 = e1.min(e2);
                             let q1 = ctx.dref[a.v as usize] + a.o as u64;
                             let q2 = ctx.dref[b.v as usize] + b.o as u64;
                             let mut z = 0u64;
+                            while z + 8 <= m3
+                                   && ctx.t[(q1 + z) as usize
+                                        ..(q1 + z + 8) as usize]
+                                      == ctx.t[(q2 + z) as usize
+                                        ..(q2 + z + 8) as usize] { z += 8; }
                             while z < m3
                                   && ctx.t[(q1 + z) as usize]
                                      == ctx.t[(q2 + z) as usize] { z += 1; }
                             if z < m3 {
                                 lt = z;
+                                lcp_class.1 += 1;
                             } else if e1 == e2 {
                                 lt = cont_lcp_w5(&mach, a, b, e1);
+                                lcp_class.2 += 1;
                             } else {
                                 let mut l = 0u64;
                                 mach.suf_lcp(final_pos[i2 - 1],
                                              final_pos[i2], m3, &mut l);
                                 lt = l;
+                                lcp_class.3 += 1;
                             }
                         }
                         lcpv[i2] = lt;
@@ -1305,8 +1356,11 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                     stats.rows_emitted += span_rows as u64;
                     prev_emitted_pos = *final_pos.last().unwrap();
                     eprintln!("SS_EMIT_UNIT unit={} rows={} window={} \
-                               rule=the_concat_walk;no_sorting",
-                              next_unit, rows, w_idx);
+                               lcp_fast={} lcp_bounded={} lcp_group={} \
+                               lcp_residual={} rule=the_concat_walk\
+;no_sorting",
+                              next_unit, rows, w_idx, lcp_class.0,
+                              lcp_class.1, lcp_class.2, lcp_class.3);
                 }
             }
         }
