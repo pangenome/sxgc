@@ -745,3 +745,42 @@ paid ~4 h of cache-cold text walks. The DIAL_LAW receipts: all
 phases under the wide dial (key_sort 871 MB, parse_sa 575 MB,
 pairs 3.14 GB, emit 3.01 GB against 12 GB).
 Row-walk battery (ride-along): 1000 sampled ranks PASS.
+
+## THE W MACHINE ON THE LADDER — RUNG 2 RE-GATE (3 GB) — 2026-11-22
+
+The W machine at the 3 GB rung (run14e's exact shape: the certified
+remap, bins-p1/bin/xsa_finish, fused, run14e flags):
+  producer exit 0, SS_DONE, run_s 2778.20 s (the pre-W banded machine
+  5330.34 s - 1.92x); finish exit 0.
+  **MEMBER-LEVEL IDENTITY vs the certified run14e container: ALL
+  NINE MEMBERS BYTE-IDENTICAL** - m1 1,005,701,040B ea7f9f74ff5aa5ce,
+  m4 0da64314..., m5 394,614,988B cc5d57c8..., m7 38dd65a7...,
+  m10 0B, m11 6fcd1117..., m12 e15f2a57..., m13 765,614,752B
+  4efdb7b4..., m14 780,101,144B 5d2e9aadb4bc6c37 - every member ==
+  the G2-era anchors. chi=828,459,853 n=3,000,000,001
+  r=1,075,961,507 (the certified counts). Product sha256
+  3935e8f1d220092d2cd12081938748e8a62f02e882bd021781ec7c3d0cabe7f3
+  (== the earlier rung-2 W-era product, itself member-identical).
+THE WALL TABLE (3 GB, wide dial, the pre-W banded machine vs the W
+machine; run14e-era historical context: parse 214 s, dict 254 s,
+parse-SA 819 s, LCP 47 s, lists 5 s, emit 1066 s):
+  parse 39.55 -> 35.97 | key sort 107.54 -> 12.15 (8.9x)
+  parse-SA 159.73 -> 10.13 (15.8x, kernel=libsais_int_omp,
+  prefix_relations=0) | parse-LCP (new) 139.30 (lcp_max 322,769)
+  pairs 3164.69 -> 810.33 (3.9x, the pool + ips4o)
+  lists 4.51 -> 4.63 | resolve 654.40 -> 646.72 | merge 95.89 -> 92.14
+  walk 48.84 -> 47.43 | assemble 189.23 -> 174.10
+  emit total 1622.90 -> 1591.97
+  **TOTAL 5330.34 -> 2778.20 (1.92x)**
+  (the earlier journal's "emit ~330 s" at 3 GB was STALE - the
+  receipts above are the honest walls; the emit was always ~1600 s.)
+TEXT_WALK AT SCALE: the old machine walked 353,698,193,227 bytes at
+3 GB (the RCHAR_PLAN 2x term / 2); the W machine walks 63,374,224,245
+- a 5.6x collapse (the Kasai + the bounded slice compares + the
+residual seeds; the walk_s itself 48.84 -> 47.43 s at this scale
+because the text is page-cache-resident - W5's wall payoff is the
+10 GB+ cache-cold walks).
+DIAL_LAW: all phases under the wide dial (key_sort 2.06 GB,
+parse_sa 1.70 GB, pairs 3.09 GB, emit 3.04 GB against 12 GB +
+3 GB eps). Row-walk battery: 1000 sampled ranks PASS (max depth
+17,017).
