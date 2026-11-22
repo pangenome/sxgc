@@ -147,16 +147,33 @@ fn main() {
         eprintln!("SS_R_LEVELS_TAKEN plan=1 rule=the_census_arithmetic");
     }
     laws.scratch_gate("levels");
-    let _ = &_lv2;
 
     // ---- THE W5 LCP CARRY + THE OCCURRENCE LISTS (level 0: over
     //      the level-1 parse; the SA from the single-level kernel
     //      or the induced column when the levels module lands)
-    if _lv2.is_none() {
-        // the deepest level's SA = the 32-bit FFI kernel
+    {
+        // The two paths produce the same parse_sa.bin consumed below.
         let t0s = std::time::Instant::now();
         let sa_p = format!("{}/parse_sa.bin", modeb_dir);
-        {
+        if let Some(l) = &_lv2 {
+            let dir = format!("{}/L2", modeb_dir);
+            let sa = l.parse_sa2.u32s();
+            let mut rank = col::ColMap::map_rw(&format!("{}/rank.bin", dir), l.m2, 4);
+            for (r, &i) in sa.iter().enumerate() { rank.u32s_mut()[i as usize] = r as u32; }
+            let pa = l.pa2.u32s();
+            let ps = l.pstart2.u64s();
+            let refs = l.dict_ref2.u64s();
+            let lens = l.dict_len2.u32s();
+            let text = l.be.u8s();
+            let w = w5::build(text, pa, ps, sa, refs, lens, l.m2, &dir);
+            let (start, list) = w5::occ_lists(pa, rank.u32s(), l.m2, l.dict_n2, &dir);
+            let mut upper = unit::LevelCtx { t: text, stride: 4, rows_n: p.m0, file_n: l.be_bytes,
+                pa, m: l.m2, sa, rank: rank.u32s(), dref: refs, dlen: lens,
+                dict_n: l.dict_n2, dict_bytes_total: lens.iter().map(|&n| u64::from(n)).sum(),
+                pstart: ps, ostart: start.u32s(), olist: list.u32s(), lcp: w.lcp.u64s(),
+                lcp_tree: w.lcp_tree.u64s(), lcp_seg_n: w.lcp_seg_n, modeb_dir: dir, laws: &laws };
+            unit::run_level(&mut upper, &mut unit::Sink::SaColumn { out: col::ColMap::map_rw(&sa_p, p.m0, 4) });
+        } else {
             let mut sa = col::ColMap::map_rw(&sa_p, p.m0, 4);
             let mut ti: Vec<i32> = Vec::with_capacity(p.m0 as usize);
             for j in 0..p.m0 as usize {
@@ -171,9 +188,8 @@ fn main() {
                 if rc != 0 { die(&format!("LIBSAIS_INT rc={}", rc)); }
             }
         }
-        eprintln!("SS_PARSE_SORT parse_rows={} kernel=libsais_int_ffi \
-                   sort_s={:.2} rule=the_deepest_level_kernel",
-                  p.m0, laws::now_s(t0s));
+        eprintln!("SS_PARSE_SORT parse_rows={} kernel={} sort_s={:.2}", p.m0,
+                  if _lv2.is_some() { "induced" } else { "libsais_int_ffi" }, laws::now_s(t0s));
         let sa = col::ColMap::map_ro(&sa_p, p.m0, 4);
         // the rank scatter
         let rank_p = format!("{}/parse_rank.bin", modeb_dir);
@@ -237,12 +253,7 @@ fn main() {
                   stats.rows_emitted, stats.end_rows);
     }
 
-    // ---- THE PORT ORDER CONTINUES (R5): levels -> W5 -> pairsbins
-    //      -> emit -> finish wiring. Each lands with its own gate.
-    eprintln!("SS_R_STOPPED_AT modules_done=remap,parse,dictsort \
-               next=levels,w5,pairsbins,emit,finish rule=amendment_r_port_order");
-
-    eprintln!("SS_DONE_R front_only=true total_s={:.2}",
+    eprintln!("SS_DONE_R producer_complete=true total_s={:.2}",
               laws::now_s(t_all));
     laws.scratch_peak();
 }

@@ -66,13 +66,8 @@ impl Laws {
     // (legal sublinear), named separately.
     pub fn scratch_components(&self) -> ScratchC {
         let mut c = ScratchC { pairs: 0, columns: 0, pieces: 0, bands: 0 };
-        for pfx in ["pbin_", "pchunk_", "arr_"] {
-            du_dir(&self.modeb_dir, Some((pfx, pfx.len())), &mut c.pairs);
-        }
-        // the bin_ prefix catches bin_<k>.sorted/.runs
-        du_dir(&self.modeb_dir, Some(("bin_", 4)), &mut c.pairs);
-        {
-            let rd = match fs::read_dir(&self.modeb_dir) { Ok(r) => r, Err(_) => return c };
+        for dir in [self.modeb_dir.clone(), format!("{}/L2", self.modeb_dir)] {
+            let rd = match fs::read_dir(dir) { Ok(r) => r, Err(_) => continue };
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().to_string();
                 if name.starts_with('.') { continue; }
@@ -80,7 +75,7 @@ impl Laws {
                 if md.is_dir() { continue; }
                 let is_pairs = ["pbin_", "pchunk_", "bin_", "arr_"]
                     .iter().any(|p| name.starts_with(p));
-                if !is_pairs { c.columns += md.len(); }
+                if is_pairs { c.pairs += md.len(); } else { c.columns += md.len(); }
             }
         }
         du_dir(&self.merged_dir, None, &mut c.pieces);

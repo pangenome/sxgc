@@ -1029,6 +1029,10 @@ Receipt: `TAPEREADER/sandbox/br_wide_terminal_1795382126`, wide/24 threads. Prod
 
 `TAPEREADER/sandbox/br_wide_arrbuf_1795382482`: producer 218.41 s vs 295.04 s (unit 205.59 vs 282.44 s); managed wall including release build and comparison 222 vs 298 s. Both runs: 14,343,410 forwarded records, 198 bins, 23 windows, 116,712,352 bytes counted scratch peak. `cmp` to `sandbox/b_162/product.sxi2` passed, SHA `6325c843c0d9aa9be00d69260aafdd794936e2e79f16174efb00c43db831f341`. One before/after pair on this input: 26% shorter producer time, not a recursive or larger-scale speed claim.
 
+### Recursive Rust fixture and 100 MB finish identity
+
+`bins-g0/R_mixed_induced_1795382897`: forced ceiling 100000. The induced 174672-row SA column and the fixture SA bands matched the banked single-level `RUST_mixed_w2` files by `cmp`. `sandbox/br_wide_induced_1795382897`: ceiling 2000000; 3053175 parse rows → 188249 upper parse rows → 3053175 induced rows. Both producer and finish rc=0, producer 220.56 s. All 107519008 bytes compared equal to `sandbox/b_162/product.sxi2` (nine members, `6325c843c0d9aa9be00d69260aafdd794936e2e79f16174efb00c43db831f341`). Counted scratch peak 116712352 bytes; not total disk usage. This is the **recursive wide-arm identity gate**, not a memory-dial or larger-input certification.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX

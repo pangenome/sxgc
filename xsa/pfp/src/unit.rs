@@ -631,13 +631,13 @@ impl<'a> RowMach<'a> {
 
 // the pair's cell (the first 2 bytes of the slice at the strided
 // offset; b1 = 0 marks the 1-element tail)
-fn cell_of(t: &[u8], p0: u64, o: u64, plen: u32, stride: u32)
+fn cell_of(t: &[u8], p0: u64, o: u64, plen: u32, _stride: u32)
            -> usize {
     // the slice's first 2 bytes; b1 = 0 marks the 1-element tail
     // (the next byte must be INSIDE the phrase - the reference)
     let a = t[(p0 + o) as usize] as usize;
-    let b = if o + (stride as u64) < plen as u64 {
-        t[(p0 + o + (stride as u64)) as usize] as usize
+    let b = if o + 1 < plen as u64 {
+        t[(p0 + o + 1) as usize] as usize
     } else { 0 };
     (a << 8) | b
 }
@@ -979,7 +979,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                     if lg2 + 1 >= bin_g_end && (bin_idx as u64) + 1
                         < pbk as u64 {
                         let plen = ctx.dlen[p as usize];
-                        if (o as u64) + stride as u64 >= plen as u64 {
+                        if (o as u64) + 1 >= plen as u64 {
                             let c0 = ctx.t[ctx.dref[p as usize]
                                            as usize + o as usize];
                             let tcell = ((c0 as u64) << 8)
@@ -1071,7 +1071,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                     let mut bin_cross = false;
                     if lg + 1 >= bin_g_end
                         && (bin_idx as u64) + 1 < pbk as u64
-                        && (pe.o as u64) + stride as u64
+                        && (pe.o as u64) + 1
                            >= ctx.dlen[pe.p as usize] as u64 {
                         let c0 = ctx.t[pe.pos as usize];
                         let tcell = ((c0 as u64) << 8)
@@ -1390,16 +1390,16 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
         fs::write(format!("{}/producer.done", bands_dir), b"").expect("producer.done");
     }
     if let Sink::SaColumn { out } = sink {
-        if sa_sink_n != ctx.m {
+        if sa_sink_n != ctx.rows_n {
             die(&format!("LEVEL1_SINK_COUNT: the induction emitted {} \
                           rows against the level's M={}",
-                         sa_sink_n, ctx.m));
+                         sa_sink_n, ctx.rows_n));
         }
         // the permutation belt
-        let mut seen = vec![false; ctx.m as usize];
-        for i in 0..ctx.m as usize {
+        let mut seen = vec![false; ctx.rows_n as usize];
+        for i in 0..ctx.rows_n as usize {
             let v = out.u32s()[i] as usize;
-            if v >= ctx.m as usize || seen[v] {
+            if v >= ctx.rows_n as usize || seen[v] {
                 die(&format!("LEVEL1_SINK_PERM: row {} twice", v));
             }
             seen[v] = true;
