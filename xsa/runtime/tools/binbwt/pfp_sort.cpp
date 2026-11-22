@@ -3823,12 +3823,36 @@ int main(int argc, char** argv) {
                     ColMap c4;
                     c4.mapRW(LV.l2dir + "/pstart2.bin", m2, 8);
                     LV.pstart2 = c4.as<u64>();
-                    for (u64 j = 0; j < m2; ++j)
-                        LV.pstart2[size_t(j)] =
-                            fo2[size_t(pa2v[size_t(j)])] * 4;
+                    // THE ROW STARTS: the parse row j's OWN start in
+                    // the level-1 sequence (the tiling's cumulative
+                    // sum), NOT the phrase's first occurrence - the
+                    // repeats move rows away from their first
+                    // occurrence (the fixture proof passed only
+                    // because every level-2 phrase occurred once
+                    // there; the sandbox's 266 repeats caught it)
+                    {
+                        u64 acc = 0;
+                        for (u64 j = 0; j < m2; ++j) {
+                            LV.pstart2[size_t(j)] = acc * 4;
+                            acc += ln2[size_t(pa2v[size_t(j)])];
+                        }
+                        if (acc != M)
+                            die("LEVEL2_TILING: the phrases tile "
+                                + std::to_string(acc)
+                                + " IDs against M=" + std::to_string(M));
+                    }
                     LV.m2 = m2;
                     LV.dictN2 = d2;
-                    LV.dictBytes2 = M * 4;
+                    // THE DICTIONARY MASS (each DISTINCT phrase once),
+                    // not the tiling mass - the repeats' mass belongs
+                    // to the occurrence expansion, not the pairs (the
+                    // rung receipt: 3,941 repeat-row IDs)
+                    {
+                        u64 db2 = 0;
+                        for (u64 v = 0; v < d2; ++v)
+                            db2 += ln2[size_t(v)];
+                        LV.dictBytes2 = db2 * 4;
+                    }
                     std::vector<u64>().swap(fo2);
                     std::vector<u32>().swap(ln2);
                     std::vector<u32>().swap(pa2v);

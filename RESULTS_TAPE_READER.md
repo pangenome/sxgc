@@ -911,3 +911,45 @@ killed when the producer exits nonzero); the deeper fix — the finish
 noticing a vanished/dead stream — belongs to the finish's owner
 (main-side, the same class as the known cold-start exit at >1400
 units).
+
+## AMENDMENT L — the level-seam UB hunt (the ghost crash accounting)
+
+THE GHOST: three wide arms (06:08-06:36) died rc=139 (SIGSEGV) ~8-9 s
+in, log ending at SS_LEVELS (before SS_PARSE_SORT); a -g build HUNG at
+the key sort (0% CPU, 7 h); a -O2-under-gdb run hung at level-1 emit
+unit 123. Triad: -O2 segv / -O0 pass / -g hang = layout-sensitive.
+
+THE HUNT (by the operator's tool order):
+- ASan+UBSan (-O1, -fno-sanitize-recover): the FULL VISION runs
+  CLEAN end-to-end at 100 MB (both levels, the induced-SA belt,
+  SS_DONE) - zero sanitizer reports. THE FUNCTIONAL CERTIFICATION.
+- TSan: refuses our memory layout ("unexpected memory mapping" -
+  the huge MAP_SHARED columns collide with its shadow map) - no data.
+- Thread bisect: --threads 2 passes; 24 passes bare; 24 + concurrent
+  finish passes; 24 + cold-cache + finish passes. The 3/3 window has
+  not reproduced in 6 subsequent attempts across the exact shapes.
+- The W1 key-sort fan audited by inspection (the recorded silent-hang
+  class): the drain-flag shape is airtight; no hole found. The
+  RssMonitor (the only always-on background thread) writes atomics
+  only. ips4o is the SEQUENTIAL build (the parallel machinery gated
+  off upstream's own flag) - no nested-OpenMP hazard.
+
+TWO REAL BUGS THE HUNT FOUND AND FIXED (both at the level seam, both
+proven by receipts):
+1. pstart2 used the phrase's FIRST OCCURRENCE - PStart_ is the parse
+   row's OWN start (the tiling's cumulative sum). The fixture proof
+   passed ONLY because every level-2 phrase occurred once there; the
+   sandbox's 266 repeats broke the alignedLcp resolution (r1 underflow
+   -> memcmp(huge) -> the -O2 crash the gdb locals caught).
+2. dictBytes2 was the TILING mass (M_1 x 4) - the pairs are the
+   DICTIONARY mass (each distinct phrase once; the repeats' 3,941 IDs
+   belong to the occurrence expansion). PAIRS_TOTAL died with numbers;
+   fixed to the exact dict mass.
+
+RESIDUAL RISK (journaled, not papered over): an unreproduced
+scheduling-sensitive crash from one 30-minute box window. The
+protection is the machine's own: byte-identity at every anchor - a
+corrupted induction CANNOT reproduce SHA 6325c843... at the sandbox
+or the certified containers at 1 GB / 3 GB, and the induced-SA
+permutation + seed belts die loud inside the run. If the ghost
+returns, the gates catch it with numbers.
