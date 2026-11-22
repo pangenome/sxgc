@@ -1,5 +1,5 @@
 //! Causal branch queries: immutable m20 plus an immediately readable append tail.
-use crate::ctx::{Builder, Trie};
+use crate::ctx::{Builder, OwnedMember};
 use std::io::{self, BufRead, Write};
 
 // 0..255 = known content, 256 = confirmed document END. An open EOF is neither.
@@ -8,14 +8,14 @@ trait BranchRead {
     fn branches(&self, p: &[u8]) -> Histogram;
 }
 struct Sealed {
-    member: Vec<u8>,
+    member: Option<OwnedMember>,
     open_suffix: Vec<u8>,
 }
 impl BranchRead for Sealed {
     fn branches(&self, p: &[u8]) -> Histogram {
         let mut h = [0; 257];
-        if !self.member.is_empty() {
-            let trie = Trie::load(&self.member);
+        if let Some(member) = &self.member {
+            let trie = member.view();
             if let Some(n) = trie.find(p) {
                 for c in trie.children(n) {
                     h[c.byte().map_or(256, usize::from)] = c.count;
@@ -46,7 +46,7 @@ impl Live {
             cut: 0,
             sealed_ends: 0,
             base: Sealed {
-                member: vec![],
+                member: None,
                 open_suffix: vec![],
             },
         }
@@ -84,7 +84,7 @@ impl Live {
             .unwrap_or(0)
             .max(t.len().saturating_sub(self.depth));
         self.base = Sealed {
-            member,
+            member: Some(OwnedMember::new(member)),
             open_suffix: t[start..].to_vec(),
         };
         self.cut = t.len();

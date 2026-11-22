@@ -984,7 +984,7 @@ pub struct Trie<'a> {
     // the first-edge absolute-offset prefix sums, built once at the first random
     // access; OnceLock (not OnceCell) because consult workers share one &Trie
     // across threads
-    starts: std::sync::OnceLock<Vec<u32>>,
+    starts: std::sync::Arc<std::sync::OnceLock<Vec<u32>>>,
     nedge: PackedView<'a>,
     ncount: PackedView<'a>,
     ecode: PackedView<'a>,
@@ -994,6 +994,21 @@ pub struct Trie<'a> {
     dtop: PackedView<'a>,
     dfirst: PackedView<'a>,
     dids: PackedView<'a>,
+}
+
+/// A generation owns both the encoded member and its derived edge directory.
+/// Views borrow the bytes, so replacing a generation cannot leave a stale view.
+pub struct OwnedMember {
+    bytes: Vec<u8>,
+    starts: std::sync::Arc<std::sync::OnceLock<Vec<u32>>>,
+}
+impl OwnedMember {
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self { bytes, starts: Default::default() }
+    }
+    pub fn view(&self) -> Trie<'_> {
+        Trie::load_with_starts(&self.bytes, self.starts.clone())
+    }
 }
 
 pub struct ChildView {
@@ -1024,6 +1039,10 @@ pub struct Stat {
 
 impl<'a> Trie<'a> {
     pub fn load(d: &'a [u8]) -> Self {
+        Self::load_with_starts(d, Default::default())
+    }
+
+    fn load_with_starts(d: &'a [u8], starts: std::sync::Arc<std::sync::OnceLock<Vec<u32>>>) -> Self {
         need(d.len() >= 8, "member shorter than its version field");
         let ver = get(&d[0..], 8);
         let hint = if ver == 1 { " (version 1 is the first-draft layout)" } else { "" };
@@ -1067,7 +1086,7 @@ impl<'a> Trie<'a> {
             boundary_aware: if ver >= 3 { get(&d[168..], 8) } else { 0 },
             root,
             offs,
-            starts: std::sync::OnceLock::new(),
+            starts,
             nedge: PackedView::new(&d[offs[1]..], nodes),
             ncount: PackedView::new(&d[offs[2]..], nodes),
             ecode: PackedView::new(&d[offs[3]..], edges),
