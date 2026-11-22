@@ -864,3 +864,50 @@ Pairs sorted 955,321,881; the sort pool wall hides under the emit
 held at every gate; the curve: the peak is the sort-ahead RADIUS
 (~33 bins in flight x per-bin set) + the product stream — independent
 of corpus size, unlike the W machine's O(N) columns.
+
+## AMENDMENT B4 OPERATOR'S CLAUSE — sandbox receipt (the strict 2xN ladder)
+
+The law: --scratch-budget-bytes = 2xN (200,001,006 B); the default in
+code is 2xN. The windowed distribute (buckets for ONE window at a
+time; the pairs are REGENERATED per window from the dictionary — a
+full-mass materialization is 8 B x pairs ~ 7.6xN at 100 GB: illegal),
+binPairTarget = (3/5 budget)/280 (the live lifecycle bytes), and the
+BYTE-LAW WINDOW drawn from the census's exact bin masses: the
+window's buckets + the sort-ahead's ROLLING 4-consecutive-bin chunk
+sum + the emitting bin's stream <= 3/5 budget. The first shape used
+5 x maxBinMass and cut 52 windows at a 2.2M-pair fat cell (the cell
+skew is data: a fat cell overshoots the target ~5x); the rolling-4
+form knows the sort-ahead holds NEIGHBORS: 33 windows.
+
+| arm | dial | bins/windows | run_s | peak live | pairs_live max | pieces | product sha |
+|-----|------|--------------|-------|-----------|----------------|--------|-------------|
+| 162 | 16 MB | 151/33 | 182.02 | 180.17 MB | 108.97 MB | 74.33 MB | 6325c843…f341 |
+| 5122 | 512 MB | 151/33 | — | 179.97 MB | ~109 MB | 74.33 MB | 6325c843…f341 |
+| wide2 | wide | 151/33 | 137.57 | 179.97 MB | ~109 MB | 74.33 MB | 6325c843…f341 |
+
+All three arms SS_DONE, byte-identical, under the strict law; the
+columns (268,232,594 B = distinct/parse-proportional) are named as
+the legal-sublinear class, excluded from the asserted total. The
+per-component breakdown rides every SS_SCRATCH gate (per bin) and
+SS_SCRATCH_PEAK.
+
+The honest costs at the sandbox: the 33 distribute passes cost 46.6 s
+(serial stalls per window; the pool wall 127-172 s with 0.9-19.8 s
+exposed chunk waits). At real scales the windows count is ~6-7
+(pairs ~ 0.96N over a 1.2N-byte allowance) — the passes cost ~6 dict
+reads, negligible against a 950 s wall. The small-dial arms are the
+worst case for the window count (tiny ABSOLUTE allowance vs the fat
+cell's fixed mass).
+
+G0: 10/10 PASS under declared 48xN budgets (the pathological
+fixtures hold their whole pairs mass in 1-4 cells — cells never
+split, A5; G0 runs no finish so the TRIE_TAP oracle band stream
+accumulates — both harness shapes journaled; the real arms run 2xN).
+
+The finish-hang class (operator reap, pid 325891): the c_162 arm's
+producer died at SCRATCH_LAW and its finish polled --poll-timeout 0
+for 22 min on a corpse stream. Harness guard added (the finish is
+killed when the producer exits nonzero); the deeper fix — the finish
+noticing a vanished/dead stream — belongs to the finish's owner
+(main-side, the same class as the known cold-start exit at >1400
+units).

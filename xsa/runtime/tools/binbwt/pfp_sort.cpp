@@ -4016,36 +4016,82 @@ int main(int argc, char** argv) {
         // emitting bin's merged stream (24 B/pair) ~= 280 B per
         // target pair. binPairTarget = 3/4 of the budget over that.
         // The shape is SCALE-INVARIANT: ~180 bins at every scale.
-        const u64 windowBins = 16;     // buckets live per window
         const u64 sortAheadBins = 4;  // the run-ahead depth
         const u64 binPairTarget = std::max<u64>(1024,
-            (scratchBudget / 4 * 3) / 280);
+            (scratchBudget / 5 * 3) / 280);
         u32 cellBin[65536];
         u32 pbk = 0;
+        std::vector<u64> binMassOf;
         {
             u64 run2 = 0; u32 bk = 0;
+            binMassOf.push_back(0);
             for (u32 cell = 0; cell < 65536; ++cell) {
                 run2 += histB[cell];
                 cellBin[cell] = bk;
-                if (run2 >= binPairTarget) { run2 = 0; ++bk; }
+                binMassOf[size_t(bk)] += histB[cell];
+                if (run2 >= binPairTarget) { run2 = 0; ++bk;
+                    binMassOf.push_back(0); }
             }
             ++bk;   // the bin count = crossings + 1 (a cell is never split)
             pbk = bk;
+            binMassOf.resize(size_t(pbk), 0);
             std::fprintf(stderr,
                 "SS_PAIR_CENSUS census_s=%.2f dict_bytes=%" PRIu64
                 " rule=exact_cell_mass;the_corpus_reads_at_the"
                 "_references\n", now_sec() - tc0, dictBytesTotal);
+        }
+        // THE BYTE-LAW WINDOWS: the buckets exist only for one
+        // window at a time; the window is drawn from the census's
+        // EXACT bin masses so that the window's buckets (8 B/pair)
+        // + the sort-ahead's chunks (the ROLLING SUM of the <= 4
+        // consecutive bins actually in flight x 24 B - not 4 x the
+        // max: the sort-ahead holds neighbors, and the census knows
+        // their exact masses) + the emitting bin's stream (max x 24)
+        // fit the pairs allowance. Cell skew is data: a fat cell
+        // overshoots the target and the window holds fewer bins.
+        const u64 pairsAllowance = scratchBudget / 5 * 3;
+        std::vector<u32> winStartOf;   // per bin: its window's first bin
+        u64 windowCount = 0;
+        {
+            u64 acc = 0, maxM = 0, roll4 = 0;
+            u64 h1 = 0, h2 = 0, h3 = 0;   // the rolling 4-bin history
+            u32 wFirst = 0;
+            for (u32 k = 0; k < pbk; ++k) {
+                const u64 m = binMassOf[size_t(k)];
+                if (k > wFirst
+                    && (acc + m * 8 + (roll4 + m) * 24
+                        + (m > maxM ? m : maxM) * 24)
+                           > pairsAllowance) {
+                    for (u32 q = wFirst; q < k; ++q)
+                        winStartOf.push_back(wFirst);
+                    wFirst = k; acc = 0; maxM = 0; roll4 = 0;
+                    h1 = h2 = h3 = 0; ++windowCount;
+                }
+                acc += m * 8;
+                roll4 = m + h1 + h2 + h3;
+                h3 = h2; h2 = h1; h1 = m;
+                if (m > maxM) maxM = m;
+            }
+            for (u32 q = wFirst; q < pbk; ++q)
+                winStartOf.push_back(wFirst);
+            ++windowCount;
+            std::fprintf(stderr,
+                "SS_PAIR_WINDOWS windows=%" PRIu64
+                " pairs_allowance=%" PRIu64 " max_bin_mass=%" PRIu64
+                " rule=census_exact_byte_law;fat_cells_shrink_the"
+                "_window\n",
+                windowCount, pairsAllowance,
+                *std::max_element(binMassOf.begin(), binMassOf.end()));
             std::fprintf(stderr,
                 "SS_PAIR_BINS target_per_bin=%" PRIu64
-                " bins=%u window_bins=%" PRIu64 " sort_ahead=%" PRIu64
-                " distribute_passes=%" PRIu64
+                " bins=%u windows=%" PRIu64 " sort_ahead=%" PRIu64
                 " scratch_budget=%" PRIu64
                 " rule=amendment_b_census_drawn_cell_ranges;cells"
                 "_never_split;never_first_byte;bin_order_is_key"
                 "_order;no_merge;the_census_draws_enough_bins_to"
                 "_fit_the_budget\n",
-                binPairTarget, pbk, windowBins, sortAheadBins,
-                (pbk + windowBins - 1) / windowBins, scratchBudget);
+                binPairTarget, pbk, windowCount, sortAheadBins,
+                scratchBudget);
         }
         // (c) THE WINDOWED DISTRIBUTE (the operator's clause): the
         //     buckets exist only for ONE window of bins at a time -
@@ -4728,25 +4774,25 @@ int main(int argc, char** argv) {
                 for (u32 binIdx = 0; binIdx < pbk; ++binIdx) {
                     if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
                     // THE WINDOWED DISTRIBUTE: the buckets for THIS
-                    // window exist only while its bins process (the
-                    // previous window's buckets are all consumed -
-                    // deleted at their merges)
-                    if (binIdx % windowBins == 0) {
-                        const u32 wLast = u32(std::min<u64>(
-                            pbk, u64(binIdx) + windowBins));
-                        distributeWindow(binIdx, wLast);
+                    // byte-law window exist only while its bins
+                    // process (the previous window's buckets are
+                    // all consumed - deleted at their merges)
+                    u32 wEnd = binIdx + 1;
+                    if (wEnd < pbk) {
+                        const u32 wIdx0 = winStartOf[size_t(binIdx)];
+                        while (wEnd < pbk
+                               && winStartOf[size_t(wEnd)] == wIdx0)
+                            ++wEnd;
                     }
+                    if (winStartOf[size_t(binIdx)] == binIdx)
+                        distributeWindow(binIdx, wEnd);
                     // the submit-ahead: bounded by the sort-ahead
                     // depth AND the window's end (buckets beyond the
                     // window do not exist yet)
-                    {
-                        const u32 wEnd = u32(std::min<u64>(pbk,
-                            (u64(binIdx) / windowBins + 1) * windowBins));
-                        while (nextSubmit < wEnd &&
-                               nextSubmit <= u32(binIdx) + sortAheadBins) {
-                            submitBin(nextSubmit);
-                            ++nextSubmit;
-                        }
+                    while (nextSubmit < wEnd &&
+                           nextSubmit <= u32(binIdx) + sortAheadBins) {
+                        submitBin(nextSubmit);
+                        ++nextSubmit;
                     }
                     BinSub su;
                     {
