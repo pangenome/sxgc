@@ -1033,6 +1033,10 @@ Receipt: `TAPEREADER/sandbox/br_wide_terminal_1795382126`, wide/24 threads. Prod
 
 `bins-g0/R_mixed_induced_1795382897`: forced ceiling 100000. The induced 174672-row SA column and the fixture SA bands matched the banked single-level `RUST_mixed_w2` files by `cmp`. `sandbox/br_wide_induced_1795382897`: ceiling 2000000; 3053175 parse rows → 188249 upper parse rows → 3053175 induced rows. Both producer and finish rc=0, producer 220.56 s. All 107519008 bytes compared equal to `sandbox/b_162/product.sxi2` (nine members, `6325c843c0d9aa9be00d69260aafdd794936e2e79f16174efb00c43db831f341`). Counted scratch peak 116712352 bytes; not total disk usage. This is the **recursive wide-arm identity gate**, not a memory-dial or larger-input certification.
 
+### Second recursive arm: measured 512 MB producer dial
+
+`sandbox/br_measured_recursive_512000000_1795383182630600890/resources.json` (Linux, `python3 gates/measure_recursive_arm.py --dial 512000000`). Same forced ceiling, full container SHA matched; producer/finish rc=0. Producer 205.50 s, measured wall 207.20 s. Producer sampled anon peak 323817472 B <= 512000000 B; VmHWM 698589184 B including file-backed mappings. Finish sampled anon peak 118132736 B. Counted scratch peak 116712352 B <= 200000000 B; whole arm directory sampled peak 463273984 B allocated, including columns, output and other files. Memory samples target 50 ms and directory scans 1 s; these are observations, not a continuous hard limit. This closes the 100 MB two-dial recursive identity comparison, not a 16 MB fit claim.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX
