@@ -524,6 +524,16 @@ static void beat(int where) {
 static u64 g_parse_phrases = 64;               // XSA_PARSE_PHRASES (round 1 budget)
 static u64 g_parse_rounds = 4;                 // XSA_PARSE_ROUNDS (widening rounds)
 static u64 g_pfp_k = 8;                        // XSA_PFP_K (trigger k-mer)
+// ---- AMENDMENT L (THE LEVELS): levels are data, not modes. The
+// census arithmetic decides BY NUMBER: M <= the ceiling -> the 32-bit
+// kernel; M > the ceiling AND the next level condenses -> ONE MORE
+// PARSE LEVEL + the induction upward; no condensation -> libsais64
+// (the residual). XSA_SA_CEILING is the TEST DIAL for the ceiling
+// (the default is the law's 2^31-1): the exercise arms lower it and
+// the census takes the level path - the product must not change.
+static u64 g_sa_ceiling = 2147483647ull;      // XSA_SA_CEILING
+static u64 g_level_k = 2;                     // XSA_LEVEL_K (the ID k-mer, in IDs)
+static u64 g_level_w = 8;                     // XSA_LEVEL_W (the before-window)
 static u64 g_pfp_w = 8;                        // XSA_PFP_W (trigger window)
 static std::atomic<u64> g_ac_reports{0};
 static std::atomic<u64> PARSE_CLASSES{0}, PARSE_ROWS{0}, PARSE_PHRASES{0},
@@ -2532,6 +2542,9 @@ int main(int argc, char** argv) {
         envU("XSA_PARSE_ROUNDS", g_parse_rounds);
         envU("XSA_PFP_K", g_pfp_k);
         envU("XSA_PFP_W", g_pfp_w);
+        envU("XSA_SA_CEILING", g_sa_ceiling);
+        envU("XSA_LEVEL_K", g_level_k);
+        envU("XSA_LEVEL_W", g_level_w);
         envU("XSA_EXPAND_DELTA_START", g_expand_delta_start);
         envU("XSA_EXPAND_DELTA_CAP", g_expand_delta_cap);
         envU("XSA_READHEAD_GAP_MERGE", g_readhead_gap_merge);
@@ -3448,6 +3461,24 @@ int main(int argc, char** argv) {
             ColMap m2; m2.mapRW(modebDir + "/parse_rank.bin", M, 4);
             parseRank = m2.as<u32>();
         }
+        // ---- AMENDMENT L: THE LEVEL HOLDERS. When the census takes
+        // the level path (M > the ceiling), the level-1 SA comes from
+        // THE SAME pairs+emit machinery run one level down (its text
+        // = the level-1 ID sequence stored BIG-ENDIAN so the byte
+        // machinery's memcmp IS the ID-lexicographic order); the
+        // level-2 parse + dictionary + SA feed it.
+        struct LevelCtx {
+            u32 plan = 1;        // the number of unit runs (1 or 2)
+            const u8* beText = nullptr;    // the BE copy of PA
+            u64 beBytes = 0;
+            u32* pa2 = nullptr; u64 m2 = 0;
+            u64* dictRef2 = nullptr; u32* dictLen2 = nullptr;
+            u64 dictN2 = 0, dictBytes2 = 0;
+            u64* pstart2 = nullptr;
+            u32* parseSA2 = nullptr;
+            u64 prefixRel2 = 0;
+            std::string l2dir, bePath, sa2Path;
+        } LV;
         u64 slideFires = 0, parseIntSteps = 0;
         // THE AMBIGUITY ORACLE: a segment tree over the adjacent
         // dictionary lcps - ambiguous(lo,hi) IFF min(dictLcpNext[lo..hi))
@@ -3590,7 +3621,314 @@ int main(int argc, char** argv) {
             //      classes; the 1 GB corpus-end residual) the
             //      certified comparator path runs - a measured
             //      parse property decides, like the modality slide.
-            if (prefixRelations == 0) {
+            // ---- AMENDMENT L: THE CENSUS ARITHMETIC (by number,
+            //      never a mode): M <= the ceiling -> the 32-bit
+            //      kernel; M > the ceiling AND the next level
+            //      condenses -> ONE MORE PARSE LEVEL + the induction
+            //      upward; no condensation -> libsais64 (the
+            //      residual).
+            const bool needLevels = (M > g_sa_ceiling);
+            if (needLevels) {
+                // ================= THE LEVEL PATH =================
+                LV.plan = 2;
+                LV.l2dir = modebDir + "/L2";
+                if (::mkdir(LV.l2dir.c_str(), 0777) != 0 && errno != EEXIST)
+                    die("mkdir " + LV.l2dir);
+                LV.bePath = modebDir + "/pa_be.bin";
+                LV.sa2Path = LV.l2dir + "/parse_sa2.bin";
+                // (1) THE BIG-ENDIAN COPY of the level-1 ID sequence:
+                //     the byte machinery's memcmp over it IS the
+                //     ID-lexicographic order - the whole pairs+emit
+                //     block runs one level down UNCHANGED
+                {
+                    const double tbe0 = now_sec();
+                    ColWriter w;
+                    w.open(LV.bePath);
+                    for (u64 i = 0; i < M; ++i) {
+                        if ((i & 0xfffff) == 0 &&
+                            ::access(stopFlag.c_str(), F_OK) == 0)
+                            ::_exit(75);
+                        const u32 v = PA[size_t(i)];
+                        const u32 be = u32(__builtin_bswap32(v));
+                        w.put(be);
+                    }
+                    w.close();
+                    LV.beBytes = M * 4;
+                    std::fprintf(stderr,
+                        "SS_LEVEL_BE bytes=%" PRIu64 " be_s=%.2f"
+                        " rule=big_endian_id_column;memcmp_is_id_order\n",
+                        LV.beBytes, now_sec() - tbe0);
+                }
+                ColMap beM;
+                beM.mapRO(LV.bePath, M, 4);
+                LV.beText = beM.as<u8>();
+                // (2) THE LEVEL-2 PARSE: the one-sided trigger over
+                //     the ID alphabet (uniformly - the same rule:
+                //     a k-mer is a trigger iff STRICTLY smaller than
+                //     the w k-mers preceding it, suppressed for the
+                //     first w positions of a phrase; phrases end
+                //     with their trigger; the prefix-freeness proof
+                //     carries verbatim). The phrasebook is
+                //     REFERENCES ONLY: (firstocc, len) into the
+                //     level-1 sequence - the no-expansion law.
+                const u64 K2 = g_level_k, W2 = g_level_w;
+                u64 m2 = 0;
+                std::vector<u64> fo2; std::vector<u32> ln2;
+                std::unordered_map<u64, u32> dictOf;
+                std::vector<u32> pa2v;
+                {
+                    const double tp0 = now_sec();
+                    u64 phraseStart = 0;
+                    auto firePhrase = [&](u64 end) {
+                        const u32 len = u32(end - phraseStart + 1);
+                        u64 hh = 1469598103934665603ull;
+                        for (u64 b = phraseStart; b <= end; ++b) {
+                            hh ^= u64(PA[size_t(b)]) << ((b & 3) * 8);
+                            hh *= 1099511628211ull;
+                        }
+                        u32 id;
+                        auto it = dictOf.find(hh);
+                        if (it != dictOf.end()) {
+                            id = it->second;
+                            if (ln2[size_t(id)] != len)
+                                die("LEVEL2_HASH: phrase " +
+                                    std::to_string(id) + " hash collision"
+                                      " (length) - the parse is broken");
+                            const u64 a = fo2[size_t(id)];
+                            for (u64 q = 0; q < len; ++q)
+                                if (PA[size_t(a + q)]
+                                    != PA[size_t(phraseStart + q)])
+                                    die("LEVEL2_HASH: phrase " +
+                                        std::to_string(id)
+                                        + " hash collision (content)"
+                                          " - the parse is broken");
+                        } else {
+                            id = u32(fo2.size());
+                            dictOf.emplace(hh, id);
+                            fo2.push_back(phraseStart);
+                            ln2.push_back(len);
+                        }
+                        pa2v.push_back(id);
+                        phraseStart = end + 1;
+                    };
+                    auto keyAt = [&](u64 q) -> u64 {
+                        return (u64(PA[size_t(q)]) << 32)
+                               | PA[size_t(q + 1)];
+                    };
+                    for (u64 s = 0; s + K2 <= M; ++s) {
+                        if (s >= phraseStart + W2) {
+                            const u64 key = keyAt(s);
+                            bool trig = true;
+                            const u64 back = std::min(W2,
+                                s - phraseStart);
+                            for (u64 j = 1; j <= back; ++j)
+                                if (!(key < keyAt(s - j))) {
+                                    trig = false; break;
+                                }
+                            if (trig) firePhrase(s + K2 - 1);
+                        }
+                        if ((s & 0xfffff) == 0 &&
+                            ::access(stopFlag.c_str(), F_OK) == 0)
+                            ::_exit(75);
+                    }
+                    if (phraseStart < M) firePhrase(M - 1);  // the tail
+                    m2 = pa2v.size();
+                    std::fprintf(stderr,
+                        "SS_LEVEL2_PARSE m1=%" PRIu64 " m2=%" PRIu64
+                        " condensation=%.2fx distinct2=%zu"
+                        " k=%" PRIu64 " w=%" PRIu64 " parse2_s=%.2f"
+                        " rule=the_one_sided_trigger_over_the_id"
+                        "_alphabet;references_only_no_expansion\n",
+                        M, m2, M ? double(M) / double(std::max<u64>(1, m2))
+                                : 0.0,
+                        fo2.size(), K2, W2, now_sec() - tp0);
+                }
+                // (3) THE LEVEL-2 DICTIONARY SORT: the IDs must be
+                //     assigned in ID-SEQUENCE lexicographic order
+                //     (the ID-ORDER LAW - the level-2 SA is then the
+                //     aligned order). Distinct phrases -> a total
+                //     order; prefix-related phrases sort
+                //     shorter-first (detected + journaled).
+                {
+                    const double tds0 = now_sec();
+                    const u64 d2 = fo2.size();
+                    std::vector<u32> order;
+                    order.resize(size_t(d2));
+                    for (u64 i = 0; i < d2; ++i) order[size_t(i)] = u32(i);
+                    auto phraseCmp = [&](u32 a, u32 b) -> bool {
+                        const u64 pa = fo2[size_t(a)],
+                                      pb = fo2[size_t(b)];
+                        const u32 la = ln2[size_t(a)],
+                                 lb = ln2[size_t(b)];
+                        const u64 c = std::min(la, lb);
+                        for (u64 q = 0; q < c; ++q) {
+                            const u32 va = PA[size_t(pa + q)],
+                                      vb = PA[size_t(pb + q)];
+                            if (va != vb) return va < vb;
+                        }
+                        return la < lb;
+                    };
+                    ips4o::sort(order.begin(), order.end(),
+                                phraseCmp);
+                    std::vector<u32> newId; newId.resize(size_t(d2));
+                    std::vector<u64> foN; foN.resize(size_t(d2));
+                    std::vector<u32> lnN; lnN.resize(size_t(d2));
+                    u64 rel2 = 0;
+                    for (u64 r = 0; r < d2; ++r) {
+                        const u32 old = order[size_t(r)];
+                        newId[size_t(old)] = u32(r);
+                        foN[size_t(r)] = fo2[size_t(old)];
+                        lnN[size_t(r)] = ln2[size_t(old)];
+                        if (r + 1 < d2) {
+                            const u32 o2 = order[size_t(r + 1)];
+                            const u64 c = std::min(ln2[size_t(old)],
+                                                  ln2[size_t(o2)]);
+                            u64 q = 0;
+                            while (q < c
+                                   && PA[size_t(fo2[size_t(old)] + q)]
+                                      == PA[size_t(fo2[size_t(o2)] + q)])
+                                ++q;
+                            if (q == c) ++rel2;
+                        }
+                    }
+                    for (auto& id2 : pa2v) id2 = newId[size_t(id2)];
+                    fo2.swap(foN); ln2.swap(lnN);
+                    LV.prefixRel2 = rel2;
+                    std::fprintf(stderr,
+                        "SS_LEVEL2_DICT distinct=%" PRIu64
+                        " prefix_relations=%" PRIu64
+                        " dictsort_s=%.2f rule=id_order_law"
+                        ";prefix_sorts_first\n",
+                        d2, rel2, now_sec() - tds0);
+                }
+                // (4) THE LEVEL-2 COLUMNS: the dict as BE-byte
+                //     references, the parse, the per-row starts
+                {
+                    const u64 d2 = fo2.size();
+                    ColMap c1;
+                    c1.mapRW(LV.l2dir + "/dict_ref2.bin", d2, 8);
+                    LV.dictRef2 = c1.as<u64>();
+                    for (u64 v = 0; v < d2; ++v)
+                        LV.dictRef2[size_t(v)] = fo2[size_t(v)] * 4;
+                    ColMap c2;
+                    c2.mapRW(LV.l2dir + "/dict_len2.bin", d2, 4);
+                    LV.dictLen2 = c2.as<u32>();
+                    for (u64 v = 0; v < d2; ++v)
+                        LV.dictLen2[size_t(v)] = ln2[size_t(v)] * 4;
+                    ColMap c3;
+                    c3.mapRW(LV.l2dir + "/pa2.bin", m2, 4);
+                    LV.pa2 = c3.as<u32>();
+                    for (u64 j = 0; j < m2; ++j)
+                        LV.pa2[size_t(j)] = pa2v[size_t(j)];
+                    ColMap c4;
+                    c4.mapRW(LV.l2dir + "/pstart2.bin", m2, 8);
+                    LV.pstart2 = c4.as<u64>();
+                    for (u64 j = 0; j < m2; ++j)
+                        LV.pstart2[size_t(j)] =
+                            fo2[size_t(pa2v[size_t(j)])] * 4;
+                    LV.m2 = m2;
+                    LV.dictN2 = d2;
+                    LV.dictBytes2 = M * 4;
+                    std::vector<u64>().swap(fo2);
+                    std::vector<u32>().swap(ln2);
+                    std::vector<u32>().swap(pa2v);
+                }
+                // (5) THE LEVEL-2 SA: the deepest level's kernel
+                //     (the 32-bit libsais - M_2 condenses from M_1;
+                //     the census arithmetic checked it above).
+                //     Under a prefix-relation class the certified
+                //     direct-walk comparator runs (the ground truth
+                //     is the level-1 sequence itself - the same
+                //     circle-break as level 0's byte slide).
+                {
+                    const double tsa0 = now_sec();
+                    ColMap c5;
+                    c5.mapRW(LV.sa2Path, m2, 4);
+                    LV.parseSA2 = c5.as<u32>();
+                    if (m2 > g_sa_ceiling)
+                        die("LEVEL2_CEILING: m2=" + std::to_string(m2)
+                            + " still exceeds the ceiling "
+                            + std::to_string(g_sa_ceiling)
+                            + " - the census demands a THIRD level or"
+                              " the libsais64 residual; both are"
+                              " separate receipts, never a silent"
+                              " fallback");
+                    if (LV.prefixRel2 == 0) {
+                        ColMap ti;
+                        ti.mapRW(LV.l2dir + "/pa2_int32.bin", m2, 4);
+                        int32_t* Ti = ti.as<int32_t>();
+                        for (u64 i = 0; i < m2; ++i)
+                            Ti[size_t(i)] = int32_t(LV.pa2[size_t(i)]);
+                        const int32_t lrc = libsais_int_omp(
+                            Ti, (int32_t*)LV.parseSA2, int32_t(m2),
+                            int32_t(std::min<u64>(LV.dictN2,
+                                        2147483647ull)),
+                            0, int32_t(threads));
+                        if (lrc != 0)
+                            die("LIBSAIS_INT_L2 rc="
+                                + std::to_string(lrc));
+                        ti.unmap();
+                        ::remove((LV.l2dir + "/pa2_int32.bin").c_str());
+                    } else {
+                        for (u64 i = 0; i < m2; ++i)
+                            LV.parseSA2[size_t(i)] = u32(i);
+                        const auto sufCmp2 = [&](u32 x, u32 y) -> bool {
+                            u64 a = LV.pstart2[size_t(x)] >> 2,
+                                b = LV.pstart2[size_t(y)] >> 2;
+                            for (;;) {
+                                if (a >= M) return b < M;
+                                if (b >= M) return false;
+                                const u32 va = PA[size_t(a)],
+                                          vb = PA[size_t(b)];
+                                if (va != vb) return va < vb;
+                                ++a; ++b;
+                            }
+                        };
+                        std::sort(LV.parseSA2, LV.parseSA2 + size_t(m2),
+                                  sufCmp2);
+                        std::fprintf(stderr,
+                            "SS_LEVEL2_SA_FALLBACK rows=%" PRIu64
+                            " prefix_relations=%" PRIu64
+                            " rule=certified_direct_walk_over_the"
+                            "_level1_sequence\n",
+                            m2, LV.prefixRel2);
+                    }
+                    // the permutation belt
+                    {
+                        const u64 words = (m2 + 63) / 64;
+                        std::vector<u64> Bm(size_t(words), 0);
+                        for (u64 i = 0; i < m2; ++i) {
+                            const u64 v = LV.parseSA2[size_t(i)];
+                            if (v >= m2)
+                                die("LIBSAIS_L2_RANGE: row "
+                                    + std::to_string(v));
+                            if ((Bm[size_t(v >> 6)] >> (v & 63)) & 1)
+                                die("LIBSAIS_L2_PERM: row "
+                                    + std::to_string(v)
+                                    + " twice");
+                            Bm[size_t(v >> 6)] |= 1ull << (v & 63);
+                        }
+                    }
+                    std::fprintf(stderr,
+                        "SS_LEVEL2_SA rows=%" PRIu64 " kernel=%s"
+                        " sa2_s=%.2f rule=the_deepest_level_kernel"
+                        ";the_census_arithmetic\n",
+                        m2, LV.prefixRel2 == 0 ? "libsais_int_omp"
+                                               : "direct_walk",
+                        now_sec() - tsa0);
+                }
+                // (6) THE INDUCED parseSA_1 comes from THE SAME
+                //     pairs+emit machinery one level down (the unit
+                //     loop below runs level 1 first); parseRank_1
+                //     is computed at the level-0 unit's head. The
+                //     parse_sa.bin column (level 1) is the SINK.
+                std::fprintf(stderr,
+                    "SS_LEVELS plan=2 m1=%" PRIu64 " m2=%" PRIu64
+                    " ceiling=%" PRIu64
+                    " rule=amendment_l_levels_are_data;the_induction"
+                    "_upward_through_the_phrasebook_chain\n",
+                    M, LV.m2, g_sa_ceiling);
+            } else if (prefixRelations == 0) {
                 // the writable int32 copy of PA (libsais modifies T)
                 ColMap ti;
                 ti.mapRW(modebDir + "/pa_int32.bin", M, 4);
@@ -3705,6 +4043,9 @@ int main(int argc, char** argv) {
                 prefixRelations == 0 ? "libsais_int_omp"
                                     : "comparator_shards",
                 prefixRelations);
+            // AMENDMENT L: under the level path the belts run at
+            // the level-0 unit setup (parseSA_1 is induced there)
+            if (!needLevels) {
             // THE FULL BRUTE VERIFY (mini scale, env-guarded): the sort
             // can order two rows transitively without ever comparing
             // them directly - a victim pair proves nothing about the
@@ -3806,11 +4147,104 @@ int main(int argc, char** argv) {
                             " comparator bug");
                     }
             }
+            }   // !needLevels
         }
 
         // the ambiguity oracle's lifetime ended with the parse sort
         // (the emit's induced comparator never consults it)
         bswap_release(ambTree);
+
+        // =============================================================
+        // AMENDMENT L: THE UNIT LOOP. The induction unit [the
+        // parse-LCP (Kasai) + the W5 bounds + the occurrence lists +
+        // the pairs/emit block] runs ONCE PER LEVEL, deepest first.
+        // Level 1's unit consumes the level-2 structures + the
+        // BIG-ENDIAN ID text; its sink is the level-1 SA column
+        // (parse_sa.bin). Level 0's unit consumes the level-1
+        // structures and its sink is the product stream. THE SAME
+        // CODE PATH - levels are data.
+        // =============================================================
+        const u8* const corpusT_ = T;
+        const u32* const PA0_ = PA;
+        const u64* const PStart0_ = PStart_;
+        const u64* const dictRefPos0_ = dictRefPos;
+        const u32* const dictLen0_ = dictLen;
+        const u64 dictN0_ = dictN, dictBytesTotal0_ = dictBytesTotal;
+        const std::string modebDir0_ = modebDir;
+        const std::string bandsDir0_ = bandsDir;
+        u32* const parseSA0_ = parseSA;
+        u64 saSinkN = 0;
+        for (int curLevel = int(LV.plan) - 1; curLevel >= 0;
+             --curLevel) {
+        const bool isTop = (curLevel == 0);
+        // ---- THE LEVEL BINDINGS (shadowed; the unit's text/parse
+        //      columns swap wholesale - the big-endian ID column
+        //      makes the byte machinery the ID machinery)
+        const u8* T = isTop ? corpusT_ : LV.beText;
+        const u64 N = isTop ? u64(::N) : (M + 1);
+        const u64 FILE_N = isTop ? u64(::FILE_N) : (M * 4);
+        const u32* PA = isTop ? PA0_ : LV.pa2;
+        const u64 M = isTop ? M0 : LV.m2;
+        u32* parseSA = isTop ? parseSA0_ : LV.parseSA2;
+        const u64* PStart_ = isTop ? PStart0_ : LV.pstart2;
+        const u64* dictRefPos = isTop ? dictRefPos0_ : LV.dictRef2;
+        const u32* dictLen = isTop ? dictLen0_ : LV.dictLen2;
+        const u64 dictN = isTop ? dictN0_ : LV.dictN2;
+        const u64 dictBytesTotal = isTop ? dictBytesTotal0_
+                                         : LV.dictBytes2;
+        const std::string modebDir = isTop ? modebDir0_ : LV.l2dir;
+        const std::string bandsDir = isTop ? bandsDir0_ : LV.l2dir;
+        // THE ELEMENT STRIDE: level 0's text is bytes (stride 1);
+        // level 1's text is the BIG-ENDIAN ID column - the pairs
+        // enumerate ID-ALIGNED byte offsets (stride 4), so the
+        // slices are whole IDs and the pairs mass is the ID count.
+        // The slices remain byte-compared - memcmp over the BE
+        // column IS the ID-lexicographic order.
+        const u32 oStride = isTop ? 1u : 4u;
+        {
+            // THE PARSE RANK (the inverse SA - one scatter per level)
+            ColMap m2; m2.mapRW(modebDir + "/parse_rank.bin", M, 4);
+            parseRank = m2.as<u32>();
+            for (u64 i = 0; i < M; ++i) {
+                const u64 v = parseSA[size_t(i)];
+                if (v >= M)
+                    die("PARSE_SA_RANGE: row " + std::to_string(v)
+                        + " at rank " + std::to_string(i)
+                        + " exceeds M=" + std::to_string(M));
+                parseRank[size_t(v)] = u32(i);
+            }
+            std::fprintf(stderr,
+                "SS_LEVEL_ENTER level=%d text_bytes=%" PRIu64
+                " rows=%" PRIu64 " parse_rows=%" PRIu64
+                " dict_phrases=%" PRIu64
+                " rule=levels_are_data;the_same_code_path\n",
+                curLevel, FILE_N, N, M, dictN);
+        }
+        if (isTop && LV.plan == 2) {
+            // ---- THE INDUCED-SA BELT: parseSA_1 came from the
+            //      level-1 unit's sink; the brute byte order over
+            //      the corpus must agree on the seed sample (the
+            //      same law as the parse-sort belt, one level up)
+            const double tib0 = now_sec();
+            const u64 step = std::max<u64>(1, M0 / 4096);
+            for (u64 i = step; i < M0; i += step)
+                if (suf_cmp_from(
+                        PStart0_[size_t(parseSA0_[size_t(i - step)])],
+                        PStart0_[size_t(parseSA0_[size_t(i)])], 0)
+                    >= 0)
+                    die("INDUCED_SA_ORDER: the seeds ["
+                        + std::to_string(i - step) + ","
+                        + std::to_string(i)
+                        + ") disagree with the brute byte order -"
+                          " the level-1 induction is broken (rows "
+                        + std::to_string(parseSA0_[size_t(i - step)])
+                        + "," + std::to_string(parseSA0_[size_t(i)])
+                        + ")");
+            std::fprintf(stderr,
+                "SS_LEVEL0_BELT seeds=%" PRIu64 " belt_s=%.2f"
+                " rule=the_induced_sa_agrees_with_the_brute\n",
+                M0 / step, now_sec() - tib0);
+        }
 
         // ---- AMENDMENT W5: THE PARSE-LCP ARRAY (Kasai over the
         //      parse-SA) + the min segment tree. The aligned suffixes'
@@ -3991,7 +4425,7 @@ int main(int argc, char** argv) {
                     ::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
                 const u64 p0 = dictRefPos[size_t(v)];
                 const u32 len = dictLen[size_t(v)];
-                for (u32 o = 0; o < len; ++o) {
+                for (u32 o = 0; o < len; o += oStride) {
                     const u32 b1 = (o + 1 < len)
                         ? u32(T[size_t(p0 + o + 1)]) : 0u;
                     ++histB[(u32(T[size_t(p0 + o)]) << 8) | b1];
@@ -4018,7 +4452,7 @@ int main(int argc, char** argv) {
         // The shape is SCALE-INVARIANT: ~180 bins at every scale.
         const u64 sortAheadBins = 4;  // the run-ahead depth
         const u64 binPairTarget = std::max<u64>(1024,
-            (scratchBudget / 5 * 3) / 280);
+            (scratchBudget / 5 * 2) / 280);
         u32 cellBin[65536];
         u32 pbk = 0;
         std::vector<u64> binMassOf;
@@ -4049,7 +4483,12 @@ int main(int argc, char** argv) {
         // their exact masses) + the emitting bin's stream (max x 24)
         // fit the pairs allowance. Cell skew is data: a fat cell
         // overshoots the target and the window holds fewer bins.
-        const u64 pairsAllowance = scratchBudget / 5 * 3;
+        // THE ALLOWANCE SPLIT (the rung-2 receipt): the product
+        // streams (the pieces + the LCP bands) ride the SAME budget
+        // concurrently - the finish consumes them as made, but its
+        // backlog is real. The pairs machinery takes 2/5, leaving
+        // 3/5 for the product streams + slack.
+        const u64 pairsAllowance = scratchBudget / 5 * 2;
         std::vector<u32> winStartOf;   // per bin: its window's first bin
         u64 windowCount = 0;
         {
@@ -4131,7 +4570,7 @@ int main(int argc, char** argv) {
             };
             for (u64 v = 0; v < dictN; ++v) {
                 const u32 len = dictLen[size_t(v)];
-                for (u32 o = 0; o < len; ++o) {
+                for (u32 o = 0; o < len; o += oStride) {
                     tbuf.push_back(ER{u32(v), o});
                     if (tbuf.size() >= (1u << 16)) flushCells();
                 }
@@ -4159,8 +4598,8 @@ int main(int argc, char** argv) {
                 " rule=windowed_regenerate;never_all_materialized\n",
                 wFirst, wLast - 1, now_sec() - td0, wrote, distPasses);
         };
-        const u64 pairsN = dictBytesTotal;
-        u64 dictStaticPairs = pairsN;
+        const u64 pairsN = dictBytesTotal / oStride;
+        u64 dictStaticPairs = dictBytesTotal;
         u64 nRuns = 0;      // the global group counter (receipts)
 
         // (d) THE SORT-AHEAD POOL (the W machinery, binned): workers
@@ -5016,7 +5455,8 @@ int main(int argc, char** argv) {
                             if (lg + 1 >= binGEnd && binIdx + 1 < pbk) {
                                 const u64 p0 =
                                     dictRefPos[size_t(c.P)];
-                                if (c.o + 1 >= dictLen[size_t(c.P)]) {
+                                if (c.o + oStride
+                                    >= dictLen[size_t(c.P)]) {
                                     const u32 c0 =
                                         u32(T[size_t(p0 + c.o)]);
                                     const u32 tcell = (c0 << 8)
@@ -5210,7 +5650,7 @@ int main(int argc, char** argv) {
                                         bool binCross = false;
                                         if (lg + 1 >= binGEnd &&
                                             binIdx + 1 < pbk &&
-                                            pe.o + 1 >=
+                                            pe.o + oStride >=
                                                 dictLen[size_t(pe.P)]) {
                                             const u32 c0 = u32(T[size_t(
                                                 dictRefPos[size_t(pe.P)]
@@ -5654,6 +6094,7 @@ int main(int argc, char** argv) {
                             beat(1);
                             u64 rows = pendingHead ? 1 : 0;
                             rows += spanRows;
+                            bool headInUnit = false;
                             Unit U; U.bin = 0;
                             U.Pout.resize(rows); U.lcpv.assign(rows, 0);
                             u64 w = 0;
@@ -5661,6 +6102,7 @@ int main(int argc, char** argv) {
                             if (pendingHead) {
                                 U.Pout[0] = headPacked; U.lcpv[0] = 0;
                                 pendingHead = false; w = 1;
+                                headInUnit = true;
                                 prevPos = FILE_N;   // the END row first
                             }
                             for (u64 t = 0; t < T1; ++t) {
@@ -5695,7 +6137,21 @@ int main(int argc, char** argv) {
                                 PRIu64 " window=%zu rule=the_concat_walk"
                                 ";no_sorting\n",
                                 nextUnitId, rows, wIdx);
-                            emitUnit(U, nextUnitId++);
+                            if (isTop) {
+                                emitUnit(U, nextUnitId++);
+                            } else {
+                                // AMENDMENT L: THE SA-COLUMN SINK -
+                                // the level-1 SA (the body rows in
+                                // suffix order; the head is the
+                                // virtual END, not a position)
+                                const u64 from = headInUnit ? 1 : 0;
+                                for (u64 i2 = from; i2 < rows; ++i2) {
+                                    const u64 pos =
+                                        unpack_pos(U.Pout[size_t(i2)]);
+                                    parseSA0_[size_t(saSinkN++)] =
+                                        u32(pos >> 2);
+                                }
+                            }
                             NB = nextUnitId;
                             prevEmittedPos = lastPos;
                             assembledTotal += rows;
@@ -5813,6 +6269,36 @@ int main(int argc, char** argv) {
                     "_parse\n",
                     M, M, M, dictStaticPairs);
             }
+            if (!isTop) {
+                // ---- THE LEVEL-1 SINK CHECKS: the column must be a
+                //      permutation of 0..M0-1 (the induced SA of the
+                //      level-1 ID sequence - what libsais would have
+                //      produced had M fit the ceiling)
+                if (saSinkN != M0)
+                    die("LEVEL1_SINK_COUNT: the induction emitted "
+                        + std::to_string(saSinkN)
+                        + " rows against the level-1 M="
+                        + std::to_string(M0));
+                {
+                    const u64 words = (M0 + 63) / 64;
+                    std::vector<u64> Bm(size_t(words), 0);
+                    for (u64 i = 0; i < M0; ++i) {
+                        const u64 v = parseSA0_[size_t(i)];
+                        if (v >= M0)
+                            die("LEVEL1_SINK_RANGE: row "
+                                + std::to_string(v));
+                        if ((Bm[size_t(v >> 6)] >> (v & 63)) & 1)
+                            die("LEVEL1_SINK_PERM: row "
+                                + std::to_string(v) + " twice");
+                        Bm[size_t(v >> 6)] |= 1ull << (v & 63);
+                    }
+                }
+                std::fprintf(stderr,
+                    "SS_LEVEL_EXIT level=%d sa_rows=%" PRIu64
+                    " rule=the_induced_sa_column_permutation\n",
+                    curLevel, saSinkN);
+            }
+        }   // the unit loop (AMENDMENT L)
 
     // ---- POST-RUN LIVE == 0 (the memory law): the per-band BAND_LIVE
     // asserts already proved every plane freed at every commit boundary;
@@ -5934,7 +6420,7 @@ int main(int argc, char** argv) {
         // THE PAIRS SPILL ROUND TRIP (the sort-ahead pool): the bucket
         // read + the sorted-chunk read are one extra full pass over
         // the pair entries (24 B each) beyond the old in-RAM band sort
-        const u64 pairsSpill = dictStaticPairs * 24;
+        const u64 pairsSpill = dictBytesTotal * 24;
         // AMENDMENT W5: the parse-LCP column + its min tree (24 B per
         // parse row) fault in once, and the Kasai + the bounded slice
         // compares are counted as text walks (the 2x term covers them)
