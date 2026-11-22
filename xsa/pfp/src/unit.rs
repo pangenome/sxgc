@@ -115,7 +115,7 @@ impl PieceCutter {
         let mut b: Vec<u8> = Vec::new();
         b.extend_from_slice(b"BPS1");
         b.extend_from_slice(&n.to_le_bytes());
-        b.extend_from_slice(&pc.width.to_le_bytes());
+        b.extend_from_slice(&(pc.width as u64).to_le_bytes());
         b.extend_from_slice(&1u64.to_le_bytes());
         b.extend_from_slice(&pc.window.to_le_bytes());
         let tmp = format!("{}/start.tmp", pc.dir);
