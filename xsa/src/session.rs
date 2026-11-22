@@ -131,6 +131,30 @@ fn unhex(s: &str) -> Result<Vec<u8>, String> {
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| "invalid hex".into()))
         .collect()
 }
+// Worker owns a consistent copy of the prefix and END events at submission.
+// Publication moves only the derived base and its two watermarks; appends and
+// END events on the serving thread are never replaced by an older snapshot.
+struct Pending(std::thread::JoinHandle<(Sealed, usize, usize)>);
+impl Pending {
+    fn start(s: &Live) -> Self {
+        let mut snapshot = Live::new(s.depth);
+        snapshot.text = s.text.clone();
+        snapshot.ends = s.ends.clone();
+        Self(std::thread::spawn(move || {
+            snapshot.seal();
+            // Build the generation's lazy directory off the request thread.
+            snapshot.base.branches(b"a");
+            (snapshot.base, snapshot.cut, snapshot.sealed_ends)
+        }))
+    }
+    fn publish(self, s: &mut Live) -> Result<(), String> {
+        let (base, cut, sealed_ends) = self.0.join().map_err(|_| "background seal failed")?;
+        s.base = base;
+        s.cut = cut;
+        s.sealed_ends = sealed_ends;
+        Ok(())
+    }
+}
 // Persistent line protocol for correctness testing, not a throughput benchmark.
 pub fn command(args: &[String]) -> Result<(), String> {
     let depth = match args {
@@ -140,11 +164,25 @@ pub fn command(args: &[String]) -> Result<(), String> {
     .filter(|n| (1..=64).contains(n))
     .ok_or("usage: xsa session DEPTH (1..64)")?;
     let mut session = Live::new(depth);
+    let mut pending: Option<Pending> = None;
     let mut out = io::stdout().lock();
     for line in io::stdin().lock().lines() {
         let line = line.map_err(|e| e.to_string())?;
         let fields: Vec<_> = line.split_whitespace().collect();
+        if pending.as_ref().is_some_and(|p| p.0.is_finished()) {
+            pending.take().unwrap().publish(&mut session)?;
+        }
         let reply = match fields.as_slice() {
+            ["seal_async"] => {
+                if pending.is_some() {
+                    return Err("seal already pending".into());
+                }
+                pending = Some(Pending::start(&session));
+                serde_json::json!({"submitted":session.text.len()})
+            }
+            ["status"] => {
+                serde_json::json!({"pending":pending.is_some(), "cut":session.cut, "visible":session.text.len()})
+            }
             ["append", s] => {
                 session.text.extend(unhex(s)?);
                 serde_json::json!({"visible":session.text.len()})
@@ -154,6 +192,9 @@ pub fn command(args: &[String]) -> Result<(), String> {
                 serde_json::json!({"ended":true})
             }
             ["seal"] => {
+                if pending.is_some() {
+                    return Err("seal already pending".into());
+                }
                 session.seal();
                 serde_json::json!({"sealed":session.cut})
             }
@@ -165,7 +206,11 @@ pub fn command(args: &[String]) -> Result<(), String> {
                 let h = session.branches(&p);
                 serde_json::json!({"counts":&h[..256],"end":h[256]})
             }
-            _ => return Err("expected append HEX, branch HEX, end or seal".into()),
+            _ => {
+                return Err(
+                    "expected append HEX, branch HEX, end, seal, seal_async or status".into(),
+                )
+            }
         };
         writeln!(out, "{}", reply)
             .and_then(|_| out.flush())
@@ -192,6 +237,25 @@ mod tests {
         }
         h
     }
+    #[test]
+    fn pending_generation_preserves_new_bytes_and_ends() {
+        let mut s = Live::new(4);
+        s.text.extend(b"abcXab");
+        let pending = Pending::start(&s);
+        s.text.extend(b"cYabc");
+        s.end().unwrap();
+        s.text.extend(b"abcZ");
+        let expected = oracle(&[b"abcXabcYabc".to_vec(), b"abcZ".to_vec()], b"abc");
+        assert_eq!(s.branches(b"abc"), expected);
+        pending.publish(&mut s).unwrap();
+        assert_eq!(s.cut, 6);
+        assert_eq!(s.branches(b"abc"), expected);
+        let pending = Pending::start(&s);
+        s.end().unwrap(); // same visible length, additional confirmed END
+        pending.publish(&mut s).unwrap();
+        assert_eq!(s.branches(b"Z")[256], 1);
+    }
+
     #[test]
     fn prefix_seal_and_boundary_parity() {
         let fixture: &[&[u8]] = &[b"aaaa\x00\x1eaaa", b"a\xffaa\x1e", b"aa"];
