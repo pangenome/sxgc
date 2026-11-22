@@ -39,9 +39,19 @@ per-bin working set (the vision's design). No global arrival table.
 Peak live scratch bytes journaled per phase per arm
 (max_live_scratch receipt, from statvfs deltas + per-phase accounting).
 Asserted: peak live scratch <= the declared scratch budget at every
-scale — violation dies with numbers. The 100 GB projection must fit
-<= 2 TB; the pile projection is recomputed from the 100 GB receipts
-and must fit the same law before the pile launch.
+scale — violation dies with numbers.
+
+OPERATOR'S CLAUSE (the scale-invariance of the law itself): the
+scratch budget is NOT a free knob. It is <= 2xN at every scale — the
+100 MB arms run under a ~200 MB budget, the 1 GB arms under ~2 GB,
+100 GB under ~200 GB, the pile under ~2.6 TB. The census must draw
+enough bins to fit. If a component cannot scale down (a fixed-size
+pool, a run-ahead, a buffer sized independent of N), the receipt
+must NAME IT — the SS_SCRATCH_PEAK receipt carries a per-component
+breakdown (pairs/bins, columns, pieces, pool run-ahead, other) so the
+fat is visible, not just the total — and the die() fires if the
+component, not just the sum, breaks the budget. 100 MB must work in
+100 MB.
 
 ## B5 — Level-2 stays a census decision
 
