@@ -680,6 +680,19 @@ fn distribute_window(ctx: &LevelCtx, w_first: u32, w_last: u32,
               crate::laws::now_s(t0));
 }
 
+// Keep the four u32 wire fields, but append whole batches, not four syscalls/row.
+fn append_arrivals(path: &str, arrivals: &[(u64, u32, u32, u32)]) {
+    let file = fs::OpenOptions::new().create(true).append(true).open(path)
+        .unwrap_or_else(|_| die("open arrival file"));
+    let mut f = std::io::BufWriter::new(file);
+    for &(g, p, o, oi) in arrivals {
+        for field in [u32::try_from(g).expect("arrival group exceeds u32"), p, o, oi] {
+            f.write_all(&field.to_le_bytes()).expect("arrival write");
+        }
+    }
+    f.flush().expect("flush arrivals");
+}
+
 // THE FULL PER-LEVEL RUN
 pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
     let t_all = std::time::Instant::now();
@@ -988,15 +1001,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                 if !re_park.is_empty() {
                     let np = format!("{}/arr_b{}.bin",
                                      ctx.modeb_dir, bin_idx + 1);
-                    let mut f = fs::OpenOptions::new()
-                        .create(true).append(true).open(&np)
-                        .unwrap_or_else(|_| die("bin arrival file"));
-                    for (lg, p, o, occ_lo) in &re_park {
-                        f.write_all(&(*lg as u32).to_le_bytes()).unwrap();
-                        f.write_all(&p.to_le_bytes()).unwrap();
-                        f.write_all(&o.to_le_bytes()).unwrap();
-                        f.write_all(&occ_lo.to_le_bytes()).unwrap();
-                    }
+                    append_arrivals(&np, &re_park);
                     stats.crossings_fwd += re_park.len() as u64;
                 }
             }
@@ -1107,15 +1112,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                         .filter(|&&w| w <= fwd[i5].0).count() - 1;
                     let p = format!("{}/arr_w{}_{}.bin",
                                     ctx.modeb_dir, bin_idx, k3);
-                    let mut f = fs::OpenOptions::new()
-                        .create(true).append(true).open(&p)
-                        .unwrap_or_else(|_| die("window arrival file"));
-                    for r in &fwd[i5..j5] {
-                        f.write_all(&(r.0 as u32).to_le_bytes()).unwrap();
-                        f.write_all(&r.1.to_le_bytes()).unwrap();
-                        f.write_all(&r.2.to_le_bytes()).unwrap();
-                        f.write_all(&r.3.to_le_bytes()).unwrap();
-                    }
+                    append_arrivals(&p, &fwd[i5..j5]);
                     i5 = j5;
                 }
                 stats.crossings_fwd += fwd.len() as u64;
@@ -1123,15 +1120,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                 if !bin_fwd.is_empty() {
                     let np = format!("{}/arr_b{}.bin",
                                      ctx.modeb_dir, bin_idx + 1);
-                    let mut f = fs::OpenOptions::new()
-                        .create(true).append(true).open(&np)
-                        .unwrap_or_else(|_| die("bin arrival file"));
-                    for r in &bin_fwd {
-                        f.write_all(&(r.0 as u32).to_le_bytes()).unwrap();
-                        f.write_all(&r.1.to_le_bytes()).unwrap();
-                        f.write_all(&r.2.to_le_bytes()).unwrap();
-                        f.write_all(&r.3.to_le_bytes()).unwrap();
-                    }
+                    append_arrivals(&np, &bin_fwd);
                     stats.crossings_fwd += bin_fwd.len() as u64;
                 }
             }

@@ -1025,6 +1025,10 @@ wiring. Then the G0 brute ladder -> the sandbox identity arms.
 
 Receipt: `TAPEREADER/sandbox/br_wide_terminal_1795382126`, wide/24 threads. Producer and finish both rc=0. The SXLS slices count the virtual END in product rank space, and the cutter publishes the terminal marker and run exceptions. `cmp` to the banked `sandbox/b_162/product.sxi2` passed: 107519008 bytes, nine members, SHA256 `6325c843c0d9aa9be00d69260aafdd794936e2e79f16174efb00c43db831f341`. Producer 295.04 s (unit 282.44 s); 198 bins / 23 windows; scratch gate peak 116712352 bytes (excludes columns). This is **one level**, not a recursive gate. The producer reported 14343410 forwarded arrival records, each then written with four unbuffered field writes; this is the performance comparison baseline.
 
+### Buffered arrival writes: same single-level wide arm
+
+`TAPEREADER/sandbox/br_wide_arrbuf_1795382482`: producer 218.41 s vs 295.04 s (unit 205.59 vs 282.44 s); managed wall including release build and comparison 222 vs 298 s. Both runs: 14,343,410 forwarded records, 198 bins, 23 windows, 116,712,352 bytes counted scratch peak. `cmp` to `sandbox/b_162/product.sxi2` passed, SHA `6325c843c0d9aa9be00d69260aafdd794936e2e79f16174efb00c43db831f341`. One before/after pair on this input: 26% shorter producer time, not a recursive or larger-scale speed claim.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX
