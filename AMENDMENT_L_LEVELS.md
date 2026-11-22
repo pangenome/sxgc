@@ -34,13 +34,29 @@ machine induces level-0 unaligned rows locally from level-1 order.
 The container members are unchanged: the product is level-0 facts
 only.
 
-## L4 — The 64-bit kernel
+## L4 — The kernel chain (operator's order: the level first)
 
-Vendor libsais64 alongside libsais (Apache-2.0, same author); the
-kernel selection is BY NUMBER (M <= 2^31 -> 32-bit; else 64-bit if
-within its verified ceiling; else one more parse level — the census
-arithmetic decides, never a mode flag). Verify libsais64's exact
-ceiling at vendoring time and journal it.
+PREFERENCE: re-parse BEFORE growing the kernel. The census's
+condensation number decides — never a mode flag:
+
+  M <= 2^31                         -> libsais (32-bit)
+  M > 2^31 and the census says the
+  next level condenses (any real
+text: ~30x measured)              -> ONE MORE PARSE LEVEL, then
+                                        the 32-bit kernel at the
+                                        deepest level, induce upward
+  M > ceiling AND no level condenses
+  (adversarial, phrase-incompressible
+  corpus)                          -> libsais64 (vendor, verify
+                                        ceiling at vendoring time,
+                                        journal it) - the residual
+                                        path, expected never to run
+                                        on real text
+
+The level-first order keeps the pile off a 328 GB 64-bit SA: level-2
+at pile scale is ~1.37e9 rows - a 5.5 GB SA - and the same induction
+machinery that reaches level 0 runs one rung earlier. The 100 GB run
+(3.05e9 -> ~102M at level 2) never touches the 64-bit kernel either.
 
 ## Verification — small scale FIRST (operator order)
 
