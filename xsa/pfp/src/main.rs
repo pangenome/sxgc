@@ -15,6 +15,7 @@ mod parse;
 mod dictsort;
 mod levels;
 mod w5;
+mod unit;
 
 use col::die;
 use std::io::Read as _;
@@ -138,19 +139,20 @@ fn main() {
 
     // ---- THE LEVELS (from the spec): the census arithmetic by
     //      number; None means one level (the deepest = this one)
-    let lv2 = levels::build_level2(d.pa.u32s(), p.m0, &modeb_dir,
+    let _lv2 = levels::build_level2(d.pa.u32s(), p.m0, &modeb_dir,
                                    threads, &laws);
-    if lv2.is_some() {
+    if _lv2.is_some() {
         eprintln!("SS_R_LEVELS_TAKEN plan=2 rule=levels_are_data");
     } else {
         eprintln!("SS_R_LEVELS_TAKEN plan=1 rule=the_census_arithmetic");
     }
     laws.scratch_gate("levels");
+    let _ = &_lv2;
 
     // ---- THE W5 LCP CARRY + THE OCCURRENCE LISTS (level 0: over
     //      the level-1 parse; the SA from the single-level kernel
     //      or the induced column when the levels module lands)
-    if lv2.is_none() {
+    if _lv2.is_none() {
         // the deepest level's SA = the 32-bit FFI kernel
         let t0s = std::time::Instant::now();
         let sa_p = format!("{}/parse_sa.bin", modeb_dir);
@@ -198,9 +200,41 @@ fn main() {
                            d.refpos.u64s(), d.len.u32s(), p.m0,
                            &modeb_dir);
         let _ = &w5;
-        let (_ostart, _olist) = w5::occ_lists(
+        let (ostart, olist) = w5::occ_lists(
             d.pa.u32s(), rank.u32s(), p.m0, d.dict_n, &modeb_dir);
         laws.scratch_gate("w5");
+
+        // ---- THE UNIT (pairsbins + emit, fused): level 0
+        let sa2 = col::ColMap::map_ro(&sa_p, p.m0, 4);
+        let lcp = col::ColMap::map_ro(
+            &format!("{}/parse_lcp.bin", modeb_dir), p.m0, 8);
+        let tree = col::ColMap::map_ro(
+            &format!("{}/lcp_tree.bin", modeb_dir),
+            2 * (if p.m0 > 1 { p.m0 - 1 } else { 1 }), 8);
+        let mut sink = unit::Sink::Product {
+            out_prefix: out_prefix.clone(),
+            bands_dir: bands_dir.clone(),
+            remap: if remap.is_empty() { None } else { Some(remap.clone()) },
+            trie_tap: std::env::var("TRIE_TAP").is_ok(),
+        };
+        let mut ctx = unit::LevelCtx {
+            t, stride: 1, rows_n: file_n, file_n,
+            pa: d.pa.u32s(), m: p.m0,
+            sa: sa2.u32s(), rank: rank.u32s(),
+            dref: d.refpos.u64s(), dlen: d.len.u32s(),
+            dict_n: d.dict_n, dict_bytes_total: d.dict_bytes_total,
+            pstart: pstart.u64s(),
+            ostart: ostart.u32s(), olist: olist.u32s(),
+            lcp: lcp.u64s(),
+            lcp_tree: tree.u64s(),
+            lcp_seg_n: if p.m0 > 1 { p.m0 - 1 } else { 1 },
+            modeb_dir: modeb_dir.clone(),
+            laws: &laws,
+        };
+        let stats = unit::run_level(&mut ctx, &mut sink);
+        eprintln!("SS_DONE_R rows_emitted={} end_rows={} \
+                   rule=amendment_r_the_unit_ran",
+                  stats.rows_emitted, stats.end_rows);
     }
 
     // ---- THE PORT ORDER CONTINUES (R5): levels -> W5 -> pairsbins
