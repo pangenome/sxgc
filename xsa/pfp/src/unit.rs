@@ -737,6 +737,11 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
         }
         pbk += 1;
         bin_mass.truncate(pbk as usize);
+        if pbk > 1 && bin_mass.last() == Some(&0) {
+            pbk -= 1;
+            bin_mass.pop();
+            for b in cell_bin.iter_mut() { *b = (*b).min(pbk - 1); }
+        }
     }
     // ---- the byte-law windows (census-exact; the rolling-4
     //      sort-ahead bound)
@@ -810,6 +815,39 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
     };
     let head_pos = ctx.file_n;   // the virtual END row first
 
+    // Only a one-byte dictionary tail lacks byte two of its ownership key.
+    // The occurrence-list index alone recovers the phrase and its tail offset.
+    let tail_owner = |cell: usize, occ: u32, len: u32| -> u32 {
+        let end = ctx.pstart[occ as usize] + u64::from(len);
+        cell_bin[cell | ctx.t.get(end as usize).copied().unwrap_or(0) as usize]
+    };
+    let mut moved = 0u64;
+    if stride == 1 {
+        let mut buffers = vec![Vec::<u8>::new(); pbk as usize];
+        let flush = |b: usize, buf: &mut Vec<u8>| {
+            if buf.is_empty() { return; }
+            let path = format!("{}/arr_owner{}.bin", ctx.modeb_dir,b);
+            fs::OpenOptions::new().append(true).create(true).open(path).expect("open ownership file")
+                .write_all(buf).expect("write owner indices");
+            buf.clear();
+        };
+        for p in 0..ctx.dict_n as usize {
+            let len = ctx.dlen[p];
+            let cell = (ctx.t[(ctx.dref[p]+u64::from(len)-1) as usize] as usize)<<8;
+            if cell_bin[cell] == cell_bin[cell|255] { continue; }
+            for oi in ctx.ostart[p]..ctx.ostart[p+1] {
+                let dst = tail_owner(cell,ctx.olist[oi as usize],len);
+                if dst != cell_bin[cell] {
+                    let buf = &mut buffers[dst as usize];
+                    buf.extend_from_slice(&oi.to_le_bytes()); moved+=1;
+                    if buf.len() >= 8192 { flush(dst as usize, buf); }
+                }
+            }
+        }
+        for (b, buf) in buffers.iter_mut().enumerate() { flush(b,buf); }
+    }
+    laws.scratch_gate("final_owners");
+    eprintln!("SS_FINAL_OWNERS moved={} routed_bytes={} rule=partition_before_emit", moved, moved*4);
     // ---- (c) THE BIN LOOP
     let mut bin_iter: u64 = 0;
     for bin_idx in 0..pbk {
@@ -925,6 +963,21 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
         // that landed beyond their bin ends
         let mut bin_inb: Vec<Vec<(u64, u32, u32, u32)>> =
             vec![Vec::new(); win_g.len() - 1];
+        let owner_path = format!("{}/arr_owner{}.bin", ctx.modeb_dir, bin_idx);
+        if std::path::Path::new(&owner_path).exists() {
+            let bytes = fs::read(&owner_path).expect("read final owners");
+            assert_eq!(bytes.len()%4,0);
+            for rec in bytes.chunks_exact(4) {
+                let oi = u32::from_le_bytes(rec.try_into().unwrap());
+                let occ = ctx.olist[oi as usize];
+                let p = ctx.pa[occ as usize]; let o = ctx.dlen[p as usize]-1;
+                let row = mach.row_of_po(p,o,occ);
+                let lg = gallop(&mach,&row,0,runs.len() as u64,&starts,&ent);
+                let w = win_g.partition_point(|&g| g <= lg)-1;
+                bin_inb[w].push((lg,p,o,oi));
+            }
+            fs::remove_file(owner_path).expect("release final owners");
+        }
         {
             let ip = format!("{}/arr_b{}.bin", ctx.modeb_dir, bin_idx);
             if let Ok(mut f) = fs::File::open(&ip) {
@@ -1052,6 +1105,10 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                     let b0 = ctx.ostart[v + 1] as usize;
                     for oi in a0..b0 {
                         let occ = ctx.olist[oi];
+                        if stride == 1 && pe.o + 1 == ctx.dlen[v] {
+                            let cell = (ctx.t[pe.pos as usize] as usize)<<8;
+                            if tail_owner(cell,occ,ctx.dlen[v]) != bin_idx { continue; }
+                        }
                         let nrank = if (occ as u64) + 1 < ctx.m {
                             ctx.rank[occ as usize + 1] + 1
                         } else { 0 };
@@ -1084,7 +1141,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                         }
                     }
                     if bin_cross {
-                        bin_fwd.push((0, pe.p, pe.o, oi));
+                        die("FINAL_OWNER: a partitioned occurrence escaped its bin");
                     } else if lg == g {
                         own.pos.push(mach.row_pos(&row));
                         own.ids.push((pe.p as u64) << 32 | pe.o as u64);

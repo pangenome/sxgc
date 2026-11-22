@@ -1041,6 +1041,12 @@ Receipt: `TAPEREADER/sandbox/br_wide_terminal_1795382126`, wide/24 threads. Prod
 
 `climb/rung1/rust_recursive_1795383463205861505`, `python3 gates/rust_recursive_rung1.py`: 1,000,000,665 B input. Ceiling 4000000: 30575555 parse rows → 1885923 upper rows → 30575555 induced rows. Producer 2218.21 s; concurrent arm 2231.67 s, both rc=0. Counted scratch peak 1174793553 B <= 2000001330 B (excludes columns). Nine-member 1014098520 B product: SHA256 `b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3` and `cmp` to `rung1/run_wide/product.sxi2` passed. RSS not sampled on this rung.
 
+### Partition tail occurrences by final bin before emission
+
+The pre-change 3 GB arm `climb/rung2/rust_recursive_1795385758229949849` was stopped cooperatively by operator decision; **no identity verdict**. Read-only replay of the certified 1 GB columns (`climb/rung1/owner_audit_oVNiYh`, `gates/tail_owner_census.cpp`) found 25,883,418 moved tail occurrences, 145,519,616 next-bin hops, 24,784,707 contiguous destination ranges, zero destination-order inversions. The new partition pass writes one u32 occurrence-list index per moved occurrence, not a 16-byte record per hop. Cross-bin escape during emit is an error. Window-local arrivals still exist.
+
+`bins-g0/R_mixed_owner_flTTWx`: recursive mixed fixture matched all banked SA bands, 439 moved occurrences. `sandbox/br_measured_recursive_512000000_1795388550845345182`: recursive 512 MB arm, both rc=0, certified SHA `6325c843c0d9aa9be00d69260aafdd794936e2e79f16174efb00c43db831f341`. Compared with `br_measured_recursive_512000000_1795383182630600890`: 2,558,390 partitioned indices = 10,233,560 B; remaining window forwards 28,314 vs 14,371,724 combined forwards before. Wall 207.20 → 184.04 s, producer 205.50 → 182.27 s (one before/after pair). Counted scratch peak 116,712,352 → 120,127,697 B, still <= 200,000,000. Sampled producer anon 326,770,688 B; whole arm allocated disk sampled peak 458,575,872 B.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX
