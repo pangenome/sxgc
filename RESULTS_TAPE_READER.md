@@ -1047,6 +1047,10 @@ The pre-change 3 GB arm `climb/rung2/rust_recursive_1795385758229949849` was sto
 
 `bins-g0/R_mixed_owner_flTTWx`: recursive mixed fixture matched all banked SA bands, 439 moved occurrences. `sandbox/br_measured_recursive_512000000_1795388550845345182`: recursive 512 MB arm, both rc=0, certified SHA `6325c843c0d9aa9be00d69260aafdd794936e2e79f16174efb00c43db831f341`. Compared with `br_measured_recursive_512000000_1795383182630600890`: 2,558,390 partitioned indices = 10,233,560 B; remaining window forwards 28,314 vs 14,371,724 combined forwards before. Wall 207.20 → 184.04 s, producer 205.50 → 182.27 s (one before/after pair). Counted scratch peak 116,712,352 → 120,127,697 B, still <= 200,000,000. Sampled producer anon 326,770,688 B; whole arm allocated disk sampled peak 458,575,872 B.
 
+### Final-owner partition: 1 GB A/B (correct, no observed wall win)
+
+`climb/rung1/rust_recursive_1795388766732560060`, same rung1 harness as `rust_recursive_1795383463205861505`. Both processes rc=0, `kernel=induced`; `cmp` passed vs banked 1 GB product and SHA `b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3`. Observed exactly the census prediction: 25,883,418 direct indices (103,533,672 B) and **zero** subsequent forwards vs 145,519,616 former 16-byte records (2,328,313,856 B). Counted scratch rose 1,174,793,553 → 1,255,164,357 B, budget 2,000,001,330 B. End-to-end wall 2231.67 → 2275.20 s (+1.95%), producer 2218.21 → 2260.63 s. Single before/after pair: no evidence of a 1 GB speedup. Cumulative distribute-pass timers alone (both levels) varied 135.23 → 190.73 s; do not attribute the wall difference solely to routing. No RSS measurements on either 1 GB arm.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX
