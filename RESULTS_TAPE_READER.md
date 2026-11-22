@@ -1020,3 +1020,35 @@ debug build's line numbers in one run).
 NEXT (R5's port order): levels (the L chain from the spec + the
 libsais FFI) -> W5 LCP carry -> pairsbins (B+B4) -> emit -> finish
 wiring. Then the G0 brute ladder -> the sandbox identity arms.
+
+## AMENDMENT R — levels + W5 gated (the port order state)
+
+levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX
+receipts (mixed, XSA_SA_CEILING=100000): m2=10849, condensation
+16.10x, distinct2=10849, prefix_relations=0, the libsais FFI kernel
+at the deepest level + the permutation belt. The pstart2 ROW-STARTS
+(the tiling sum) built correctly from the spec - the C++'s first-
+occurrence UB does not exist in the Rust.
+
+w5.rs: the Kasai over the parse (TEXT order; h drops by the leading
+phrase; the per-side advance) + the min segment tree + the
+occurrence lists (the continuation-rank ordering, the END first).
+GATED EXACT vs the C++ oracle (mixed, one level): SS_PARSE_LCP
+rows=174672 lcp_max=128 IDENTICAL; SS_OCC_LISTS phrases=133660
+occurrences=174672 IDENTICAL.
+
+THE PORT ORDER STATE (R5):
+- remap, parse (STROKE P), dictsort (W1+W7), PA: GATED (9/9 fixtures
+  receipt-identical, incl. the FNV-1a adversarial corpus).
+- census arithmetic + levels (the L chain from the spec): GATED.
+- W5 LCP carry + the occurrence lists: GATED.
+- pairsbins (B+B4: the cell census, the windowed distribute, the
+  sort pool, the merge, the byte-law windows, SCRATCH_LAW): NEXT.
+- emit (the concat: the L1 landing walks + B3, the L2 CSR, the L3
+  merge, the W5-bounded compares, the assembly): THEN.
+- finish wiring (the BPS1 piece stream): LAST. The reference points
+  extracted for the next session: PieceCutter at pfp_sort.cpp:2303
+  (the BPS1 header: "BPS1" + n + width + 1 + window; the band
+  files; the run-length feed), pack_sym at :178 (p | sym << 48),
+  emitUnit/the assembly at ~:6165, the LCP slice stream
+  (SS_LCP_SLICE_WINDOW), the chi bitmap at the finish.

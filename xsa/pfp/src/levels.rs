@@ -18,6 +18,7 @@ use std::io::Write as _;
 // the deepest level's SA via the FFI kernel (32-bit; the sequential
 // libsais_int - the certified END-FIRST semantics verified
 // empirically at W2)
+#[allow(dead_code)]
 fn sa_kernel_int(t: &mut [i32], sa: &mut [i32], k: i32) -> i32 {
     let n = t.len() as i32;
     if n == 0 { return 0; }
@@ -321,4 +322,11 @@ pub fn build_level2(pa: &[u32], m0: u64, modeb: &str, threads: u64,
               m0, m2, ceiling, crate::laws::now_s(t0));
     Some(Level2 { m2, dict_n2, dict_ref2, dict_len2, pa2, pstart2,
                   parse_sa2, be, be_bytes, prefix_rel2: rel2 })
+}
+
+// the raw FFI entry (the caller owns the buffers)
+pub fn sa_kernel_int_raw(t: *mut i32, sa: &mut [i32], k: i32) -> i32 {
+    let n = sa.len() as i32;
+    if n == 0 { return 0; }
+    unsafe { libsais_int(t, sa.as_mut_ptr(), n, k, 0) }
 }

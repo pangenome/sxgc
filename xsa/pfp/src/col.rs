@@ -108,6 +108,9 @@ impl ColMap {
     pub fn u64s(&self) -> &[u64] {
         unsafe { std::slice::from_raw_parts(self.ptr as *const u64, self.len as usize) }
     }
+    pub fn u64s_mut(&mut self) -> &mut [u64] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr as *mut u64, self.len as usize) }
+    }
     pub fn u8s(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.ptr, self.len as usize) }
     }

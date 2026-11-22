@@ -14,6 +14,7 @@ mod laws;
 mod parse;
 mod dictsort;
 mod levels;
+mod w5;
 
 use col::die;
 use std::io::Read as _;
@@ -145,6 +146,62 @@ fn main() {
         eprintln!("SS_R_LEVELS_TAKEN plan=1 rule=the_census_arithmetic");
     }
     laws.scratch_gate("levels");
+
+    // ---- THE W5 LCP CARRY + THE OCCURRENCE LISTS (level 0: over
+    //      the level-1 parse; the SA from the single-level kernel
+    //      or the induced column when the levels module lands)
+    if lv2.is_none() {
+        // the deepest level's SA = the 32-bit FFI kernel
+        let t0s = std::time::Instant::now();
+        let sa_p = format!("{}/parse_sa.bin", modeb_dir);
+        {
+            let mut sa = col::ColMap::map_rw(&sa_p, p.m0, 4);
+            let mut ti: Vec<i32> = Vec::with_capacity(p.m0 as usize);
+            for j in 0..p.m0 as usize {
+                ti.push(d.pa.u32s()[j] as i32);
+            }
+            unsafe {
+                let sa_slice = std::slice::from_raw_parts_mut(
+                    sa.ptr as *mut i32, p.m0 as usize);
+                let rc = levels::sa_kernel_int_raw(
+                    ti.as_ptr() as *mut i32, sa_slice,
+                    d.dict_n.min(2147483647) as i32);
+                if rc != 0 { die(&format!("LIBSAIS_INT rc={}", rc)); }
+            }
+        }
+        eprintln!("SS_PARSE_SORT parse_rows={} kernel=libsais_int_ffi \
+                   sort_s={:.2} rule=the_deepest_level_kernel",
+                  p.m0, laws::now_s(t0s));
+        let sa = col::ColMap::map_ro(&sa_p, p.m0, 4);
+        // the rank scatter
+        let rank_p = format!("{}/parse_rank.bin", modeb_dir);
+        {
+            let mut rk = col::ColMap::map_rw(&rank_p, p.m0, 4);
+            for i in 0..p.m0 as usize {
+                rk.u32s_mut()[sa.u32s()[i] as usize] = i as u32;
+            }
+        }
+        let rank = col::ColMap::map_ro(&rank_p, p.m0, 4);
+        // the phrase starts column (the tiling prefix sums)
+        let ps_p = format!("{}/pstart.bin", modeb_dir);
+        {
+            let mut w = col::ColWriter::open(&ps_p);
+            let mut acc: u64 = 0;
+            for i in 0..p.m0 as usize {
+                w.put_u64(acc);
+                acc += d.len.u32s()[d.pa.u32s()[i] as usize] as u64;
+            }
+            w.close();
+        }
+        let pstart = col::ColMap::map_ro(&ps_p, p.m0, 8);
+        let w5 = w5::build(t, d.pa.u32s(), pstart.u64s(), sa.u32s(),
+                           d.refpos.u64s(), d.len.u32s(), p.m0,
+                           &modeb_dir);
+        let _ = &w5;
+        let (_ostart, _olist) = w5::occ_lists(
+            d.pa.u32s(), rank.u32s(), p.m0, d.dict_n, &modeb_dir);
+        laws.scratch_gate("w5");
+    }
 
     // ---- THE PORT ORDER CONTINUES (R5): levels -> W5 -> pairsbins
     //      -> emit -> finish wiring. Each lands with its own gate.
