@@ -953,3 +953,27 @@ corrupted induction CANNOT reproduce SHA 6325c843... at the sandbox
 or the certified containers at 1 GB / 3 GB, and the induced-SA
 permutation + seed belts die loud inside the run. If the ghost
 returns, the gates catch it with numbers.
+
+## THE C++ BOOK CLOSES (Amendment R parked the hunt at its boundary)
+
+The ghost's 4th script-window hit: 14:25:55 arm, rc=139 at 9 s (the
+same SS_LEVELS cut-off). The manual runs remain 6/6 pass; the
+script-vs-manual asymmetry is journaled but NOT chased further - the
+operator's order: the hunt is unbounded, the rewrite is bounded.
+
+THE C++ MACHINE'S FINAL STATE (the certified fallback at W+B scales;
+the reference oracle for the R certification):
+- W+B (single level): fully certified - G0 10/10, sandbox 3-dial
+  identity 6325c843..., 1 GB b20ceebe... (both dial arms, strict 2xN),
+  the B4 clause receipts.
+- L (the recursion): PROVEN END-TO-END by the ASan/UBSan -O1 build
+  (2 levels at 100 MB: SS_LEVEL_EXIT sa_rows=3054126 permutation,
+  SS_LEVEL0_BELT 4099 seeds agree with the brute, SS_DONE) and by
+  manual -O2 runs (SS_DONE run_s=138, both levels, G0 10/10 with
+  XSA_SA_CEILING forced); the G0 LX battery passed the brute oracle
+  at EVERY fixture with 2 levels by census decision. NOT certified
+  through the sandbox identity arms (the ghost's window); the Rust
+  machine re-earns the L anchors from the spec.
+
+THE REWRITE TARGETS (R): the C++ receipts above are the comparison
+targets - the Rust modules must match them gate for gate.
