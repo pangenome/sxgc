@@ -3944,431 +3944,308 @@ int main(int argc, char** argv) {
         // are LOCAL (bounded by the phrase lengths; the sentinel ends
         // everything) - no walks, no rank cascades.
         // =============================================================
-        // THE PAIR INDEX SPACE (MODE B): the pair (P,o) lives at the
-        // CUMULATIVE-DICTIONARY-BYTES offset dictLenPrefix[P] + o - the
-        // same dense per-phrase layout the arena offsets had, with NO
-        // BYTES BEHIND IT. The pair's slice is THE CORPUS at
-        // [dictRefPos[P]+o, dictRefPos[P]+len) - the reference columns
-        // pairsPos/pairsEnd carry the positions.
-        // the pair index space: u64 (the 10 GB rung's dictionary
-        // bytes exceed u32); the prefix column maps out to disc so
-        // no phase holds it in anon
-        const u64* dictLenPrefix = nullptr;
-        {
-            std::vector<u64> dlp(size_t(dictN) + 1, 0);
-            u64 cum = 0;
-            for (u64 v = 0; v < dictN; ++v) {
-                dlp[size_t(v)] = cum;
-                cum += dictLen[size_t(v)];
-            }
-            dlp[size_t(dictN)] = cum;
-            if (cum != dictBytesTotal)
-                die("PAIR_SPACE: the prefix-sum walk gives " +
-                    std::to_string(cum) + " dictionary bytes against " +
-                    std::to_string(dictBytesTotal) + " from the key sort");
-            ColMap dlpM = colFreeze(dlp,
-                modebDir + "/dict_lenprefix.bin");
-            dictLenPrefix = dlpM.as<u64>();
-        }
+        // =============================================================
+        // AMENDMENT B (THE BINS / SUB-N SCRATCH): the pairs phase,
+        // binned. The census-drawn bins are CELL RANGES (the cells'
+        // exact masses, equalized; cells never split; never
+        // first-byte; never sampled) - a bin IS a slice-order
+        // segment, so bin order IS the global key order (A3: no
+        // merge, ever). THE PROVEN LAW: a row's VALUE diverges from
+        // any pair whose cell exceeds its own at byte 0-1 - inside
+        // both slices, before any continuation matters - so a row
+        // NEVER crosses its bin's boundary (the groups of one cell
+        // are contiguous and never split). The crossings live at
+        // the WINDOW level inside bins, where the existing CSR
+        // exchange already handles them. THE GLOBAL PAIRS COLUMNS
+        // ARE DELETED: the scratch is O(bin), sub-N by construction.
+        // =============================================================
         const u64 pairsN = dictBytesTotal;
-        // THE MAPPED COLUMNS (bands, not tables): the pair columns and
-        // the sorted pair order are FILES; every access streams through
-        // the page cache; the anon set stays dial-sized. THE SORT IS
-        // BANDED: the pairs are seeded by their first-2-byte cells into
-        // equalized buckets on disc (cell order == key order; never
-        // bare first byte), each bucket sorted in RAM under the dial,
-        // the ascending bucket concat IS the global pair order, and the
-        // equal-slice run boundaries stream out as they are found.
-        u64* pairsPos = nullptr;   // corpus positions: u64 (the
-        u64* pairsEnd = nullptr;    // corpora past 4 GB overflow u32)
-        u32* phraseOfAt = nullptr;  // phrase ids (u32 carries the
-        u64* pairsSA = nullptr;     // pile: distinct < 4.29e9)
-                                    // the sorted pair order (u64)
+        struct PEnt { u32 P; u32 o; u64 pos; u64 end; };   // 24 B
+        const auto entLess = [&](const PEnt& a, const PEnt& b) -> bool {
+            const u64 rA = a.end - a.pos, rB = b.end - b.pos;
+            const u64 c = std::min<u32>(u32(rA), u32(rB));
+            if (c) {
+                const int m = std::memcmp(T + size_t(a.pos),
+                                           T + size_t(b.pos), size_t(c));
+                if (m) return m < 0;
+            }
+            if (rA != rB) return rA < rB;
+            // AMENDMENT W7: the keys are UNIQUE by construction
+            // (the (P,o) tie-break) - the unstable kernel is legal
+            if (a.P != b.P) return a.P < b.P;
+            return a.o < b.o;
+        };
+        const auto entEq = [&](const PEnt& a, const PEnt& b) -> bool {
+            const u64 rA = a.end - a.pos, rB = b.end - b.pos;
+            if (rA != rB) return false;
+            return std::memcmp(T + size_t(a.pos), T + size_t(b.pos),
+                               size_t(rA)) == 0;
+        };
+        // (a) THE CENSUS: the cells' exact pair masses (the corpus
+        //     reads at the references; a full-mass census, no sampling)
+        static u64 histB[65536];
+        std::memset(histB, 0, sizeof histB);
         {
-            ColMap m1; m1.mapRW(modebDir + "/pairs_pos.bin", pairsN, 8);
-            pairsPos = m1.as<u64>();
-            ColMap m2; m2.mapRW(modebDir + "/pairs_end.bin", pairsN, 8);
-            pairsEnd = m2.as<u64>();
-            ColMap m3; m3.mapRW(modebDir + "/phrase_of_at.bin", pairsN, 4);
-            phraseOfAt = m3.as<u32>();
-            ColMap m4; m4.mapRW(modebDir + "/pairs_sa.bin", pairsN, 8);
-            pairsSA = m4.as<u64>();
-        }
-        const u64* runStart = nullptr;   // the equal-slice run boundaries
-        u64 nRuns = 0;                   // (mapped; streamed out at sort time)
-        u64 dictStaticPairs = pairsN;
-        {
-            const double tp0 = now_sec();
-            // (a) the reference columns + the cell histogram, one pass
-            //     over the dictionary references (THE CORPUS is the
-            //     only text; no bytes are copied)
-            static u64 hist2p[65536];
-            std::memset(hist2p, 0, sizeof hist2p);
             for (u64 v = 0; v < dictN; ++v) {
-                const u64 off = dictLenPrefix[size_t(v)];
-                const u32 len = dictLen[size_t(v)];
+                if ((v & 0xffff) == 0 &&
+                    ::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
                 const u64 p0 = dictRefPos[size_t(v)];
-                const u64 pend = p0 + len;
-                for (u64 j = 0; j < len; ++j) {
-                    pairsPos[size_t(off + j)] = p0 + j;
-                    pairsEnd[size_t(off + j)] = pend;
-                    phraseOfAt[size_t(off + j)] = u32(v);
-                    const u32 b1 = (j + 1 < len) ? u32(T[size_t(p0 + j + 1)]) : 0u;
-                    ++hist2p[(u32(T[size_t(p0 + j)]) << 8) | b1];
+                const u32 len = dictLen[size_t(v)];
+                for (u32 o = 0; o < len; ++o) {
+                    const u32 b1 = (o + 1 < len)
+                        ? u32(T[size_t(p0 + o + 1)]) : 0u;
+                    ++histB[(u32(T[size_t(p0 + o)]) << 8) | b1];
                 }
             }
-            // (b) the equalized bucket map (cell order == key order);
-            //     at most 512 open bucket files, at least dial-sized
-            //     bands
-            const u64 entryBytes = 24;   // PEnt (u64 idx, u64 pos, u64 end)
-            const u64 targetPair =
-                std::max<u64>(1024,
-                    std::max<u64>(pairsN / 512,
-                                  workspaceBytes / 64 / entryBytes));
-            u32 cellBucketP[65536];
-            u32 pbk = 0;
-            {
-                u64 run2 = 0; u32 bk = 0;
-                for (u32 cell = 0; cell < 65536; ++cell) {
-                    run2 += hist2p[cell];
-                    cellBucketP[cell] = bk;
-                    if (run2 >= targetPair) { run2 = 0; ++bk; }
-                }
-                ++bk;   // the bucket count = crossings + 1
-                pbk = bk;
-                std::fprintf(stderr,
-                    "SS_PAIR_BUCKETS target_per_bucket=%" PRIu64
-                    " buckets=%u rule=equalized_2byte_cells"
-                    ";cell_order_is_key_order;seed_per_band\n",
-                    targetPair, pbk);
-            }
-            // (c) the distribute pass: every pair (P,o) seeds its band
-            //     file with (pairIdx, pos, end)
-            {
-                std::vector<FILE*> bf(size_t(pbk), nullptr);
-                for (u32 i = 0; i < pbk; ++i) {
-                    const std::string bp = modebDir + "/pairbucket_" +
-                        std::to_string(i) + ".bin";
-                    bf[size_t(i)] = std::fopen(bp.c_str(), "wb");
-                    if (!bf[size_t(i)]) die("open " + bp);
-                }
-                struct PEnt { u64 idx; u64 pos; u64 end; };
-                std::vector<PEnt> tbuf;
-                tbuf.reserve(1 << 16);
-                auto flushCells = [&]() {
-                    for (const PEnt& e : tbuf) {
-                        const u32 b1 = (e.pos + 1 < e.end)
-                            ? u32(T[size_t(e.pos + 1)]) : 0u;
-                        FILE* f = bf[size_t(cellBucketP[(u32(T[size_t(e.pos)]) << 8) | b1])];
-                        if (std::fwrite(&e, sizeof(PEnt), 1, f) != 1) die("pair bucket write");
-                    }
-                    tbuf.clear();
-                };
-                for (u64 v = 0; v < dictN; ++v) {
-                    const u64 off = dictLenPrefix[size_t(v)];
-                    const u32 len = dictLen[size_t(v)];
-                    // corpus positions are u64 (the 10 GB rung's
-                    // LANDING_INVERT: the truncated u32 p0 seeded
-                    // pairs above 4.29 GB into WRONG cell bands)
-                    const u64 p0 = dictRefPos[size_t(v)];
-                    const u64 pend = p0 + len;
-                    for (u64 j = 0; j < len; ++j) {
-                        tbuf.push_back(PEnt{off + j, p0 + j, pend});
-                        if (tbuf.size() >= (1u << 16)) flushCells();
-                    }
-                }
-                flushCells();
-                for (u32 i = 0; i < pbk; ++i)
-                    if (std::fflush(bf[size_t(i)]) != 0) die("flush pair bucket");
-                    else std::fclose(bf[size_t(i)]);
-            }
-            // (d) the per-band sort: dial-bounded. A band whose
-            //     entries fit the sort budget sorts in RAM; a bigger
-            //     band (a hot cell run can far exceed the equalizer's
-            //     target - a cell is never split, cell order == key
-            //     order) sorts in CHUNKS + a K-WAY MERGE with the same
-            //     exact comparator - the merge preserves the band's
-            //     order law, and the RAM stays at K x chunk <= the
-            //     budget. The sorted pairIdx appends to the global
-            //     order; the equal-slice run boundaries stream out;
-            //     the PAIR BELT samples the concat.
-            struct PEnt { u64 idx; u64 pos; u64 end; };
-            // AMENDMENT W7: the keys are made UNIQUE by construction
-            // (the idx tie-break) - the unstable kernel is legal and
-            // the byte-identity gate proves it. The within-group order
-            // of pairsSA changes to idx order; the emit output is
-            // invariant to it (a group's rows order by continuation
-            // rank; the landing reads slice VALUES, not indices)
-            const auto entLess = [&](const PEnt& a, const PEnt& b) -> bool {
-                const u64 rA = a.end - a.pos, rB = b.end - b.pos;
-                const u64 c = std::min<u32>(rA, rB);
-                if (c) {
-                    const int m = std::memcmp(T + size_t(a.pos),
-                                               T + size_t(b.pos), size_t(c));
-                    if (m) return m < 0;
-                }
-                if (rA != rB) return rA < rB;
-                return a.idx < b.idx;
-            };
-            const auto entEq = [&](const PEnt& a, const PEnt& b) -> bool {
-                const u64 rA = a.end - a.pos, rB = b.end - b.pos;
-                if (rA != rB) return false;
-                return std::memcmp(T + size_t(a.pos), T + size_t(b.pos),
-                                   size_t(rA)) == 0;
-            };
-            ColWriter rw;
-            rw.open(modebDir + "/run_start.bin");
-            rw.put(u64(0)); ++nRuns;   // the first run starts at position 0
-            u64 outPos = 0, beltChecks = 0;
-            PEnt prevEnt{}; bool havePrev = false;
-            const u64 beltStep = std::max<u64>(1, pairsN / 4096);
-            PEnt beltPrev{}; u64 beltPrevPos = 0; bool beltHave = false;
-            // the per-entry output: the run boundaries + the belt
-            auto emitEntry = [&](const PEnt& e) {
-                pairsSA[size_t(outPos)] = e.idx;
-                if (havePrev && !entEq(prevEnt, e)) {
-                    rw.put(outPos); ++nRuns;   // a new key begins here
-                }
-                prevEnt = e; havePrev = true;
-                // THE PAIR BELT: the sampled adjacent order
-                if (outPos >= beltPrevPos + beltStep) {
-                    if (beltHave && !entLess(beltPrev, e)
-                        && !entEq(beltPrev, e)) {
-                        std::fprintf(stderr,
-                            "PAIRS_FAIL at=%" PRIu64 " A=(pos=%" PRIu64 " end=%" PRIu64 ")"
-                            " B=(pos=%" PRIu64 " end=%" PRIu64 ")\n",
-                            outPos, beltPrev.pos, beltPrev.end,
-                            e.pos, e.end);
-                        die("PAIRS_ORDER: the band concat at " +
-                            std::to_string(beltPrevPos) + ".." +
-            std::to_string(outPos) + " disagrees with the slice order");
-                    }
-                    beltPrev = e; beltPrevPos = outPos;
-                    beltHave = true; ++beltChecks;
-                }
-                ++outPos;
-            };
-            // ---- THE SORT-AHEAD POOL (the climb's wall breaker):
-            //      the per-chunk sorts run in parallel, every sorted
-            //      chunk UNIFORMLY SPILLED to its file (the flight
-            //      cap then bounds only the workers' in-flight sort
-            //      buffers, and the FIFO task order guarantees the
-            //      emit's head band always progresses - no deadlock
-            //      shape). The emit loop consumes bands IN ORDER, so
-            //      the runStart stream stays sequential and the
-            //      concat order is exactly the band order.
-            const u64 perChunk = std::max<u64>(
-                1024, workspaceBytes / 64 / sizeof(PEnt));
-            const u64 flightCap = std::max<u64>(
-                threads * 2, workspaceBytes / 4 / sizeof(PEnt));
-            const u64 nSortThreads = std::max<u64>(1,
-                std::min<u64>(threads, u64(16)));
-            struct ChunkFut {
-                std::mutex mu; std::condition_variable cv;
-                bool done = false;
-                std::string path;
-                u64 n = 0;
-            };
-            struct BandSub {
-                u64 K = 0, nEnt = 0;
-                std::vector<std::unique_ptr<ChunkFut>> f;
-            };
-            std::mutex tmu; std::condition_variable tcv;
-            struct SortTask { u32 band; u64 c; u64 at; u64 n;
-                              ChunkFut* cf; };
-            std::deque<SortTask> tasks;
-            std::map<u32, BandSub> subs;
-            std::mutex smu;
-            std::mutex fmu; std::condition_variable fcv;
-            u64 flightUsed = 0;
-            std::atomic<bool> submitClosed{false};
-            auto flightAcquire = [&](u64 n) {
-                std::unique_lock<std::mutex> g(fmu);
-                while (flightUsed + n > flightCap) fcv.wait(g);
-                flightUsed += n;
-            };
-            auto flightRelease = [&](u64 n) {
-                { std::lock_guard<std::mutex> g(fmu); flightUsed -= n; }
-                fcv.notify_all();
-            };
-            auto submitBand = [&](u32 band) {
-                if (band >= pbk) return;
-                struct stat sb{};
-                const std::string bp = modebDir + "/pairbucket_" +
-                    std::to_string(band) + ".bin";
-                if (::stat(bp.c_str(), &sb) != 0) die("stat " + bp);
-                BandSub su;
-                su.nEnt = u64(sb.st_size) / sizeof(PEnt);
-                su.K = (su.nEnt + perChunk - 1) / perChunk;
-                for (u64 c = 0; c < su.K; ++c) {
-                    auto fut = std::make_unique<ChunkFut>();
-                    fut->n = std::min(perChunk, su.nEnt - c * perChunk);
-                    fut->path = modebDir + "/pchunk_" +
-                        std::to_string(band) + "_" + std::to_string(c)
-                        + ".bin";
-                    su.f.push_back(std::move(fut));
-                }
-                // the band's slot map entry MUST land before any task
-                // is visible to the workers (map::at would throw)
-                {
-                    std::lock_guard<std::mutex> g(smu);
-                    subs.emplace(band, std::move(su));
-                }
-                {
-                    std::lock_guard<std::mutex> g(tmu);
-                    const BandSub& sb = subs.at(band);
-                    for (u64 c = 0; c < sb.K; ++c)
-                        tasks.push_back(SortTask{
-                            band, c, c * perChunk,
-                            sb.f[size_t(c)]->n, sb.f[size_t(c)].get()});
-                }
-                tcv.notify_all();
-            };
-            std::vector<std::thread> sortPool;
-            for (u64 t = 0; t < nSortThreads; ++t)
-                sortPool.emplace_back([&] {
-                    for (;;) {
-                        SortTask t2;
-                        {
-                            std::unique_lock<std::mutex> g(tmu);
-                            if (tasks.empty()) {
-                                if (submitClosed.load()) return;
-                                tcv.wait(g);
-                                continue;
-                            }
-                            t2 = tasks.front(); tasks.pop_front();
-                        }
-                        if ((t2.c & 0x3f) == 0 &&
-                            ::access(stopFlag.c_str(), F_OK) == 0)
-                            ::_exit(75);
-                        flightAcquire(t2.n);
-                        const std::string bp = modebDir + "/pairbucket_"
-                            + std::to_string(t2.band) + ".bin";
-                        // the worker holds its ChunkFut DIRECTLY (the
-                        // emit may have moved the band's sub out of
-                        // the map already - never touch the map here)
-                        const std::string cpath = t2.cf->path;
-                        const u64 cn = t2.cf->n;
-                        std::vector<PEnt> ent;
-                        ent.reserve(size_t(cn));
-                        {
-                            FILE* f = std::fopen(bp.c_str(), "rb");
-                            if (!f) die("open " + bp);
-                            if (::fseeko(f, off_t(t2.at * sizeof(PEnt)),
-                                         SEEK_SET) != 0) die("seek " + bp);
-                            PEnt e;
-                            for (u64 r = 0; r < cn; ++r) {
-                                if (std::fread(&e, sizeof(PEnt), 1, f) != 1)
-                                    die("truncated band " + bp);
-                                ent.push_back(e);
-                            }
-                            std::fclose(f);
-                        }
-                        // AMENDMENT W7: the chunk interior runs ips4o
-                        // (sequential - the sort-ahead pool fans the
-                        // chunks); keys unique by the idx tie-break
-                        ips4o::sort(ent.begin(), ent.end(), entLess);
-                        {
-                            FILE* g = std::fopen(cpath.c_str(), "wb");
-                            if (!g) die("open " + cpath);
-                            if (!ent.empty() &&
-                                std::fwrite(ent.data(), sizeof(PEnt),
-                                            ent.size(), g) != ent.size())
-                                die("write " + cpath);
-                            std::fclose(g);
-                            std::vector<PEnt>().swap(ent);
-                        }
-                        flightRelease(t2.n);
-                        {
-                            std::lock_guard<std::mutex> g3(t2.cf->mu);
-                            t2.cf->done = true;
-                            t2.cf->cv.notify_all();
-                        }
-                    }
-                });
-            u64 mergedBands = 0;
-            u32 nextSubmit = 0;
-            for (u32 i = 0; i < pbk; ++i) {
-                if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
-                while (nextSubmit < pbk &&
-                       nextSubmit <= u32(i) + nSortThreads * 2) {
-                    submitBand(nextSubmit);
-                    ++nextSubmit;
-                }
-                BandSub su;
-                {
-                    std::lock_guard<std::mutex> g(smu);
-                    su = std::move(subs.at(i));
-                    subs.erase(i);
-                }
-                if (su.K > 1) ++mergedBands;
-                for (u64 c = 0; c < su.K; ++c) {
-                    ChunkFut& cf = *su.f[size_t(c)];
-                    std::unique_lock<std::mutex> g3(cf.mu);
-                    while (!cf.done) cf.cv.wait(g3);
-                }
-                // the heap merge over the K sorted chunk files (K == 1
-                // is a straight stream); exact, O(log K) per entry
-                struct Stream { FILE* f; PEnt head; u64 left; };
-                auto streamLess = [&](const Stream& a, const Stream& b) {
-                    return entLess(b.head, a.head);   // min-heap
-                };
-                std::vector<Stream> st;
-                st.reserve(size_t(su.K));
-                for (u64 c = 0; c < su.K; ++c) {
-                    FILE* f = std::fopen(su.f[size_t(c)]->path.c_str(),
-                                         "rb");
-                    if (!f) die("reopen " + su.f[size_t(c)]->path);
-                    Stream S{f, PEnt{}, su.f[size_t(c)]->n};
-                    if (S.left &&
-                        std::fread(&S.head, sizeof(PEnt), 1, f) != 1)
-                        die("read " + su.f[size_t(c)]->path);
-                    if (S.left) st.push_back(std::move(S));
-                }
-                std::make_heap(st.begin(), st.end(), streamLess);
-                while (!st.empty()) {
-                    std::pop_heap(st.begin(), st.end(), streamLess);
-                    Stream& S = st.back();
-                    emitEntry(S.head);
-                    if (--S.left) {
-                        if (std::fread(&S.head, sizeof(PEnt), 1, S.f) != 1)
-                            die("chunk read");
-                        std::push_heap(st.begin(), st.end(), streamLess);
-                    } else {
-                        std::fclose(S.f);
-                        st.pop_back();
-                    }
-                }
-                for (u64 c = 0; c < su.K; ++c)
-                    ::remove(su.f[size_t(c)]->path.c_str());
-                ::remove((modebDir + "/pairbucket_" +
-                          std::to_string(i) + ".bin").c_str());
-            }
-            submitClosed.store(true);
-            tcv.notify_all();
-            for (auto& th : sortPool) th.join();
-            if (outPos != pairsN)
-                die("PAIRS_TOTAL: sorted " + std::to_string(outPos) +
-                    " pairs against " + std::to_string(pairsN));
-            rw.put(u64(pairsN));       // the sentinel run end
-            rw.close();
-            {
-                ColMap m; m.mapRO(modebDir + "/run_start.bin", nRuns + 1, 8);
-                runStart = m.as<u64>();
-            }
-            phaseRssGate("pairs_sort");
-            std::fprintf(stderr,
-                "SS_PAIRS_SORT pairs=%" PRIu64 " runs=%" PRIu64
-                " bands=%u merged_bands=%" PRIu64
-                " target_per_band=%" PRIu64 " belt=%" PRIu64
-                " kernel=ips4o_unique_keys_idx_tiebreak threads=%" PRIu64
-                " sort_s=%.2f rule=cell_seeded_bands;sort_per_band;stream"
-                ";slice_plus_sentinel;local_comparisons_only"
-                ";the_static_dictionary_table_as_mapped_columns\n",
-                pairsN, nRuns, pbk, mergedBands, targetPair,
-                beltChecks, threads,
-                now_sec() - tp0);
         }
+        // (b) THE BIN MAP: equalized cell ranges. Bin count set so
+        //     ONE bin fits the scratch budget with margin (B1's law):
+        //     the bin's live working set ~ 32 B/pair (the 8 B bucket
+        //     entry + the 24 B expanded PEnt) + the sort-ahead's
+        //     in-flight chunks.
+        // the scratch budget: the --scratch-budget-bytes knob
+        // (B4's law); the default = 2 TB - the 100 GB projection's
+        // ceiling in the amendment's terms
+        const u64 scratchBudget = scratch_budget_bytes
+            ? scratch_budget_bytes : (2ull << 40);
+        const u64 binBytesPerPair = 32;
+        const u64 binPairTarget = std::max<u64>(
+            1024, std::min<u64>(scratchBudget / 2 / binBytesPerPair,
+                                std::max<u64>(pairsN / 512,
+                                    workspaceBytes / 64 / 24)));
+        u32 cellBin[65536];
+        u32 pbk = 0;
+        {
+            u64 run2 = 0; u32 bk = 0;
+            for (u32 cell = 0; cell < 65536; ++cell) {
+                run2 += histB[cell];
+                cellBin[cell] = bk;
+                if (run2 >= binPairTarget) { run2 = 0; ++bk; }
+            }
+            ++bk;   // the bin count = crossings + 1 (a cell is never split)
+            pbk = bk;
+            std::fprintf(stderr,
+                "SS_PAIR_BINS target_per_bin=%" PRIu64
+                " bins=%u scratch_budget=%" PRIu64
+                " rule=amendment_b_census_drawn_cell_ranges"
+                ";cells_never_split;never_first_byte;bin_order_is"
+                "_key_order;no_merge\n",
+                binPairTarget, pbk, scratchBudget);
+        }
+        // (c) THE DISTRIBUTE: one pass over the dictionary; every
+        //     pair (P,o) seeds its bin file with the 8 B (P,o) entry.
+        //     The files are DELETED per bin by the pipeline (B2).
+        {
+            std::vector<FILE*> bf(size_t(pbk), nullptr);
+            for (u32 i = 0; i < pbk; ++i) {
+                const std::string bp = modebDir + "/pbin_" +
+                    std::to_string(i) + ".bin";
+                bf[size_t(i)] = std::fopen(bp.c_str(), "wb");
+                if (!bf[size_t(i)]) die("open " + bp);
+            }
+            struct ER { u32 P; u32 o; };
+            std::vector<ER> tbuf;
+            tbuf.reserve(1 << 16);
+            auto flushCells = [&]() {
+                for (const ER& e : tbuf) {
+                    const u64 p0 = dictRefPos[size_t(e.P)];
+                    const u32 len = dictLen[size_t(e.P)];
+                    const u32 b1 = (e.o + 1 < len)
+                        ? u32(T[size_t(p0 + e.o + 1)]) : 0u;
+                    FILE* f = bf[size_t(cellBin[
+                        (u32(T[size_t(p0 + e.o)]) << 8) | b1])];
+                    if (std::fwrite(&e, 8, 1, f) != 1)
+                        die("pair bin write");
+                }
+                tbuf.clear();
+            };
+            for (u64 v = 0; v < dictN; ++v) {
+                const u32 len = dictLen[size_t(v)];
+                for (u32 o = 0; o < len; ++o) {
+                    tbuf.push_back(ER{u32(v), o});
+                    if (tbuf.size() >= (1u << 16)) flushCells();
+                }
+                if ((v & 0xffff) == 0 &&
+                    ::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
+            }
+            flushCells();
+            for (u32 i = 0; i < pbk; ++i)
+                if (std::fflush(bf[size_t(i)]) != 0) die("flush pair bin");
+                else std::fclose(bf[size_t(i)]);
+        }
+        u64 dictStaticPairs = pairsN;
+        u64 nRuns = 0;      // the global group counter (receipts)
+        // (d) THE SORT-AHEAD POOL (the W machinery, binned): workers
+        //     expand the 8 B entries to PEnt (the reference columns),
+        //     sort (ips4o), and spill the sorted chunks per bin; the
+        //     emit bin loop below merges them in order. The flight
+        //     cap bounds the in-flight sort buffers.
+        const u64 perChunk = std::max<u64>(
+            1024, workspaceBytes / 64 / sizeof(PEnt));
+        const u64 flightCap = std::max<u64>(
+            threads * 2, workspaceBytes / 4 / sizeof(PEnt));
+        const u64 nSortThreads = std::max<u64>(1,
+            std::min<u64>(threads, u64(16)));
+        struct ChunkFut {
+            std::mutex mu; std::condition_variable cv;
+            bool done = false;
+            std::string path;
+            u64 n = 0;
+        };
+        struct BinSub {
+            u64 K = 0, nEnt = 0;
+            std::vector<std::unique_ptr<ChunkFut>> f;
+        };
+        std::mutex tmu; std::condition_variable tcv;
+        struct SortTask { u32 bin; u64 c; u64 at; u64 n;
+                          ChunkFut* cf; };
+        std::deque<SortTask> tasks;
+        std::map<u32, BinSub> subs;
+        std::mutex smu;
+        std::mutex fmu; std::condition_variable fcv;
+        u64 flightUsed = 0;
+        std::atomic<bool> submitClosed{false};
+        auto flightAcquire = [&](u64 n) {
+            std::unique_lock<std::mutex> g(fmu);
+            while (flightUsed + n > flightCap) fcv.wait(g);
+            flightUsed += n;
+        };
+        auto flightRelease = [&](u64 n) {
+            { std::lock_guard<std::mutex> g(fmu); flightUsed -= n; }
+            fcv.notify_all();
+        };
+        auto binCount = [&](u32 bin) -> u64 {
+            struct stat sb{};
+            const std::string bp = modebDir + "/pbin_" +
+                std::to_string(bin) + ".bin";
+            if (::stat(bp.c_str(), &sb) != 0) die("stat " + bp);
+            return u64(sb.st_size) / 8;
+        };
+        auto submitBin = [&](u32 bin) {
+            if (bin >= pbk) return;
+            BinSub su;
+            su.nEnt = binCount(bin);
+            su.K = (su.nEnt + perChunk - 1) / perChunk;
+            for (u64 c = 0; c < su.K; ++c) {
+                auto fut = std::make_unique<ChunkFut>();
+                fut->n = std::min(perChunk, su.nEnt - c * perChunk);
+                fut->path = modebDir + "/pchunk_" +
+                    std::to_string(bin) + "_" + std::to_string(c)
+                    + ".bin";
+                su.f.push_back(std::move(fut));
+            }
+            {
+                std::lock_guard<std::mutex> g(smu);
+                subs.emplace(bin, std::move(su));
+            }
+            {
+                std::lock_guard<std::mutex> g(tmu);
+                const BinSub& sb2 = subs.at(bin);
+                for (u64 c = 0; c < sb2.K; ++c)
+                    tasks.push_back(SortTask{
+                        bin, c, c * perChunk,
+                        sb2.f[size_t(c)]->n, sb2.f[size_t(c)].get()});
+            }
+            tcv.notify_all();
+        };
+        std::vector<std::thread> sortPool;
+        for (u64 t = 0; t < nSortThreads; ++t)
+            sortPool.emplace_back([&] {
+                for (;;) {
+                    SortTask t2;
+                    {
+                        std::unique_lock<std::mutex> g(tmu);
+                        while (tasks.empty()) {
+                            if (submitClosed.load()) return;
+                            tcv.wait(g);
+                        }
+                        t2 = tasks.front(); tasks.pop_front();
+                    }
+                    if ((t2.c & 0x3f) == 0 &&
+                        ::access(stopFlag.c_str(), F_OK) == 0)
+                        ::_exit(75);
+                    flightAcquire(t2.n);
+                    const std::string bp = modebDir + "/pbin_"
+                        + std::to_string(t2.bin) + ".bin";
+                    // expand the 8 B entries to PEnt (the reference
+                    // columns carry the only text there is)
+                    std::vector<PEnt> ent;
+                    ent.reserve(size_t(t2.n));
+                    {
+                        FILE* f = std::fopen(bp.c_str(), "rb");
+                        if (!f) die("open " + bp);
+                        if (::fseeko(f, off_t(t2.at * 8), SEEK_SET) != 0)
+                            die("seek " + bp);
+                        struct { u32 P; u32 o; } e;
+                        for (u64 r = 0; r < t2.n; ++r) {
+                            if (std::fread(&e, 8, 1, f) != 1)
+                                die("truncated bin " + bp);
+                            const u64 p0 = dictRefPos[size_t(e.P)];
+                            ent.push_back(PEnt{e.P, e.o,
+                                           p0 + e.o,
+                                           p0 + dictLen[size_t(e.P)]});
+                        }
+                        std::fclose(f);
+                    }
+                    ips4o::sort(ent.begin(), ent.end(), entLess);
+                    {
+                        FILE* g = std::fopen(t2.cf->path.c_str(), "wb");
+                        if (!g) die("open " + t2.cf->path);
+                        if (!ent.empty() &&
+                            std::fwrite(ent.data(), sizeof(PEnt),
+                                        ent.size(), g) != ent.size())
+                            die("write " + t2.cf->path);
+                        std::fclose(g);
+                        std::vector<PEnt>().swap(ent);
+                    }
+                    flightRelease(t2.n);
+                    {
+                        std::lock_guard<std::mutex> g3(t2.cf->mu);
+                        t2.cf->done = true;
+                        t2.cf->cv.notify_all();
+                    }
+                }
+            });
+        // AMENDMENT B4: THE SCRATCH LAW - the live scratch of the
+        // machine's own dirs, walked + asserted at every phase gate
+        // and at every bin; a violation dies with numbers.
+        u64 g_scratchPeak = 0;
+        auto scratchLive = [&]() -> u64 {
+            u64 total = 0;
+            for (const char* d : { modebDir.c_str(),
+                                   (bandsDir + "/../merged").c_str(),
+                                   bandsDir.c_str() }) {
+                DIR* dd = ::opendir(d);
+                if (!dd) continue;
+                while (struct dirent* e2 = ::readdir(dd)) {
+                    if (e2->d_name[0] == '.') continue;
+                    struct stat sb{};
+                    const std::string fp =
+                        std::string(d) + "/" + e2->d_name;
+                    if (::stat(fp.c_str(), &sb) == 0 && !S_ISDIR(sb.st_mode))
+                        total += u64(sb.st_size);
+                }
+                ::closedir(dd);
+            }
+            return total;
+        };
+        auto scratchGate = [&](const char* phase) {
+            const u64 live = scratchLive();
+            if (live > g_scratchPeak) g_scratchPeak = live;
+            std::fprintf(stderr,
+                "SS_SCRATCH phase=%s live_bytes=%" PRIu64
+                " budget_bytes=%" PRIu64 " peak_bytes=%" PRIu64
+                " rule=amendment_b4_the_scratch_law\n",
+                phase, live, scratchBudget, g_scratchPeak);
+            if (live > scratchBudget)
+                die("SCRATCH_LAW: phase " + std::string(phase)
+                    + " holds live_bytes=" + std::to_string(live)
+                    + " against the scratch budget "
+                    + std::to_string(scratchBudget)
+                    + " - the machine must operate in less than N"
+                      " space; this is a machine bug, not a tuning"
+                      " outcome");
+        };
 
         // ---- THE OCCURRENCE LISTS: per phrase, its parse positions
         // ordered by the CONTINUATION RANK parseRank[occ+1] (the END
@@ -4627,14 +4504,10 @@ int main(int argc, char** argv) {
                 // per-row decisions at emit time. The merge machinery is
                 // deleted, not tuned.
                 const double te0 = now_sec();
-                // nRuns (outer, mapped) = the equal-slice groups
-                auto sliceX = [&](u64 pairIdx) -> u64 {
-                    return pairsSA[size_t(pairIdx)];
-                };
-                auto rowOf = [&](u64 pairIdx, u32 occ) -> BandRow {
-                    const u64 x = pairsSA[size_t(pairIdx)];
-                    const u32 vP = phraseOfAt[size_t(x)];
-                    const u64 o = x - dictLenPrefix[size_t(vP)];
+                // AMENDMENT B: the bin loop fuses the sort and the
+                // emit. The rows are keyed by (P, o) DIRECTLY - the
+                // global pairs columns are gone.
+                auto rowOfPO = [&](u32 P, u32 o, u32 occ) -> BandRow {
                     BandRow r;
                     if (o >= (1ull << 32))
                         die("PAIR_OFFSET: o=" + std::to_string(o)
@@ -4659,14 +4532,10 @@ int main(int argc, char** argv) {
                     r.cont4 = c4;
                     return r;
                 };
-                // THE BOUNDARY COMPARE (TAPE_BINS.md 7b): used ONLY in
-                // the landing walk now - once per row per chain step
-                auto cmpBound = [&](const BandRow& A, u64 bx, u32) -> int {
-                    // bx is a PAIR INDEX (the cumulative-bytes space);
-                    // the slice is THE CORPUS at [pairsPos[bx],
-                    // pairsEnd[bx]) - the reference columns.
-                    const u64 pBx = pairsPos[size_t(bx)];
-                    const u64 eB = pairsEnd[size_t(bx)];
+                // THE BOUNDARY COMPARE: the boundary pair's (pos,end)
+                // - the bin's merged stream carries them
+                auto cmpBoundPE = [&](const BandRow& A, u64 pBx,
+                                      u64 eB) -> int {
                     const u32 vA = PA[size_t(A.occ_o >> 32)];
                     const u8* pA = T + size_t(dictRefPos[size_t(vA)]
                         + u32(A.occ_o));
@@ -4738,19 +4607,167 @@ int main(int argc, char** argv) {
                             : SENTINEL_SYMBOL);
                 };
 
-                // ---- THE WINDOWS (the dial-banded emit): the groups are
-                // cut into windows of bounded row mass; a window's L1 +
-                // L2 + L3 + walk all fit the dial. Crossings that land
-                // INSIDE the window take the local CSR; crossings that
-                // land BEYOND park as (lg, pairIdx, occLo) in the
-                // TARGET window's arrival file; the windows run in
-                // ascending key order, so the concat order IS the
-                // pairsSA order. BIT-IDENTITY ACROSS DIALS: a group's
-                // row set is dial-invariant, the arrivals insert BY
-                // VALUE (order-independent), and the container is
-                // unit-structure-invariant (run14b/14c: the 24-unit
-                // and the 4-unit readers byte-identical).
-                struct Cross { u32 lg; u64 pairIdx; u32 occLo; };
+                // ---- THE BIN LOOP (AMENDMENT B): the sort and the emit
+                //      fused, one bin at a time. Per bin: merge its
+                //      sorted chunks into the bin's stream + its run
+                //      segment; the windows (mass-cut group ranges
+                //      WITHIN the bin) run the existing CSR exchange;
+                //      then DELETE the bin's inputs (B2's deletion
+                //      law). A row NEVER crosses its bin (the proven
+                //      cell law), so the landing drains at the bin's
+                //      end; the seam belt checks the order across
+                //      bins anyway.
+                u64 totalRows = 0, totalCrossIn = 0, totalCrossFwd = 0,
+                    totalWalk = 0, totalBuilds = 0, totalMergeBuilds = 0;
+                u64 w5FastTotal = 0, w5BoundedTotal = 0, w5GroupTotal = 0,
+                    w5ResidualTotal = 0;
+                double walkCoresMeasured = 0;
+                u64 assembledTotal = 0, emitRows = 0;
+                u64 prevEmittedPos = ~0ull;
+                const u64 headPacked = packRow(FILE_N);
+                bool pendingHead = true;
+                double assemble_s = 0, walk_s = 0, resolve_s = 0,
+                       exchange_s = 0, merge_s = 0, binMerge_s = 0;
+                PEnt seamPrev{}; bool seamHave = false;
+                u64 binBeltChecks = 0;
+                const std::string arrPrefix = modebDir + "/arr_w";
+                u32 nextSubmit = 0;
+                u64 rowsSorted = 0;
+                for (u32 binIdx = 0; binIdx < pbk; ++binIdx) {
+                    if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
+                    while (nextSubmit < pbk &&
+                           nextSubmit <= u32(binIdx) + nSortThreads * 2) {
+                        submitBin(nextSubmit);
+                        ++nextSubmit;
+                    }
+                    BinSub su;
+                    {
+                        std::lock_guard<std::mutex> g(smu);
+                        su = std::move(subs.at(binIdx));
+                        subs.erase(binIdx);
+                    }
+                    for (u64 c = 0; c < su.K; ++c) {
+                        ChunkFut& cf = *su.f[size_t(c)];
+                        std::unique_lock<std::mutex> g3(cf.mu);
+                        while (!cf.done) cf.cv.wait(g3);
+                    }
+                    // THE BIN MERGE: the K sorted chunk files -> the
+                    // bin's sorted stream + its run segment
+                    const double tbm0 = now_sec();
+                    const std::string sortedPath = modebDir + "/bin_"
+                        + std::to_string(binIdx) + ".sorted";
+                    const std::string runsPath = modebDir + "/bin_"
+                        + std::to_string(binIdx) + ".runs";
+                    struct Stream { FILE* f; PEnt head; u64 left; };
+                    auto streamLess = [&](const Stream& a, const Stream& b) {
+                        return entLess(b.head, a.head);   // min-heap
+                    };
+                    std::vector<Stream> st;
+                    st.reserve(size_t(su.K));
+                    for (u64 c = 0; c < su.K; ++c) {
+                        FILE* f = std::fopen(su.f[size_t(c)]->path.c_str(),
+                                             "rb");
+                        if (!f) die("reopen " + su.f[size_t(c)]->path);
+                        Stream S2{f, PEnt{}, su.f[size_t(c)]->n};
+                        if (S2.left &&
+                            std::fread(&S2.head, sizeof(PEnt), 1, f) != 1)
+                            die("read " + su.f[size_t(c)]->path);
+                        if (S2.left) st.push_back(std::move(S2));
+                    }
+                    std::make_heap(st.begin(), st.end(), streamLess);
+                    ColWriter sw, rw;
+                    sw.open(sortedPath);
+                    rw.open(runsPath);
+                    u64 binGroups = 0, outPos = 0;
+                    rw.put(u64(0)); ++binGroups;
+                    PEnt prevEnt{}; bool havePrev = false;
+                    while (!st.empty()) {
+                        std::pop_heap(st.begin(), st.end(), streamLess);
+                        Stream& S2 = st.back();
+                        const PEnt& e = S2.head;
+                        sw.put(e);
+                        // THE ORDER BELT: every entry, exhaustive
+                        if (havePrev && !entLess(prevEnt, e)
+                            && !entEq(prevEnt, e))
+                            die("PAIRS_ORDER: bin "
+                                + std::to_string(binIdx)
+                                + " at " + std::to_string(outPos)
+                                + " disagrees with the slice order");
+                        // THE SEAM BELT: the order across bins
+                        if (seamHave && outPos == 0 &&
+                            entLess(e, seamPrev))
+                            die("BIN_SEAM_ORDER: bin " +
+                                std::to_string(binIdx)
+                                + "'s first entry sorts before bin "
+                                + std::to_string(binIdx - 1)
+                                + "'s last - the bin order is broken");
+                        if (havePrev && !entEq(prevEnt, e)) {
+                            rw.put(outPos); ++binGroups;
+                        }
+                        prevEnt = e; havePrev = true;
+                        ++binBeltChecks;
+                        ++outPos;
+                        if (--S2.left) {
+                            if (std::fread(&S2.head, sizeof(PEnt), 1, S2.f)
+                                != 1) die("chunk read");
+                            std::push_heap(st.begin(), st.end(), streamLess);
+                        } else {
+                            std::fclose(S2.f);
+                            st.pop_back();
+                        }
+                    }
+                    sw.close();
+                    rw.put(u64(outPos));   // the segment sentinel
+                    rw.close();
+                    if (outPos != su.nEnt)
+                        die("BIN_TOTAL: bin " + std::to_string(binIdx)
+                            + " merged " + std::to_string(outPos)
+                            + " against " + std::to_string(su.nEnt));
+                    if (outPos) { seamPrev = prevEnt; seamHave = true; }
+                    rowsSorted += outPos;
+                    for (u64 c = 0; c < su.K; ++c)
+                        ::remove(su.f[size_t(c)]->path.c_str());
+                    ::remove((modebDir + "/pbin_"
+                              + std::to_string(binIdx) + ".bin").c_str());
+                    binMerge_s += now_sec() - tbm0;
+                    if (!outPos) continue;
+                    // map the bin's stream + run segment
+                    PEnt* binPEnt = nullptr;
+                    u64* binRuns = nullptr;
+                    {
+                        ColMap m1; m1.mapRO(sortedPath, outPos,
+                                            sizeof(PEnt));
+                        binPEnt = m1.as<PEnt>();
+                        ColMap m2; m2.mapRO(runsPath, binGroups + 1, 8);
+                        binRuns = m2.as<u64>();
+                    }
+                    const u64 binGEnd = binGroups;  // local group count
+                    const u64 gBase = nRuns;
+                    nRuns += binGroups;
+                    scratchGate("bin");
+                    // the window boundaries WITHIN the bin (mass pass)
+                    const u64 winRowsTarget = std::max<u64>(4096,
+                        workspaceBytes / 2 / 128);
+                    std::vector<u64> winG;
+                    winG.push_back(0);
+                    {
+                        u64 cum = 0;
+                        for (u64 g = 0; g + 1 < binGEnd; ++g) {
+                            const u64 lo5 = binRuns[size_t(g)],
+                                      hi5 = binRuns[size_t(g + 1)];
+                            for (u64 mi = lo5; mi < hi5; ++mi)
+                                cum += occStart[size_t(binPEnt[size_t(mi)].P
+                                                       + 1)]
+                                     - occStart[size_t(
+                                           binPEnt[size_t(mi)].P)];
+                            if (cum >= winRowsTarget) {
+                                winG.push_back(g + 1);
+                                cum = 0;
+                            }
+                        }
+                        winG.push_back(binGEnd);
+                    }
+                struct Cross { u32 lg; u32 P; u32 o; u32 occLo; };
                 // AMENDMENT W5: the row facts the walk needs to bound
                 // its byte-work: the leading phrase id + the offset +
                 // the continuation's aligned rank (0 = the END)
@@ -4763,51 +4780,134 @@ int main(int argc, char** argv) {
                     std::vector<u32> ownCnt;
                     std::vector<Cross> cross;  // lands inside the window
                     std::vector<Cross> fwd;    // lands in a LATER window
+                    std::vector<Cross> binFwd; // lands in a LATER BIN (B3)
                     u64 rows = 0, walkSteps = 0, rowBuilds = 0;
                 };
                 // (a) the window boundaries: a streaming mass pass over
                 //     the mapped columns (own-rows per group; the
                 //     arrivals add a bounded slack the dial absorbs)
-                // ~80 B/row of window state (own 20 B + CSR 16 B +
-                // fwd 24 B + finalPos 8 B + buf 16 B) + the arrival
-                // slack; the dial absorbs the estimate's miss
-                const u64 winRowsTarget = std::max<u64>(4096,
-                    workspaceBytes / 2 / 128);
-                std::vector<u64> winG;
-                winG.push_back(0);
+                // the windows WITHIN the bin (the existing mass-cut
+                // + CSR machinery; the crossings are intra-bin)
+                // ---- THE BIN PRE-PASS (B3): the previous bins'
+                //      re-parked rows re-walked from THIS bin's head
+                //      (forward only; the target cell's bin decides
+                //      resolve-vs-repark). The crossings are the
+                //      1-byte-slice rows - bounded by the block's
+                //      last-offset pair mass.
+                std::vector<std::vector<Cross>> binInb(winG.size() - 1);
                 {
-                    u64 cum = 0, gMass = 0;
-                    for (u64 g = 0; g + 1 < nRuns; ++g) {
-                        if ((gMass++ & 0xffff) == 0 &&
-                            ::access(stopFlag.c_str(), F_OK) == 0)
-                            ::_exit(75);
-                        const u64 lo5 = runStart[size_t(g)],
-                                  hi5 = runStart[size_t(g + 1)];
-                        for (u64 mi = lo5; mi < hi5; ++mi) {
-                            const u32 vP =
-                                phraseOfAt[size_t(pairsSA[size_t(mi)])];
-                            cum += occStart[size_t(vP + 1)]
-                                 - occStart[size_t(vP)];
-                        }
-                        if (cum >= winRowsTarget) {
-                            winG.push_back(g + 1);
-                            cum = 0;
+                    const double tp0 = now_sec();
+                    const std::string ip = modebDir + "/arr_b"
+                        + std::to_string(binIdx) + ".bin";
+                    std::vector<Cross> inb;
+                    {
+                        FILE* f = std::fopen(ip.c_str(), "rb");
+                        if (f) {
+                            Cross c;
+                            while (std::fread(&c, sizeof(Cross), 1, f) == 1)
+                                inb.push_back(c);
+                            std::fclose(f);
+                            ::remove(ip.c_str());
                         }
                     }
-                    winG.push_back(nRuns);
+                    if (!inb.empty()) {
+                        std::vector<Cross> rePark;
+                        auto passAt2 = [&](const BandRow& row,
+                                          u64 m) -> bool {
+                            if (m + 1 >= binGEnd) return true;
+                            const PEnt& nx2 = binPEnt[size_t(
+                                binRuns[size_t(m + 1)])];
+                            return cmpBoundPE(row, nx2.pos, nx2.end) < 0;
+                        };
+                        for (const Cross& c : inb) {
+                            const BandRow row = rowOfPO(
+                                c.P, c.o, occList[size_t(c.occLo)]);
+                            // THE HEAD BELT: a re-parked row sorts at
+                            // or after this bin's head (it passed the
+                            // previous bin's end)
+                            {
+                                const PEnt& hd =
+                                    binPEnt[size_t(binRuns[size_t(0)])];
+                                if (cmpBoundPE(row, hd.pos, hd.end) < 0
+                                    && !passAt2(row, 0))
+                                    die("BIN_ARRIVAL_ORDER: a re-parked"
+                                        " row sorts before bin "
+                                        + std::to_string(binIdx)
+                                        + "'s head - the bin order or"
+                                          " the park is broken");
+                            }
+                            u64 lg = 0, step = 1, hi2 = 0;
+                            while (!passAt2(row, hi2)) {
+                                lg = hi2;
+                                hi2 = lg + step;
+                                if (hi2 >= binGEnd) {
+                                    hi2 = binGEnd - 1;
+                                    break;
+                                }
+                                step <<= 1;
+                            }
+                            if (hi2 > lg + 1) {
+                                u64 a2 = lg, b2 = hi2;
+                                while (a2 + 1 < b2) {
+                                    const u64 mid = a2 + (b2 - a2) / 2;
+                                    if (passAt2(row, mid)) b2 = mid;
+                                    else a2 = mid;
+                                }
+                                lg = b2;
+                            } else lg = hi2;
+                            // resolve-vs-repark (the exact cell test)
+                            bool rePark2 = false;
+                            if (lg + 1 >= binGEnd && binIdx + 1 < pbk) {
+                                const u64 p0 =
+                                    dictRefPos[size_t(c.P)];
+                                if (c.o + 1 >= dictLen[size_t(c.P)]) {
+                                    const u32 c0 =
+                                        u32(T[size_t(p0 + c.o)]);
+                                    const u32 tcell = (c0 << 8)
+                                        | (row.cont4 >> 24);
+                                    if (cellBin[tcell] > binIdx)
+                                        rePark2 = true;
+                                } else {
+                                    // a multi-byte row re-parked: it
+                                    // stays in its own cell - only
+                                    // legal if that cell left the bin
+                                    const u32 c0 =
+                                        u32(T[size_t(p0 + c.o)]);
+                                    const u32 c1 = (c.o + 2 <
+                                        dictLen[size_t(c.P)])
+                                        ? u32(T[size_t(p0 + c.o + 1)])
+                                        : 0u;
+                                    if (cellBin[(c0 << 8) | c1] > binIdx)
+                                        rePark2 = true;
+                                }
+                            }
+                            if (rePark2) {
+                                rePark.push_back(c);
+                            } else {
+                                const size_t k3 = size_t(
+                                    std::upper_bound(winG.begin(),
+                                        winG.end(), lg) - winG.begin())
+                                    - 1;
+                                binInb[k3].push_back(
+                                    Cross{u32(lg), c.P, c.o, c.occLo});
+                                ++totalCrossIn;
+                            }
+                        }
+                        if (!rePark.empty()) {
+                            FILE* f = std::fopen((modebDir + "/arr_b"
+                                + std::to_string(binIdx + 1)
+                                + ".bin").c_str(), "ab");
+                            if (!f) die("open the bin arrival file");
+                            for (const Cross& c : rePark)
+                                if (std::fwrite(&c, sizeof(Cross), 1,
+                                                f) != 1)
+                                    die("write the bin arrival file");
+                            std::fclose(f);
+                            totalCrossFwd += rePark.size();
+                        }
+                    }
+                    exchange_s += now_sec() - tp0;
                 }
-                const std::string arrPrefix = modebDir + "/arr_w";
-                u64 totalRows = 0, totalCrossIn = 0, totalCrossFwd = 0,
-                    totalWalk = 0, totalBuilds = 0, totalMergeBuilds = 0;
-                u64 w5FastTotal = 0, w5BoundedTotal = 0, w5GroupTotal = 0,
-                    w5ResidualTotal = 0;
-                double walkCoresMeasured = 0;   // W3: busy cores ~= threads
-                u64 assembledTotal = 0, emitRows = 0;
-                u64 prevEmittedPos = ~0ull;
-                const u64 headPacked = packRow(FILE_N);
-                bool pendingHead = true;   // the virtual END row first
-                double assemble_s = 0, walk_s = 0, resolve_s = 0,
-                       exchange_s = 0, merge_s = 0;
                 for (size_t wIdx = 0; wIdx + 1 < winG.size(); ++wIdx) {
                     if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
                     const u64 G0 = winG[wIdx], G1 = winG[wIdx + 1];
@@ -4815,13 +4915,13 @@ int main(int argc, char** argv) {
                         std::min<u64>(threads, G1 - G0));
                     std::vector<u64> spanLo(size_t(T1 + 1), G1);
                     {
-                        const u64 mLo = runStart[size_t(G0)],
-                                  mHi = runStart[size_t(G1)];
+                        const u64 mLo = binRuns[size_t(G0)],
+                                  mHi = binRuns[size_t(G1)];
                         for (u64 t = 0; t < T1; ++t) {
                             const u64 pCut = mLo + (mHi - mLo) * t / T1;
                             spanLo[size_t(t)] = u64(std::lower_bound(
-                                runStart + size_t(G0),
-                                runStart + size_t(G1), pCut) - runStart);
+                                binRuns + size_t(G0),
+                                binRuns + size_t(G1), pCut) - binRuns);
                         }
                         spanLo[size_t(T1)] = G1;
                         for (u64 t = 1; t < T1; ++t)
@@ -4849,13 +4949,12 @@ int main(int argc, char** argv) {
                                     if ((g & 0xffff) == 0 &&
                                         ::access(stopFlag.c_str(), F_OK) == 0)
                                         ::_exit(75);
-                                    const u64 curLo = runStart[size_t(g)];
-                                    const u64 curHi = runStart[size_t(g + 1)];
+                                    const u64 curLo = binRuns[size_t(g)];
+                                    const u64 curHi = binRuns[size_t(g + 1)];
                                     Active R;
                                     R.runLo = curLo; R.runHi = curHi;
                                     for (u64 mi = curLo; mi < curHi; ++mi) {
-                                        const u32 vP =
-                                            phraseOfAt[size_t(pairsSA[size_t(mi)])];
+                                        const u32 vP = binPEnt[size_t(mi)].P;
                                         if (occStart[size_t(vP)] <
                                             occStart[size_t(vP + 1)])
                                             innerPush(R, Inner{u32(mi - curLo),
@@ -4863,11 +4962,14 @@ int main(int argc, char** argv) {
                                     }
                                     while (!R.iheap.empty()) {
                                         const Inner top = R.iheap.front();
-                                        const u64 pairIdx = curLo + top.member;
+                                        const u64 mi2 = curLo + top.member;
+                                        const PEnt& pe =
+                                            binPEnt[size_t(mi2)];
                                         const u32 occ = occList[size_t(top.occLo)];
                                         ++S.rows;
                                         ++S.rowBuilds;
-                                        const BandRow row = rowOf(pairIdx, occ);
+                                        const BandRow row =
+                                            rowOfPO(pe.P, pe.o, occ);
                                         // THE LANDING: the first group
                                         // whose next boundary the row's
                                         // value passes - the gallop
@@ -4879,29 +4981,34 @@ int main(int argc, char** argv) {
                                         u64 lg = g;
                                         {
                                             auto passAt = [&](u64 m) -> bool {
-                                                if (m + 1 >= nRuns)
-                                                    return true;  // drain
-                                                const u64 nx2 = sliceX(
-                                                    runStart[size_t(m + 1)]);
-                                                return cmpBound(row, nx2,
-                                                    pairsEnd[size_t(nx2)])
-                                                        < 0;
+                                                // THE BIN CLAMP: a row
+                                                // never crosses its bin
+                                                // (the proven cell law);
+                                                // the bin's last group
+                                                // drains
+                                                if (m + 1 >= binGEnd)
+                                                    return true;
+                                                const PEnt& nx2 =
+                                                    binPEnt[size_t(
+                                                        binRuns[size_t(m + 1)])];
+                                                return cmpBoundPE(row,
+                                                    nx2.pos, nx2.end) < 0;
                                             };
                                             u64 step = 1;
                                             u64 hi2 = g;
                                             while (!passAt(hi2)) {
                                                 lg = hi2;
                                                 hi2 = lg + step;
-                                                if (hi2 >= nRuns) {
-                                                    hi2 = nRuns - 1;
+                                                if (hi2 >= binGEnd) {
+                                                    hi2 = binGEnd - 1;
                                                     if (passAt(hi2)) break;
-                                                    hi2 = nRuns;
+                                                    hi2 = binGEnd;
                                                     break;
                                                 }
                                                 step <<= 1;
                                             }
-                                            if (hi2 == nRuns) {
-                                                lg = nRuns - 1;
+                                            if (hi2 == binGEnd) {
+                                                lg = binGEnd - 1;
                                             } else if (hi2 > lg + 1) {
                                                 u64 a2 = lg, b2 = hi2;
                                                 while (a2 + 1 < b2) {
@@ -4916,7 +5023,7 @@ int main(int argc, char** argv) {
                                                 lg = hi2;
                                             }
                                             // THE STRAY-PASS BELT
-                                            if (lg + 1 < nRuns - 1 &&
+                                            if (lg + 1 < binGEnd - 1 &&
                                                 !passAt(lg + 1))
                                                 die("LANDING_INVERT: the row"
                                                     " at group " +
@@ -4929,29 +5036,61 @@ int main(int argc, char** argv) {
                                                     " - the gallop is"
                                                     " unsound here");
                                         }
-                                        if (lg == g) {
+                                        // B3: THE BIN CLAMP TEST.
+                                        // A multi-byte row stays in its
+                                        // own cell - never clamped. A
+                                        // 1-BYTE-SLICE row (the last
+                                        // offset of a phrase) has the
+                                        // continuation's first byte as
+                                        // its value's second byte: its
+                                        // landing group lives in its
+                                        // target cell (c0,cont0). If
+                                        // that cell is in a LATER bin,
+                                        // the row re-parks (the next
+                                        // bin re-walks it from its
+                                        // head); else the landing is
+                                        // genuine (the gallop compared
+                                        // real boundaries only).
+                                        bool binCross = false;
+                                        if (lg + 1 >= binGEnd &&
+                                            binIdx + 1 < pbk &&
+                                            pe.o + 1 >=
+                                                dictLen[size_t(pe.P)]) {
+                                            const u32 c0 = u32(T[size_t(
+                                                dictRefPos[size_t(pe.P)]
+                                                + pe.o)]);
+                                            const u32 tcell =
+                                                (c0 << 8)
+                                                | (row.cont4 >> 24);
+                                            if (cellBin[tcell] > binIdx)
+                                                binCross = true;
+                                        }
+                                        if (binCross) {
+                                            S.binFwd.push_back(
+                                                Cross{0, pe.P, pe.o,
+                                                      top.occLo});
+                                        } else if (lg == g) {
                                             S.ownPos.push_back(rowPos(row));
-                                            S.ownIds.push_back(pairIdx);
+                                            S.ownIds.push_back(
+                                                (u64(pe.P) << 32) | pe.o);
                                             S.ownOcc.push_back(top.occLo);
                                             S.ownFacts.push_back(FactRow{
-                                                phraseOfAt[size_t(
-                                                    pairsSA[size_t(pairIdx)])],
+                                                pe.P,
                                                 u32(row.occ_o),
                                                 row.nrank});
                                             ++S.ownCnt[size_t(g - gLo)];
                                         } else if (lg < G1) {
                                             S.cross.push_back(
-                                                Cross{u32(lg), pairIdx,
+                                                Cross{u32(lg), pe.P, pe.o,
                                                       top.occLo});
                                         } else {
                                             S.fwd.push_back(
-                                                Cross{u32(lg), pairIdx,
+                                                Cross{u32(lg), pe.P, pe.o,
                                                       top.occLo});
                                         }
                                         innerPop(R);
                                         const u32 nextOcc = top.occLo + 1;
-                                        const u32 vP = phraseOfAt[
-                                            size_t(pairsSA[size_t(pairIdx)])];
+                                        const u32 vP = pe.P;
                                         if (nextOcc <
                                             occStart[size_t(vP + 1)])
                                             innerPush(R, Inner{top.member,
@@ -4982,6 +5121,7 @@ int main(int argc, char** argv) {
                                 u64(S.fwd[size_t(i5)].lg)) - winG.begin())
                                 - 1;
                             FILE* f = std::fopen((arrPrefix
+                                + std::to_string(binIdx) + "_"
                                 + std::to_string(k3) + ".bin").c_str(),
                                 "ab");
                             if (!f) die("open the arrival file");
@@ -4993,6 +5133,26 @@ int main(int argc, char** argv) {
                             i5 = j5;
                         }
                         std::vector<Cross>().swap(S.fwd);
+                    }
+                    // B3: THE BIN-LEVEL PARK - the clamped rows go to
+                    // the NEXT bin's arrival file (re-walked from its
+                    // head; forward only, possibly several hops)
+                    {
+                        u64 nBin = 0;
+                        for (const auto& S : L1out) nBin += S.binFwd.size();
+                        if (nBin) {
+                            FILE* f = std::fopen((modebDir + "/arr_b"
+                                + std::to_string(binIdx + 1)
+                                + ".bin").c_str(), "ab");
+                            if (!f) die("open the bin arrival file");
+                            for (const auto& S : L1out)
+                                for (const Cross& c : S.binFwd)
+                                    if (std::fwrite(&c, sizeof(Cross), 1,
+                                                    f) != 1)
+                                        die("write the bin arrival file");
+                            std::fclose(f);
+                            totalCrossFwd += nBin;
+                        }
                     }
                     for (const auto& S : L1out) {
                         totalRows += S.rows;
@@ -5009,6 +5169,7 @@ int main(int argc, char** argv) {
                         std::vector<Cross> inbound;
                         {
                             const std::string ip = arrPrefix
+                                + std::to_string(binIdx) + "_"
                                 + std::to_string(wIdx) + ".bin";
                             FILE* f = std::fopen(ip.c_str(), "rb");
                             if (f) {
@@ -5020,6 +5181,9 @@ int main(int argc, char** argv) {
                                 ::remove(ip.c_str());
                             }
                         }
+                        inbound.insert(inbound.end(),
+                                       binInb[wIdx].begin(),
+                                       binInb[wIdx].end());
                         std::vector<u32> cnt(size_t(G1 - G0), 0);
                         for (const Cross& c : inbound) {
                             if (c.lg < G0 || c.lg >= G1)
@@ -5044,11 +5208,11 @@ int main(int argc, char** argv) {
                         std::vector<u32> cur2 = arrStart;
                         for (const Cross& c : inbound)
                             arrBuf[size_t(cur2[size_t(c.lg - G0)]++)] =
-                                {c.pairIdx, c.occLo};
+                                {(u64(c.P) << 32) | c.o, c.occLo};
                         for (const auto& S : L1out)
                             for (const Cross& c : S.cross)
                                 arrBuf[size_t(cur2[size_t(c.lg - G0)]++)] =
-                                    {c.pairIdx, c.occLo};
+                                    {(u64(c.P) << 32) | c.o, c.occLo};
                         exchange_s += now_sec() - t2;
                     }
                     // ---- PHASE L3: the per-group resolved merge
@@ -5103,8 +5267,11 @@ int main(int argc, char** argv) {
                                             + long(ownOff + ownN));
                                     mrows.resize(size_t(ownN));
                                     for (u32 i2 = 0; i2 < ownN; ++i2) {
-                                        mrows[size_t(i2)] = rowOf(
-                                            S.ownIds[size_t(ownOff + i2)],
+                                        mrows[size_t(i2)] = rowOfPO(
+                                            u32(S.ownIds[
+                                                size_t(ownOff + i2)] >> 32),
+                                            u32(S.ownIds[
+                                                size_t(ownOff + i2)]),
                                             occList[size_t(
                                                 S.ownOcc[size_t(ownOff + i2)])]);
                                         ++D.mergeBuilds;
@@ -5112,8 +5279,9 @@ int main(int argc, char** argv) {
                                     for (u64 a = arrA; a < arrB; ++a) {
                                         const auto [pI, occLo] =
                                             arrBuf[size_t(a)];
-                                        const BandRow ar = rowOf(
-                                            pI, occList[size_t(occLo)]);
+                                        const BandRow ar = rowOfPO(
+                                            u32(pI >> 32), u32(pI),
+                                            occList[size_t(occLo)]);
                                         ++D.mergeBuilds;
                                         // the value position among the
                                         // merged entries by BINARY SEARCH
@@ -5141,8 +5309,7 @@ int main(int argc, char** argv) {
                                         mergedFacts.insert(
                                             mergedFacts.begin() + long(at),
                                             FactRow{
-                                                phraseOfAt[size_t(
-                                                    pairsSA[size_t(pI)])],
+                                                u32(pI >> 32),
                                                 u32(ar.occ_o),
                                                 ar.nrank});
                                         mrows.insert(
@@ -5380,7 +5547,22 @@ int main(int argc, char** argv) {
                         }
                         assemble_s += now_sec() - ta0;
                     }
-                }
+                }   // the window loop
+                // B2's DELETION LAW: the bin's inputs are gone
+                ::munmap(binPEnt, size_t(outPos * sizeof(PEnt)));
+                ::munmap(binRuns, size_t((binGroups + 1) * 8));
+                ::remove(sortedPath.c_str());
+                ::remove(runsPath.c_str());
+                scratchGate("bin_done");
+                }   // the bin loop
+                submitClosed.store(true);
+                tcv.notify_all();
+                for (auto& th : sortPool) th.join();
+                phaseRssGate("pairs_sort");
+                if (rowsSorted != pairsN)
+                    die("PAIRS_TOTAL: the bins sorted "
+                        + std::to_string(rowsSorted) + " pairs against "
+                        + std::to_string(pairsN));
                 if (totalRows != N - 1)
                     die("RESOLVE_FINAL: the landing walk resolved " +
                         std::to_string(totalRows) + " rows against N-1="
@@ -5390,11 +5572,14 @@ int main(int argc, char** argv) {
                     "SS_LIST_RESOLVE rows=%" PRIu64
                     " crossings_in=%" PRIu64 " crossings_fwd=%" PRIu64
                     " walk_steps=%" PRIu64 " row_builds=%" PRIu64
-                    " windows=%zu resolve_s=%.2f"
+                    " resolve_s=%.2f bin_merge_s=%.2f bins=%u"
+                    " bin_belt_checks=%" PRIu64
                     " rule=the_landing_walk_once_per_row;the_lists"
-                    "_carry_the_resolved_expansion_order\n",
+                    "_carry_the_resolved_expansion_order;the_bin"
+                    "_order_is_the_key_order_no_merge\n",
                     totalRows, totalCrossIn, totalCrossFwd, totalWalk,
-                    totalBuilds, winG.size() - 1, resolve_s);
+                    totalBuilds, resolve_s, binMerge_s, pbk,
+                    binBeltChecks);
                 std::fprintf(stderr,
                     "SS_LIST_EXCHANGE arrivals_in=%" PRIu64
                     " arrivals_fwd=%" PRIu64 " exchange_s=%.2f"
@@ -5407,6 +5592,13 @@ int main(int argc, char** argv) {
                     " rule=own_rows_rank_ordered;arrivals_inserted"
                     "_by_value\n",
                     totalMergeBuilds, merge_s);
+                scratchGate("pairs_emit_done");
+                std::fprintf(stderr,
+                    "SS_SCRATCH_PEAK peak_live_bytes=%" PRIu64
+                    " budget_bytes=%" PRIu64
+                    " rule=amendment_b4_the_scratch_law;sub_n_by"
+                    "_construction\n",
+                    g_scratchPeak, scratchBudget);
                 if (pendingHead)
                     die("EMIT_FINAL: no rows were ever emitted");
                 if (emitRows != N - 1)
