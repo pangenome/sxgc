@@ -847,3 +847,20 @@ dirs including the pieces (the product stream) — both machines write
 it, the finish consumes it concurrently; (3) binPairTarget's floor is
 pairsN/512 — at the sandbox the census-drawn target is small relative
 to the wide dial, so the wide arm ran 12 bins.
+
+## AMENDMENT B — rung 1 re-gate (1 GB, identity vs the certified container)
+
+Corpus pile-slice1g.bin (1,000,000,665 B, the certified slicing/remap).
+Both arms SS_DONE, producer_rc=0 finish_rc=0, products byte-identical
+to the certified rung-1 container:
+
+| arm | dial | bins | producer wall | scratch peak | product sha |
+|-----|------|------|----------------|---------------|-------------|
+| wide | wide | 90 | 932 s (W: 967) | 18.50 GB | b20ceebe…c21f6a3 |
+| tight | 2 GB | 266 | 1117 s (W: ~1219 class) | 14.00 GB | b20ceebe…c21f6a3 |
+
+Pairs sorted 955,321,881; the sort pool wall hides under the emit
+(713.8 s wall, 3.7 s exposed chunk waits at wide). The scratch law
+held at every gate; the curve: the peak is the sort-ahead RADIUS
+(~33 bins in flight x per-bin set) + the product stream — independent
+of corpus size, unlike the W machine's O(N) columns.
