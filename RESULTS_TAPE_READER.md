@@ -784,3 +784,66 @@ DIAL_LAW: all phases under the wide dial (key_sort 2.06 GB,
 parse_sa 1.70 GB, pairs 3.09 GB, emit 3.04 GB against 12 GB +
 3 GB eps). Row-walk battery: 1000 sampled ranks PASS (max depth
 17,017).
+
+## AMENDMENT B (THE BINS / SUB-N SCRATCH) — sandbox receipt
+
+Machine: census-drawn cell bins (B1), build→sort→emit→DELETE per bin
+(B2), the cross-bin arrival exchange for the exact crossing class (B3:
+the last-offset 1-byte-slice rows; target-cell test, re-park, next-bin
+re-walk), THE SCRATCH_LAW asserted (B4). Global pairs columns DELETED.
+
+G0 fixtures (brute-force oracle): **10/10 PASS**, band_invariance
+31a764b6…44eb3. The first shape drained every clamped row at its bin's
+end — mixed_64mb caught it (1,321,500 mismatches at the 64 MB dial);
+the exact target-cell clamp test fixed it.
+
+Sandbox (pile-slice100.bin, 100,000,503 B), three dial arms, all
+SS_DONE, producer_rc=0 finish_rc=0, products byte-identical:
+
+| arm | dial | bins | run_s | SS_SCRATCH_PEAK | product sha |
+|-----|------|------|-------|------------------|------------|
+| 162 | 16 MB | 265 | 145.07 | 1,418,152,707 B | 6325c843…f341 |
+| 5122 | 512 MB | 173 | 71.20 | 1,523,570,706 B | 6325c843…f341 |
+| wide2 | wide | 12 | 65.58 | 3,327,929,794 B | 6325c843…f341 |
+
+Every phase under its dial (SS_PHASE_RSS asserted); the scratch peaks
+are under the declared 20 GB sandbox budget — the law held at every
+SS_SCRATCH gate (per phase + per bin), peak journaled.
+
+Wall table (sandbox wide, bins vs the W machine of record):
+
+| phase | W machine | B machine |
+|-------|-----------|-----------|
+| key sort | 1.74 | 1.61 |
+| parse-SA | 0.24 | 0.23 |
+| parse-LCP | 1.91 | 1.79 |
+| pairs: census | — | 0.82 |
+| pairs: distribute (8 B/pair) | — | 2.92 |
+| pairs: sort pool wall | 40.50 (pairs phase) | 52.24 wall / **3.46 exposed waits** |
+| emit: resolve | 19.6 (emit) | 6.89 |
+| emit: exchange (incl. bin pre-pass) | | 2.76 |
+| emit: merge | | 1.74 |
+| emit: walk + assemble | | 1.42 + 5.06 |
+| TOTAL run_s | 69.89 | **65.58** |
+
+The sort-ahead hides the ips4o sort under the emit (52 s pool wall, 3.5
+s exposed): the bin pipeline is emit-bound, as designed. The scratch is
+O(bin): the W machine's pairs columns were O(N) (28 B/pair + run_start
++ buckets — the 100 GB projection's 7 TB); the B machine holds ONE
+bin's working set (~32 B/pair × 8.39 M at wide) + the product stream
+(the pieces, identical in both machines, consumed concurrently by the
+finish). The W machine's sandbox-wide pairs file peaks: 1.74 GB
+(pairs_sort) + 2.27 GB (emit) vs the B machine's bin-resident set.
+
+The B3 crossing mass (sandbox wide): crossings_in 33,377,950 /
+crossings_fwd 780,770 — the bin-level parks are the 1-byte-slice rows
+only; every multi-byte row provably stays in its own cell (the
+divergence lands at byte 0–1, inside both slices).
+
+Honest notes: (1) the pre-pass re-walk is serial (the mass is the
+1-byte-slice rows — small at the sandbox; journaled as the resolve-path
+cost item at cache-cold scale); (2) SS_SCRATCH counts the machine's own
+dirs including the pieces (the product stream) — both machines write
+it, the finish consumes it concurrently; (3) binPairTarget's floor is
+pairsN/512 — at the sandbox the census-drawn target is small relative
+to the wide dial, so the wide arm ran 12 bins.

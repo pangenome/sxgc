@@ -3985,6 +3985,7 @@ int main(int argc, char** argv) {
         //     reads at the references; a full-mass census, no sampling)
         static u64 histB[65536];
         std::memset(histB, 0, sizeof histB);
+        const double tc0 = now_sec();
         {
             for (u64 v = 0; v < dictN; ++v) {
                 if ((v & 0xffff) == 0 &&
@@ -4025,6 +4026,10 @@ int main(int argc, char** argv) {
             ++bk;   // the bin count = crossings + 1 (a cell is never split)
             pbk = bk;
             std::fprintf(stderr,
+                "SS_PAIR_CENSUS census_s=%.2f dict_bytes=%" PRIu64
+                " rule=exact_cell_mass;the_corpus_reads_at_the"
+                "_references\n", now_sec() - tc0, dictBytesTotal);
+            std::fprintf(stderr,
                 "SS_PAIR_BINS target_per_bin=%" PRIu64
                 " bins=%u scratch_budget=%" PRIu64
                 " rule=amendment_b_census_drawn_cell_ranges"
@@ -4036,6 +4041,7 @@ int main(int argc, char** argv) {
         //     pair (P,o) seeds its bin file with the 8 B (P,o) entry.
         //     The files are DELETED per bin by the pipeline (B2).
         {
+            const double td0 = now_sec();
             std::vector<FILE*> bf(size_t(pbk), nullptr);
             for (u32 i = 0; i < pbk; ++i) {
                 const std::string bp = modebDir + "/pbin_" +
@@ -4072,6 +4078,10 @@ int main(int argc, char** argv) {
             for (u32 i = 0; i < pbk; ++i)
                 if (std::fflush(bf[size_t(i)]) != 0) die("flush pair bin");
                 else std::fclose(bf[size_t(i)]);
+            std::fprintf(stderr,
+                "SS_PAIR_DISTRIBUTE distribute_s=%.2f bytes=%" PRIu64
+                " rule=8b_po_entries;deleted_per_bin\n",
+                now_sec() - td0, pairsN * 8);
         }
         u64 dictStaticPairs = pairsN;
         u64 nRuns = 0;      // the global group counter (receipts)
@@ -4633,6 +4643,8 @@ int main(int argc, char** argv) {
                 const std::string arrPrefix = modebDir + "/arr_w";
                 u32 nextSubmit = 0;
                 u64 rowsSorted = 0;
+                const double poolT0 = now_sec();
+                double chunkWait_s = 0;
                 for (u32 binIdx = 0; binIdx < pbk; ++binIdx) {
                     if (::access(stopFlag.c_str(), F_OK) == 0) ::_exit(75);
                     while (nextSubmit < pbk &&
@@ -4646,11 +4658,13 @@ int main(int argc, char** argv) {
                         su = std::move(subs.at(binIdx));
                         subs.erase(binIdx);
                     }
+                    const double tcw0 = now_sec();
                     for (u64 c = 0; c < su.K; ++c) {
                         ChunkFut& cf = *su.f[size_t(c)];
                         std::unique_lock<std::mutex> g3(cf.mu);
                         while (!cf.done) cf.cv.wait(g3);
                     }
+                    chunkWait_s += now_sec() - tcw0;
                     // THE BIN MERGE: the K sorted chunk files -> the
                     // bin's sorted stream + its run segment
                     const double tbm0 = now_sec();
@@ -5558,6 +5572,12 @@ int main(int argc, char** argv) {
                 submitClosed.store(true);
                 tcv.notify_all();
                 for (auto& th : sortPool) th.join();
+                std::fprintf(stderr,
+                    "SS_PAIR_SORT pool_wall_s=%.2f chunk_wait_s=%.2f"
+                    " rows_sorted=%" PRIu64
+                    " rule=sort_ahead_overlaps_the_emit;waits_are"
+                    "_the_exposed_cost\n",
+                    now_sec() - poolT0, chunkWait_s, rowsSorted);
                 phaseRssGate("pairs_sort");
                 if (rowsSorted != pairsN)
                     die("PAIRS_TOTAL: the bins sorted "
