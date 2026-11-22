@@ -1037,6 +1037,10 @@ Receipt: `TAPEREADER/sandbox/br_wide_terminal_1795382126`, wide/24 threads. Prod
 
 `sandbox/br_measured_recursive_512000000_1795383182630600890/resources.json` (Linux, `python3 gates/measure_recursive_arm.py --dial 512000000`). Same forced ceiling, full container SHA matched; producer/finish rc=0. Producer 205.50 s, measured wall 207.20 s. Producer sampled anon peak 323817472 B <= 512000000 B; VmHWM 698589184 B including file-backed mappings. Finish sampled anon peak 118132736 B. Counted scratch peak 116712352 B <= 200000000 B; whole arm directory sampled peak 463273984 B allocated, including columns, output and other files. Memory samples target 50 ms and directory scans 1 s; these are observations, not a continuous hard limit. This closes the 100 MB two-dial recursive identity comparison, not a 16 MB fit claim.
 
+### Recursive Rust 1 GB identity
+
+`climb/rung1/rust_recursive_1795383463205861505`, `python3 gates/rust_recursive_rung1.py`: 1,000,000,665 B input. Ceiling 4000000: 30575555 parse rows → 1885923 upper rows → 30575555 induced rows. Producer 2218.21 s; concurrent arm 2231.67 s, both rc=0. Counted scratch peak 1174793553 B <= 2000001330 B (excludes columns). Nine-member 1014098520 B product: SHA256 `b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3` and `cmp` to `rung1/run_wide/product.sxi2` passed. RSS not sampled on this rung.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX
