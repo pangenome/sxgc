@@ -977,3 +977,46 @@ the reference oracle for the R certification):
 
 THE REWRITE TARGETS (R): the C++ receipts above are the comparison
 targets - the Rust modules must match them gate for gate.
+
+## AMENDMENT R (THE REWRITE / RUST FIRST) — the front modules gated
+
+The crate: xsa/pfp (a workspace member), build.rs compiles the
+vendored libsais via cc (the deepest level's FFI kernel). The module
+map per R2: col.rs (the column IO - mapped columns only), laws.rs
+(the cooperative stop flag, SCRATCH_LAW 2xN with the per-component
+walk, DIAL_LAW), parse.rs (STROKE P: the streaming one-sided trigger
+walk, transliterated exactly - the FNV-1a k-mer hash, the k+w
+suppression, the 65535 cap, the final phrase), dictsort.rs (W1+W7:
+the equalized cell buckets, rayon par_sort with the pos tie-break
+(the keys unique - the instability legal), the dedupe (the run size
+IS the census, the min pos IS the first-occurrence reference), the
+IN-ORDER commits (byte-order ids), the prefix-relation detection,
+the PA annotation (the sink re-read + the binary search).
+
+THE GATE (R5's order: each module G0-gated): the Rust front run's
+receipts vs the C++ reference oracle, fixture by fixture:
+
+| fixture | phrases | distinct | dict_bytes |
+|---------|---------|----------|------------|
+| adv (the FNV-1a collision attack) | 9 | 4 | identical |
+| docsep | 194357 | 192472 | 6243539 |
+| eofrun | 193720 | 191849 | 6243982 |
+| internsep | 194441 | 192701 | 6247316 |
+| mixed | 174672 | 133660 | 4961245 |
+| period2 | 194387 | 192626 | 6246680 |
+| r0 | 194510 | 192710 | 6245681 |
+| single | 194423 | 192606 | 6245413 |
+
+ALL NINE IDENTICAL to the C++ oracle (phrases, distinct, dict_bytes,
+and mixed's prefix_relations=1). The adversarial FNV-1a collision
+corpus parses to exactly 9 phrases / 4 distinct on BOTH machines.
+
+Rust build quirks fixed on the way (journaled): map_ro used map_mut
+on a read-only fd; the RO mmap's lifetime (the mapping must be held
+by the ColMap); col_bytes was padding the COUNT not the bytes
+(a 32-byte over-map -> SEGV at dictsort's prefix scan - found by the
+debug build's line numbers in one run).
+
+NEXT (R5's port order): levels (the L chain from the spec + the
+libsais FFI) -> W5 LCP carry -> pairsbins (B+B4) -> emit -> finish
+wiring. Then the G0 brute ladder -> the sandbox identity arms.
