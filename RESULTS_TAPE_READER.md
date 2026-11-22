@@ -1021,6 +1021,10 @@ NEXT (R5's port order): levels (the L chain from the spec + the
 libsais FFI) -> W5 LCP carry -> pairsbins (B+B4) -> emit -> finish
 wiring. Then the G0 brute ladder -> the sandbox identity arms.
 
+## Rust 100 MB single-level finish identity (post-handoff, e414933 + finish fixes)
+
+Receipt: `TAPEREADER/sandbox/br_wide_terminal_1795382126`, wide/24 threads. Producer and finish both rc=0. The SXLS slices count the virtual END in product rank space, and the cutter publishes the terminal marker and run exceptions. `cmp` to the banked `sandbox/b_162/product.sxi2` passed: 107519008 bytes, nine members, SHA256 `6325c843c0d9aa9be00d69260aafdd794936e2e79f16174efb00c43db831f341`. Producer 295.04 s (unit 282.44 s); 198 bins / 23 windows; scratch gate peak 116712352 bytes (excludes columns). This is **one level**, not a recursive gate. The producer reported 14343410 forwarded arrival records, each then written with four unbuffered field writes; this is the performance comparison baseline.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX

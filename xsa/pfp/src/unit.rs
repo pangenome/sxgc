@@ -92,6 +92,7 @@ pub struct PieceCutter {
     band: Vec<(u8, u32, u64, u64)>,   // (c, len, head, tail)
     band_base_rank: u64,
     band_cum_len: u64,
+    run_exc: Vec<[u64; 3]>,
     counts: [u64; 256],
     frequencies: [u64; 256],
 }
@@ -108,7 +109,7 @@ impl PieceCutter {
             band_size: 65536, next: 0, index: 0, band_start: 0,
             pend_c: 0, pend_len: 0, pend_head: 0, pend_tail: 0,
             pend_head_rank: 0, have_pending: false,
-            band: Vec::new(), band_base_rank: 0, band_cum_len: 0,
+            band: Vec::new(), band_base_rank: 0, band_cum_len: 0, run_exc: Vec::new(),
             counts: [0; 256], frequencies: [0; 256],
         };
         // the start marker
@@ -144,11 +145,11 @@ impl PieceCutter {
         if !self.have_pending { return; }
         let predicted = self.band_base_rank + self.band_cum_len;
         if predicted != self.pend_head_rank {
-            // the run-exception journal (bandCumLen tracking)
-            self.band_cum_len += self.pend_len;
-        } else {
-            self.band_cum_len += self.pend_len;
+            self.run_exc.push([self.pend_head, self.pend_head_rank,
+                               self.pend_head_rank + self.pend_len - 1]);
         }
+        self.band_cum_len += self.pend_len;
+        assert!(self.pend_len <= u32::MAX as u64, "piece run length overflow");
         self.counts[self.pend_c as usize] += self.pend_len;
         self.frequencies[self.pend_c as usize] += 1;
         self.band.push((self.pend_c, self.pend_len as u32,
@@ -272,6 +273,23 @@ impl PieceCutter {
         }
         self.flush_run();
         if !self.band.is_empty() { self.close_band(); }
+        let mut terminal = Vec::from(*b"BPT1");
+        for field in [(self.index - 1) / self.band_size, self.index, 0, 0] {
+            terminal.extend_from_slice(&field.to_le_bytes());
+        }
+        let exc_path = format!("{}.runexc", self.prefix);
+        let mut exc = std::io::BufWriter::new(fs::File::create(exc_path).expect("create runexc"));
+        for field in [0x45525853u64, self.run_exc.len() as u64] {
+            exc.write_all(&field.to_le_bytes()).expect("runexc header");
+        }
+        for fields in &self.run_exc {
+            for field in fields { exc.write_all(&field.to_le_bytes()).expect("runexc record"); }
+        }
+        exc.flush().expect("flush runexc");
+        let tmp = format!("{}/terminal.tmp", self.dir);
+        fs::write(&tmp, terminal).unwrap_or_else(|_| die("write terminal"));
+        fs::rename(tmp, format!("{}/terminal", self.dir))
+            .unwrap_or_else(|_| die("publish terminal"));
     }
 }
 
@@ -766,6 +784,8 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
     let mut lcp_live: std::collections::VecDeque<u64> =
         std::collections::VecDeque::new();
     let mut next_unit: u64 = 0;
+    // Product ranks include the virtual END; rows_emitted counts text rows only.
+    let mut product_rank: u64 = 0;
     let trie_tap = std::env::var("TRIE_TAP").is_ok();
     let bands_dir = match sink {
         Sink::Product { ref bands_dir, .. } => bands_dir.clone(),
@@ -1233,7 +1253,6 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
             {
                 let span_rows = final_pos.len();
                 if span_rows > 0 {
-                    let rank_base = stats.rows_emitted;
                     let mut pout: Vec<u64> = Vec::with_capacity(span_rows);
                     let pack = |pos: u64| -> u64 {
                         let sym = if pos > 0 {
@@ -1307,9 +1326,12 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                             let cutter = cutter.as_mut()
                                 .unwrap_or_else(|| die("no cutter"));
                             let u = next_unit;
+                            if head_in_unit { lcpv.insert(0, 0); }
+                            assert_eq!(rows, lcpv.len());
                             emit_lcp_slice(&bands_dir, u, rows, &lcpv,
-                                           rank_base, &mut lcp_live,
+                                           product_rank, &mut lcp_live,
                                            lcp_slice_window, laws);
+                            product_rank += rows as u64;
                             if trie_tap {
                                 let sp = format!("{}/band_{}.sa",
                                                  bands_dir, u);
@@ -1373,8 +1395,10 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                       against {} - rows were lost or duplicated",
                      stats.rows_emitted, ctx.rows_n));
     }
-    if let Some(mut c) = cutter.take() {
+    if let Some(c) = cutter.take() {
+        assert_eq!(stats.end_rows, 1, "expected one END row");
         c.finish();
+        fs::write(format!("{}/producer.done", bands_dir), b"").expect("producer.done");
     }
     if let Sink::SaColumn { out } = sink {
         if sa_sink_n != ctx.m {
