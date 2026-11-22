@@ -17,6 +17,7 @@ mod sxi;
 mod sxi2;
 mod qlite;
 mod ctx;
+mod session;
 mod lcpruns;
 mod build;
 mod chain;
@@ -383,6 +384,7 @@ fn main() {
         Some("build") => build::command(&args[1..]),
         Some("sxi-info") => sxi::command(&args[1..]),
         Some("docstarts") => docstarts::command(&args[1..]),
+        Some("session") => session::command(&args[1..]).unwrap_or_else(|e| die(&e)),
         Some("ctx-build") | Some("branch-of") | Some("trie-stat") | Some("trie-info")
         | Some("ctx-verify") | Some("ctx-selftest") | Some("ctx-curve") | Some("relax") | Some("relax-stat") | Some("trie-bench")
         | Some("ctx-tap") | Some("trie-member") | Some("ctx-tap-selftest") => ctx::command(&args[0], &args[1..]),
