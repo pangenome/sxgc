@@ -13,6 +13,7 @@ mod col;
 mod laws;
 mod parse;
 mod dictsort;
+mod levels;
 
 use col::die;
 use std::io::Read as _;
@@ -129,12 +130,21 @@ fn main() {
                                &modeb_dir, workspace, threads, &laws);
     laws.scratch_gate("dictsort");
 
-    // ---- the census receipts (the level decision rides the levels
-    //      module; the pairs bin mass the pairsbins module)
     eprintln!("SS_CENSUS_FRONT m0={} distinct={} dict_bytes={} \
                prefix_relations={} condensation_x={:.2}",
               p.m0, d.dict_n, d.dict_bytes_total, d.prefix_relations,
               p.m0 as f64 / d.dict_n.max(1) as f64);
+
+    // ---- THE LEVELS (from the spec): the census arithmetic by
+    //      number; None means one level (the deepest = this one)
+    let lv2 = levels::build_level2(d.pa.u32s(), p.m0, &modeb_dir,
+                                   threads, &laws);
+    if lv2.is_some() {
+        eprintln!("SS_R_LEVELS_TAKEN plan=2 rule=levels_are_data");
+    } else {
+        eprintln!("SS_R_LEVELS_TAKEN plan=1 rule=the_census_arithmetic");
+    }
+    laws.scratch_gate("levels");
 
     // ---- THE PORT ORDER CONTINUES (R5): levels -> W5 -> pairsbins
     //      -> emit -> finish wiring. Each lands with its own gate.
