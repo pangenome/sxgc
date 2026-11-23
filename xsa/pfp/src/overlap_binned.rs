@@ -441,7 +441,14 @@ fn run_prefixed<const P: usize>(
                 let mut last = None;
                 let mut class = 0u32;
                 let mut code = 0u32;
-                for (key, _) in &mut pairs {
+                let mut active = 0;
+                let mut chunk_bytes = 0usize;
+                for i in 0..pairs.len() {
+                    // A singleton is already fully ordered in this window. Its
+                    // next bytes cannot affect class order or any adjacent LCP.
+                    let same = last == Some(pairs[i].0)
+                        || pairs.get(i + 1).is_some_and(|q| q.0 == pairs[i].0);
+                    let (key, id) = &mut pairs[i];
                     if last != Some(*key) {
                         let h = last.map_or(0, |k: [u8; P]| {
                             if round == 0 {
@@ -458,9 +465,15 @@ fn run_prefixed<const P: usize>(
                     }
                     key.fill(0);
                     key[..4].copy_from_slice(&code.to_be_bytes());
+                    if same && tail(bytes, &words, (id.0 & mask, id.1)).0.len() > depth {
+                        pairs.swap(i, active);
+                        active += 1;
+                    }
                 }
-                pairs.sort_unstable_by_key(|(_, id)| (id.0 & mask, id.1));
-                for (i, (key, id)) in pairs.iter_mut().enumerate() {
+                // Partitioning only swaps into already-encoded positions.
+                // Completed short keys correctly retain a zero-padded chunk.
+                pairs[..active].sort_unstable_by_key(|(_, id)| (id.0 & mask, id.1));
+                for (i, (key, id)) in pairs[..active].iter_mut().enumerate() {
                     if i % 32768 == 0 {
                         check("restage");
                     }
@@ -468,9 +481,14 @@ fn run_prefixed<const P: usize>(
                     if a.len() > depth {
                         let used = 12.min(a.len() - depth);
                         key[4..4 + used].copy_from_slice(&a[depth..depth + used]);
+                        chunk_bytes += used;
                     }
                 }
                 depth += 12;
+                eprintln!("SS_OVERLAP_REFILL window={windows} depth={depth} active={active} bytes={chunk_bytes}");
+                if active == 0 {
+                    break;
+                }
             }
             pairs.sort_unstable_by(|(ka, a), (kb, b)| {
                 checks = checks.wrapping_add(1);
