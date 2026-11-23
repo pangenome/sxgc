@@ -655,9 +655,8 @@ fn distribute_window(ctx: &LevelCtx, w_first: u32, w_last: u32,
         bfs.push(Some(std::io::BufWriter::with_capacity(1 << 18, f)));
     }
     let mut wrote = 0u64;
-    for v in 0..ctx.dict_n as usize {
-        let p0 = ctx.dref[v];
-        let len = ctx.dlen[v];
+    let physical = crate::laws::env_u64("XSA_SCAN_PHYSICAL", 0) == 1;
+    crate::scan_order::phrases(physical, ctx.t.len(), ctx.dref, ctx.dlen, ctx.pa, ctx.pstart, |v,p0,len| {
         for o in (0..len as u64).step_by(ctx.stride as usize) {
             let cell = cell_of(ctx.t, p0, o, len, ctx.stride);
             let b = cell_bin[cell];
@@ -670,7 +669,7 @@ fn distribute_window(ctx: &LevelCtx, w_first: u32, w_last: u32,
             f.write_all(&rec[1]).unwrap_or_else(|_| die("pair bin write"));
             wrote += 1;
         }
-    }
+    });
     for f in bfs.iter_mut() {
         f.take().unwrap().flush().unwrap_or_else(|_| die("flush pair bin"));
     }
@@ -703,13 +702,12 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
     let t0 = std::time::Instant::now();
     let mut hist_b = [0u64; 65536];
     {
-        for v in 0..ctx.dict_n as usize {
-            let p0 = ctx.dref[v];
-            let len = ctx.dlen[v];
+        let physical = crate::laws::env_u64("XSA_SCAN_PHYSICAL", 0) == 1;
+        crate::scan_order::phrases(physical, ctx.t.len(), ctx.dref, ctx.dlen, ctx.pa, ctx.pstart, |_,p0,len| {
             for o in (0..len as u64).step_by(stride as usize) {
                 hist_b[cell_of(ctx.t, p0, o, len, stride)] += 1;
             }
-        }
+        });
     }
     eprintln!("SS_PAIR_CENSUS census_s={:.2} dict_bytes={} \
                rule=exact_cell_mass",

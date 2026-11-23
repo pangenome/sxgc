@@ -16,6 +16,7 @@ mod dictsort;
 mod levels;
 mod w5;
 mod unit;
+mod scan_order;
 
 use col::die;
 use std::io::Read as _;
