@@ -1083,6 +1083,10 @@ First physical-order pipeline arm `sandbox/private-pipeline-physical-17954078560
 
 `sandbox/private-pipeline-physical-1795434155732163682`, same 100 MB input/physical scan/131072 emit rows/384 MiB shared hard cap as `...-1795409800841498881`. Producer and finish rc=0, certified product SHA. Wall 1953.83 → 883.12 s; producer-attributed reads 597.59 → 286.84 GB; landing 437.08 → 88.24 GB. Local merge now largest at 111.97 GB (baseline 69.82), LCP/emit 66.20 GB. Whole directory sampled peak 571867136 B below guard, zero OOM. One before/after pair, not a cache-independent bound. Next isolated change: local arrival sort + linear merge by text position instead of reconstructing own rows and inserting arrivals individually. Both switches experimental and off by default.
 
+### Position merge, same 384 MiB gate
+
+`private-pipeline-physical-1795435104816286116`, source scan + position bounds, plus position merge: 575.13 s vs bounds-only 883.12 s. Producer reads 193.08 GB vs 286.84 GB. Local merge 0.784 GB / 12.47 s vs 111.97 GB / 348.21 s. Both processes rc=0, certified 100 MB SHA; shared memory cap reached, no OOM. Remaining reads largely landing 91.26 GB and LCP/emit 81.73 GB. Follow-up opt-in: certify non-extendible tail groups from adjacent sorted entries, emit OWN rows by integer continuation rank without per-occurrence landing, count separately incoming final-owner rows and searched prefix groups.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX

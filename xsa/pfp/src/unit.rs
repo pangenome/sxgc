@@ -719,6 +719,9 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
     let t_all = std::time::Instant::now();
     let stride = ctx.stride;
     let trace_io = crate::laws::env_u64("XSA_TRACE_BIN_IO", 0) != 0;
+    let integer_landing = crate::laws::env_u64("XSA_TEST_INTEGER_LANDING", 0) == 1;
+    let (mut fixed_rows, mut searched_rows, mut fixed_groups, mut searched_groups) = (0u64,0u64,0u64,0u64);
+    let mut owner_inbound = 0u64;
     let merge_positions = crate::laws::env_u64("XSA_TEST_POSITION_MERGE", 0) == 1;
     // Marks start (not end) of an interval. Deltas include all Rayon workers.
     let mark = |bin: u32, stage: &str| {
@@ -1011,6 +1014,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                 let lg = gallop(&mach,&row,0,runs.len() as u64,&starts,&ent);
                 let w = win_g.partition_point(|&g| g <= lg)-1;
                 bin_inb[w].push((lg,p,o,oi));
+                owner_inbound += 1;
             }
             fs::remove_file(owner_path).expect("release final owners");
         }
@@ -1153,6 +1157,30 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                     }
                 }
                 grp.sort_unstable_by_key(|r| r.0);
+                if integer_landing {
+                    // Extensions of a finite string form one contiguous lexical interval.
+                    // After final-bin routing, only an extension in this bin can move
+                    // an OWN row out of its group. Incoming shorter tails still merge.
+                    let tail = &ent[lo as usize];
+                    let possible_extension = ent.get(hi as usize).is_some_and(|next| {
+                        next.end-next.pos > tail.end-tail.pos &&
+                        ctx.t[next.pos as usize..next.end as usize].starts_with(&ctx.t[tail.pos as usize..tail.end as usize])
+                    });
+                    if !possible_extension {
+                        fixed_groups += 1; fixed_rows += grp.len() as u64;
+                        for &(n,mi,oi) in &grp {
+                            let pe = &ent[mi as usize]; let occ = ctx.olist[oi as usize];
+                            own.pos.push(ctx.pstart[occ as usize] + u64::from(pe.o));
+                            own.ids.push((u64::from(pe.p)<<32) | u64::from(pe.o));
+                            own.occ.push(oi);
+                            own.facts.push(FactRow {v:pe.p,o:pe.o,n});
+                        }
+                        own.cnt[(g-g0) as usize] = u32::try_from(grp.len()).expect("group size");
+                        rows_total += grp.len() as u64; l1_rows += grp.len() as u64;
+                        continue;
+                    }
+                    searched_groups += 1; searched_rows += grp.len() as u64;
+                }
                 for &(_rnk, mi, oi) in &grp {
                     let pe = &ent[mi as usize];
                     let occ = ctx.olist[oi as usize];
@@ -1530,6 +1558,10 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
         }
         eprintln!("SS_LEVEL_EXIT level_column_rows={} \
                    rule=the_induced_sa_column_permutation", sa_sink_n);
+    }
+    if integer_landing {
+        assert_eq!(fixed_rows + searched_rows + owner_inbound, stats.rows_emitted);
+        eprintln!("SS_INTEGER_LANDING fixed_rows={} searched_rows={} owner_inbound={} fixed_groups={} searched_groups={}",fixed_rows,searched_rows,owner_inbound,fixed_groups,searched_groups);
     }
     eprintln!("SS_LIST_RESOLVE rows={} crossings_in={} \
                crossings_fwd={} bins={} windows={} \

@@ -45,7 +45,7 @@ with (r/'run.log').open('wb') as pl,(r/'finish.log').open('wb') as fl,(r/'sample
                 (r/'stop.requested').touch(); md=r/'merged/modeb';
                 if md.exists():(md/'stop.requested').touch()
             time.sleep(.5)
-receipt=dict(order=a.order,cgroup_mib=a.mib,position_bounds=env.get('XSA_TEST_POSITION_BOUNDS','0'),position_merge=env.get('XSA_TEST_POSITION_MERGE','0'),read_guard=read_guard,over_reads=over_reads,emit_rows=env.get('XSA_TEST_EMIT_ROWS','dial_default'),wall_s=round(now,2),rc=rc,peak_disk=peakdisk,disk_guard=disk_limit,peak_memory=int((cg/'memory.peak').read_text()),events=fields(cg/'memory.events'),proc_attributed_rw=counters,refaults=st['workingset_refault_file'],major_faults=st['pgmajfault'])
+receipt=dict(order=a.order,cgroup_mib=a.mib,position_bounds=env.get('XSA_TEST_POSITION_BOUNDS','0'),position_merge=env.get('XSA_TEST_POSITION_MERGE','0'),integer_landing=env.get('XSA_TEST_INTEGER_LANDING','0'),read_guard=read_guard,over_reads=over_reads,emit_rows=env.get('XSA_TEST_EMIT_ROWS','dial_default'),wall_s=round(now,2),rc=rc,peak_disk=peakdisk,disk_guard=disk_limit,peak_memory=int((cg/'memory.peak').read_text()),events=fields(cg/'memory.events'),proc_attributed_rw=counters,refaults=st['workingset_refault_file'],major_faults=st['pgmajfault'])
 if rc==[0,0]:
     with (r/'product.sxi2').open('rb') as f: receipt['sha256']=hashlib.file_digest(f,'sha256').hexdigest()
 (r/'receipt.json').write_text(json.dumps(receipt,indent=2));print(receipt,flush=True)
