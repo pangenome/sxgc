@@ -1051,6 +1051,10 @@ The pre-change 3 GB arm `climb/rung2/rust_recursive_1795385758229949849` was sto
 
 `climb/rung1/rust_recursive_1795388766732560060`, same rung1 harness as `rust_recursive_1795383463205861505`. Both processes rc=0, `kernel=induced`; `cmp` passed vs banked 1 GB product and SHA `b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3`. Observed exactly the census prediction: 25,883,418 direct indices (103,533,672 B) and **zero** subsequent forwards vs 145,519,616 former 16-byte records (2,328,313,856 B). Counted scratch rose 1,174,793,553 → 1,255,164,357 B, budget 2,000,001,330 B. End-to-end wall 2231.67 → 2275.20 s (+1.95%), producer 2218.21 → 2260.63 s. Single before/after pair: no evidence of a 1 GB speedup. Cumulative distribute-pass timers alone (both levels) varied 135.23 → 190.73 s; do not attribute the wall difference solely to routing. No RSS measurements on either 1 GB arm.
 
+### Final-owner recursive Rust: 3 GB identity gate PASS
+
+`climb/rung2/rust_recursive_1795391073062317057` (`python3 gates/rust_recursive_rung1.py --rung 2`, source `15db261`). Producer and finish rc=0; 6592.47 s producer, 6637.53 s concurrent wall. Recursive induction: 91745024 → 5659214 → 91745024 rows. All nine members compared byte-for-byte equal to run14e; produced SHA256 `3935e8f1d220092d2cd12081938748e8a62f02e882bd021781ec7c3d0cabe7f3`. At level 0, 77,139,909 owner indices (308,559,636 B); 1,896,312 within-bin window forwards, zero cross-bin hops during emit. Counted scratch peak 3,488,673,203 B against 6,000,000,000 B; final named columns 6,869,406,092 B are separate. No sampled total-disk/RSS peak on this rung. No pre-change 3 GB completed arm for a speed comparison. See `RUST_100GB_PREFLIGHT.md` for the launch decision.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX
