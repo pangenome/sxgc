@@ -63,8 +63,15 @@ fn main() {
                 "PROBE rows={rows} digest={hash:016x} reads={reads} wall={:.3}",
                 start.elapsed().as_secs_f64()
             );
-            std::process::exit(if reads > guard { 75 } else { 0 });
+            if reads > guard {
+                std::process::exit(75);
+            }
+            if limit != bytes.len() as u64 + 1 {
+                std::process::exit(0);
+            }
         }
     });
-    unreachable!()
+    assert_eq!(rows, limit);
+    assert_eq!(rows, bytes.len() as u64 + 1);
+    println!("FULL_STREAM rows={rows} digest={hash:016x}");
 }
