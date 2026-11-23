@@ -1071,6 +1071,14 @@ First physical-order pipeline arm `sandbox/private-pipeline-physical-17954078560
 
 `gates/bin_io_summary.py <arm>/run.log`: on the large-window arm, level-0 bin 88 alone accounted for 51.57 GB of reads in local merge and 48.25 GB in LCP/emit. On the smaller arm, local merge had no attributed reads and LCP/emit 32768 B across both levels. Timings are one A/B pair with concurrent 10 GB workload; both hit the RAM cap, neither incurred OOM. The entire corpus is only 100 MB: this demonstrates cache-pressure control on this fixture, not a whole pipeline with corpus > RAM.
 
+### 10 GB recursive Rust: full reference identity
+
+`climb/rung3/rust_recursive_1795402779369751600`, source `6f5a7f5` (predates scan/window experiments). Both rc=0, concurrent wall 31262.66 s, producer 31120.36 s. 305930242 → 18873798 → 305930242 induced rows. SHA `26cfb2de0cccab8a8712a332956d58693dcbbb34373a9031a7bbaaa08cc504c9` matches the certified `lcpruns-gate/g3/scratch/pf-10gb.sxi2`; all 9 members individually byte-identical, including 2556383072 B m14. n=10000000001, r=3474883891, chi=2676925006. 21 lower distribute windows; counted scratch 11606165279 B (budget 20000000000 B, columns excluded). This establishes correctness, not cold-cache efficiency.
+
+### 100 MB pressure cliff at fixed 131072-row target
+
+512 MiB: 177.92 s, 29.1 MB producer reads. `private-pipeline-physical-1795409800841498881` at 384 MiB: exact container, 1953.83 s, 597.59 GB producer-attributed reads (437.08 GB in landing, 75.50 GB LCP/emit, 69.82 GB local merge). `private-pipeline-physical-1795411754877183178` at 256 MiB: deliberately stopped in bin 68 after 13.83 TB reads; producer and finish both observed cooperative stop (75), no OOM, no product verdict. Smaller emit windows alone do not control locality of the landing probes. New experiment: compare actual occurrence prefix at text position to bin boundary directly (`XSA_TEST_POSITION_BOUNDS`), without chasing SA/rank/phrase references on each probe. Default off; use a cumulative process-read stop guard to cap negative experiments.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX
