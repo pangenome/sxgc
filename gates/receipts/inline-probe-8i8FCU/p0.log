@@ -1,0 +1,41 @@
+TRACE sec=0.004 stage=anchors reads=1572864
+TRACE sec=0.258 stage=anchors reads=80216064
+SS_OVERLAP_PHASE dict_sort
+TRACE sec=0.508 stage=dict-sort reads=100003840
+TRACE sec=0.758 stage=dict-sort reads=100003840
+TRACE sec=1.009 stage=dict-sort reads=100003840
+TRACE sec=1.260 stage=dict-sort reads=100003840
+TRACE sec=1.511 stage=dict-sort reads=100003840
+TRACE sec=1.762 stage=dict-sort reads=100003840
+SS_OVERLAP_PHASE dedup_scatter
+TRACE sec=2.013 stage=dedup reads=100003840
+SS_OVERLAP_PHASE parse_kernel
+TRACE sec=2.368 stage=aligned-lcp reads=112324608
+TRACE sec=2.619 stage=aligned-lcp reads=112324608
+SS_OVERLAP_PHASE pair_census
+TRACE sec=3.045 stage=pair-census reads=112324608
+TRACE sec=3.295 stage=distribute reads=112324608
+SS_OVERLAP_PHASE window_sort window=1 pairs=4159865
+TRACE sec=3.545 stage=descriptor-sort reads=112324608
+TRACE sec=3.795 stage=descriptor-sort reads=112324608
+TRACE sec=4.046 stage=descriptor-sort reads=112324608
+TRACE sec=4.296 stage=descriptor-sort reads=112324608
+TRACE sec=4.546 stage=descriptor-sort reads=112324608
+TRACE sec=4.797 stage=descriptor-sort reads=112324608
+TRACE sec=5.047 stage=descriptor-sort reads=112324608
+SS_OVERLAP_PHASE emit window=1
+TRACE sec=5.301 stage=emit reads=112324608
+TRACE sec=5.559 stage=emit reads=112324608
+TRACE sec=5.809 stage=distribute reads=112324608
+SS_OVERLAP_PHASE window_sort window=2 pairs=3926373
+TRACE sec=6.060 stage=descriptor-sort reads=112324608
+TRACE sec=6.310 stage=descriptor-sort reads=112324608
+TRACE sec=6.561 stage=descriptor-sort reads=112324608
+TRACE sec=6.811 stage=descriptor-sort reads=112324608
+TRACE sec=7.061 stage=descriptor-sort reads=112324608
+TRACE sec=7.312 stage=descriptor-sort reads=112324608
+TRACE sec=7.564 stage=descriptor-sort reads=112324608
+TRACE sec=7.815 stage=descriptor-sort reads=112324608
+SS_OVERLAP_PHASE emit window=2
+TRACE sec=8.069 stage=emit reads=112324608
+PROBE rows=6000000 digest=80bcb54036d8a8a4 reads=112324608 wall=8.150

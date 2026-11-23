@@ -54,6 +54,9 @@ fn main() {
         if rows % 65536 == 0 {
             check("emit");
         }
+        if rows % 1_000_000 == 0 {
+            eprintln!("CHECKPOINT rows={rows} digest={hash:016x} reads={} wall={:.3}", read_bytes(), start.elapsed().as_secs_f64());
+        }
         if rows == limit {
             let reads = read_bytes();
             println!(
