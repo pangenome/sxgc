@@ -375,7 +375,13 @@ fn run_prefixed<const P: usize>(
                 }
             }
         };
-    let restage = P == 16 && std::env::var("XSA_OVERLAP_RESTAGE").as_deref() == Ok("1");
+    let rounds = if P == 16 {
+        std::env::var("XSA_OVERLAP_RESTAGE").map_or(0, |s| s.parse::<usize>().unwrap())
+    } else {
+        0
+    };
+    assert!(rounds <= 16);
+    let restage = rounds != 0;
     let mut lo = 0;
     while lo < hist.len() {
         let mut mass = 0;
@@ -412,18 +418,27 @@ fn run_prefixed<const P: usize>(
             assert_eq!(pairs.len(), mass);
             windows += 1;
             eprintln!("SS_OVERLAP_PHASE window_sort window={windows} pairs={mass}");
-            if restage {
-                // Recycle the same 16 bytes: monotone class ID + twelve further
-                // key bytes. Encode the adjacent-class LCP in five low bits.
-                assert!(mass < 1 << 27);
+            let mut depth = P;
+            for round in 0..rounds {
+                // Inductively compress the padded prefix into a monotone class.
+                // Low byte is its padded LCP with the immediately previous class.
+                assert!(mass < 1 << 24);
                 pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0));
                 let mut last = None;
                 let mut class = 0u32;
                 let mut code = 0u32;
                 for (key, _) in &mut pairs {
                     if last != Some(*key) {
-                        let h = last.map_or(0, |k: [u8; P]| lcp(&k, key));
-                        code = (class << 5) | h as u32;
+                        let h = last.map_or(0, |k: [u8; P]| {
+                            if round == 0 {
+                                lcp(&k, key)
+                            } else if k[..4] != key[..4] {
+                                key[3] as usize
+                            } else {
+                                depth - 12 + lcp(&k[4..], &key[4..])
+                            }
+                        });
+                        code = (class << 8) | h as u32;
                         class += 1;
                         last = Some(*key);
                     }
@@ -436,11 +451,12 @@ fn run_prefixed<const P: usize>(
                         check("restage");
                     }
                     let (a, _) = tail(bytes, &words, (id.0 & mask, id.1));
-                    if a.len() > 16 {
-                        let used = 12.min(a.len() - 16);
-                        key[4..4 + used].copy_from_slice(&a[16..16 + used]);
+                    if a.len() > depth {
+                        let used = 12.min(a.len() - depth);
+                        key[4..4 + used].copy_from_slice(&a[depth..depth + used]);
                     }
                 }
+                depth += 12;
             }
             pairs.sort_unstable_by(|(ka, a), (kb, b)| {
                 checks = checks.wrapping_add(1);
@@ -448,11 +464,13 @@ fn run_prefixed<const P: usize>(
                     check("descriptor-sort");
                 }
                 ka.cmp(kb).then_with(|| {
-                    tail(bytes, &words, (a.0 & mask, a.1)).cmp(&tail(
-                        bytes,
-                        &words,
-                        (b.0 & mask, b.1),
-                    ))
+                    let (x, xe) = tail(bytes, &words, (a.0 & mask, a.1));
+                    let (y, ye) = tail(bytes, &words, (b.0 & mask, b.1));
+                    if x.len().min(y.len()) <= depth {
+                        (x.len(), xe).cmp(&(y.len(), ye))
+                    } else {
+                        (&x[depth..], xe).cmp(&(&y[depth..], ye))
+                    }
                 })
             });
             eprintln!("SS_OVERLAP_PHASE emit window={windows}");
@@ -461,7 +479,13 @@ fn run_prefixed<const P: usize>(
                 let id = (tagged.0 & mask, tagged.1);
                 let (raw, eof) = tail(bytes, &words, id);
                 let old = prev.map(|(k, p)| (k, tail(bytes, &words, p)));
-                if (restage && index == 0) || !old.is_some_and(|(k, t)| k == key && t == (raw, eof))
+                if (restage && index == 0)
+                    || !old.is_some_and(|(k, (a, e))| {
+                        k == key
+                            && e == eof
+                            && a.len() == raw.len()
+                            && a.get(depth..) == raw.get(depth..)
+                    })
                 {
                     flush(&mut heap, len, head);
                     head = old.map_or(0, |(k, (a, e))| {
@@ -469,15 +493,16 @@ fn run_prefixed<const P: usize>(
                             lcp(a, raw)
                         } else if restage && k != key {
                             let h = if k[..4] != key[..4] {
-                                (key[3] & 31) as usize
+                                key[3] as usize
                             } else {
-                                16 + lcp(&k[4..], &key[4..])
+                                depth - 12 + lcp(&k[4..], &key[4..])
                             };
                             h.min(a.len()).min(raw.len())
                         } else if k != key {
                             lcp(&k, &key).min(a.len()).min(raw.len())
                         } else {
-                            lcp(a, raw)
+                            let skip = depth.min(a.len()).min(raw.len());
+                            skip + lcp(&a[skip..], &raw[skip..])
                         };
                         assert!(h < a.len() || e, "proper prefix in overlap representatives");
                         h

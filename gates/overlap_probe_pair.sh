@@ -14,6 +14,9 @@ done
 python3 - "$r" <<'PY'
 import pathlib,re,sys
 r=pathlib.Path(sys.argv[1]); arms=[r/f'p{i}' for i in (0,16)]
+for d in arms:
+ if (d/'rc').read_text().strip()=='0':
+  h=re.search(r'PROBE rows=6000000 digest=([a-f0-9]+)',(d/'run.log').read_text())[1];assert h=='80bcb54036d8a8a4',(d,h);print(d.name,'matches banked partial-stream digest')
 if any((d/'rc').read_text().strip()!='0' for d in arms):print('read guard: no paired digest verdict');sys.exit(75)
 a,b=[re.search(r'PROBE rows=6000000 digest=([a-f0-9]+)',(d/'run.log').read_text())[1] for d in arms];assert a==b,(a,b);print('MATCH six-million-row diagnostic digest',a)
 PY
