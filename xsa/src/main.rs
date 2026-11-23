@@ -342,6 +342,10 @@ fn main() {
         qlite::consult_command(&raw[1..]);
         return;
     }
+    if raw.first().is_some_and(|a| a == "positional-worker") {
+        qlite::positional_worker(&raw[1..]).unwrap_or_else(|e| die(&e.to_string()));
+        return;
+    }
     if raw.first().is_some_and(|a| a == "search") {
         qlite::search_command(&raw[1..]);
         return;
