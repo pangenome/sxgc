@@ -1055,6 +1055,12 @@ The pre-change 3 GB arm `climb/rung2/rust_recursive_1795385758229949849` was sto
 
 `climb/rung2/rust_recursive_1795391073062317057` (`python3 gates/rust_recursive_rung1.py --rung 2`, source `15db261`). Producer and finish rc=0; 6592.47 s producer, 6637.53 s concurrent wall. Recursive induction: 91745024 → 5659214 → 91745024 rows. All nine members compared byte-for-byte equal to run14e; produced SHA256 `3935e8f1d220092d2cd12081938748e8a62f02e882bd021781ec7c3d0cabe7f3`. At level 0, 77,139,909 owner indices (308,559,636 B); 1,896,312 within-bin window forwards, zero cross-bin hops during emit. Counted scratch peak 3,488,673,203 B against 6,000,000,000 B; final named columns 6,869,406,092 B are separate. No sampled total-disk/RSS peak on this rung. No pre-change 3 GB completed arm for a speed comparison. See `RUST_100GB_PREFLIGHT.md` for the launch decision.
 
+### Cache-limited scan experiment (100 MB, not a container timing)
+
+`sandbox/private-scan-uiwHhp`, `gates/scan_cache_gate.sh` at `4290a12`: private input inodes verified nonresident with mincore before each arm, 2 passes/arm, no swap. All exact per-cell counts and order-independent pair signatures matched. 384 MiB cgroup: dictionary order 0.640/0.489 s, physical order 0.216/0.187 s (second pass 0 attributed read bytes for both). 64 MiB: dictionary order 251.655/250.936 s and 147.615/148.141 GB process-attributed reads; physical 0.241/0.233 s and 136.647 MB each. This isolates dictionary access; does not include local sort, emit or finish, and `/proc/self/io` is not a device-wide hardware counter.
+
+First physical-order pipeline arm `sandbox/private-pipeline-physical-1795407856085761210`: producer completed 378.23 s, monitor lost access to `/proc/<pid>/io` during exit and the service was torn down before container finalization. No identity verdict. Last producer sample 97.526 GB attributed reads; ~96.4 GB accrued while the last printed marker was SS_PAIR_DISTRIBUTE, which is printed **after** distribute returns from its pass logic, before processing that bin. Do not infer those bytes were spent on the sequential scan. New monitor tolerates exit-time EACCES and retains the last observed counters.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX

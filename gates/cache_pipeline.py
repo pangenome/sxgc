@@ -28,7 +28,9 @@ with (r/'run.log').open('wb') as pl,(r/'finish.log').open('wb') as fl,(r/'sample
             for label,w in zip(['producer','finish'],workers):
                 try:
                     io=fields(P(f'/proc/{w.pid}/io')); counters[label]=[io['read_bytes'],io['write_bytes']]
-                except FileNotFoundError: pass
+                # Linux may return EACCES during task exit before waitpid reports it.
+                # I/O is sampled telemetry; don't tear down a still-finalizing peer.
+                except (FileNotFoundError, ProcessLookupError, PermissionError): pass
             allocated=0
             for d,_,files in os.walk(r):
                 for f in files:
