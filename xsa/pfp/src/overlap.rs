@@ -67,6 +67,8 @@ impl Min {
         v
     }
 }
+#[path = "overlap_binned.rs"]
+mod binned;
 pub fn construct(bytes: &[u8], mut emit: impl FnMut(u64, u64)) {
     let w = 8;
     let n = bytes.len();
@@ -82,6 +84,9 @@ pub fn construct(bytes: &[u8], mut emit: impl FnMut(u64, u64)) {
     }
     let m = s.len();
     s.push(n);
+    if std::env::var_os("XSA_TEST_OVERLAP_BINNED").is_some() {
+        return binned::run(bytes, w, &s, emit);
+    }
     let mut t: Vec<_> = bytes.iter().map(|&c| i32::from(c) + 2).collect();
     t.push(1);
     let phrase = |i: usize| &t[s[i]..if i + 1 == m { n + 1 } else { s[i + 1] + w }];
