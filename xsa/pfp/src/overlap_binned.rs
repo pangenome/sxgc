@@ -402,6 +402,7 @@ fn run_prefixed<const P: usize>(
         }
         assert!(hi > lo);
         if mass > 0 {
+            check("@distribute");
             let mut pairs = Vec::with_capacity(mass);
             for v in phys.clone() {
                 let p = words[v as usize];
@@ -432,6 +433,7 @@ fn run_prefixed<const P: usize>(
             assert_eq!(pairs.len(), mass);
             windows += 1;
             eprintln!("SS_OVERLAP_PHASE window_sort window={windows} pairs={mass}");
+            check("@prefix-sort");
             let mut depth = P;
             for round in 0..rounds {
                 // Inductively compress the padded prefix into a monotone class.
@@ -473,6 +475,7 @@ fn run_prefixed<const P: usize>(
                 // Partitioning only swaps into already-encoded positions.
                 // Completed short keys correctly retain a zero-padded chunk.
                 pairs[..active].sort_unstable_by_key(|(_, id)| (id.0 & mask, id.1));
+                check("@refill");
                 for (i, (key, id)) in pairs[..active].iter_mut().enumerate() {
                     if i % 32768 == 0 {
                         check("restage");
@@ -484,12 +487,14 @@ fn run_prefixed<const P: usize>(
                         chunk_bytes += used;
                     }
                 }
+                check("@prefix-sort");
                 depth += 12;
                 eprintln!("SS_OVERLAP_REFILL window={windows} depth={depth} active={active} bytes={chunk_bytes}");
                 if active == 0 {
                     break;
                 }
             }
+            check("@exact-sort");
             pairs.sort_unstable_by(|(ka, a), (kb, b)| {
                 checks = checks.wrapping_add(1);
                 if checks % 65536 == 0 {
@@ -506,6 +511,7 @@ fn run_prefixed<const P: usize>(
                 })
             });
             eprintln!("SS_OVERLAP_PHASE emit window={windows}");
+            check("@emit");
             for (index, (key, tagged)) in pairs.into_iter().enumerate() {
                 let pred = (tagged.0 >> 24) as u8;
                 let id = (tagged.0 & mask, tagged.1);

@@ -12,8 +12,8 @@ for a in reference pressure; do
  if [[ $a == pressure ]]; then p=16; rounds=4; cap=${INLINE_PAIRS:-1398101}; mib=192; carry=1; [[ $cap =~ ^[0-9]+$ ]] && ((cap>0 && cap<=1398101)) || exit 2; fi
  d=$r/$a; mkdir "$d"; cp --reflink=never "$sandbox/pile-slice100.bin" "$d/corpus"
  python3 gates/private_cold.py "$d/corpus"; rows=$(($(stat -c%s "$d/corpus")+1)); [[ $rows == 100000504 ]]
- echo "prefix=$p rounds=$rounds pair_cap=$cap carry=$carry producer_mib=$mib rows=$rows" >"$d/config"
- rc=0; systemd-run --user --quiet --collect --wait --pipe -p MemoryMax="${mib}M" -p MemorySwapMax=0 -p CPUQuota=100% -p Nice=10 /usr/bin/env XSA_TEST_OVERLAP_BINNED=1 XSA_OVERLAP_RESTAGE="$rounds" XSA_OVERLAP_CARRY_PRED="$carry" XSA_OVERLAP_SORT_PAIRS="$cap" XSA_OVERLAP_INLINE_PREFIX="$p" "$PWD/xsa/target/release/overlap_io_probe" "$d/corpus" "$rows" 15000000000 >"$d/run.log" 2>&1 || rc=$?
+ echo "prefix=$p rounds=$rounds pair_cap=$cap carry=$carry phase_advice=${XSA_PROBE_PHASE_ADVICE:-0} producer_mib=$mib rows=$rows" >"$d/config"
+ rc=0; systemd-run --user --quiet --collect --wait --pipe -p MemoryMax="${mib}M" -p MemorySwapMax=0 -p CPUQuota=100% -p Nice=10 /usr/bin/env XSA_PROBE_PHASE_ADVICE="${XSA_PROBE_PHASE_ADVICE:-0}" XSA_TEST_OVERLAP_BINNED=1 XSA_OVERLAP_RESTAGE="$rounds" XSA_OVERLAP_CARRY_PRED="$carry" XSA_OVERLAP_SORT_PAIRS="$cap" XSA_OVERLAP_INLINE_PREFIX="$p" "$PWD/xsa/target/release/overlap_io_probe" "$d/corpus" "$rows" 15000000000 >"$d/run.log" 2>&1 || rc=$?
  echo "$rc" >"$d/rc"; tail -3 "$d/run.log"; if [[ $rc != 0 && ( $a == reference || $rc != 75 ) ]]; then exit "$rc"; fi
 done
 python3 - "$r" <<'PY'

@@ -24,9 +24,21 @@ fn main() {
     let guard: u64 = args[3].parse().unwrap();
     let start = Instant::now();
     let next = Cell::new(0.0);
+    let hint = std::env::var("XSA_PROBE_PHASE_ADVICE").as_deref() == Ok("1");
     let check = |stage: &str| {
         let sec = start.elapsed().as_secs_f64();
-        if sec >= next.get() {
+        let boundary = stage.starts_with('@');
+        if hint && boundary {
+            let adv = match stage {
+                "@distribute" => Some(memmap2::Advice::Normal),
+                "@refill" | "@exact-sort" | "@emit" => Some(memmap2::Advice::Random),
+                _ => None,
+            };
+            if let Some(a) = adv {
+                bytes.advise(a).expect("phase madvise");
+            }
+        }
+        if boundary || sec >= next.get() {
             next.set(sec + 0.25);
             let r = read_bytes();
             eprintln!("TRACE sec={sec:.3} stage={stage} reads={r}");
