@@ -1,17 +1,18 @@
 """Stream an entire plan from banked input columns in ONE capped producer cgroup.
 Triples go only to stdout. Arm directory must be fresh and caller-owned.
 """
-import json, pathlib, re, shutil, struct, subprocess, sys, time
+import json, os, pathlib, re, shutil, struct, subprocess, sys, time
 D,T=map(pathlib.Path,sys.argv[1:3]); I=D/'in'; n=(I/'corpus').stat().st_size;m=(I/'aligned.u32').stat().st_size//4
-cg=pathlib.Path('/sys/fs/cgroup')/pathlib.Path('/proc/self/cgroup').read_text().strip().split('::/')[1]; assert (cg/'memory.max').read_text().strip()==str(192*2**20) and (cg/'memory.swap.max').read_text().strip()=='0'
+cg=pathlib.Path('/sys/fs/cgroup')/pathlib.Path('/proc/self/cgroup').read_text().strip().split('::/')[1]; assert (cg/'memory.max').read_text().strip()==str(int(os.environ.get('XSA_GATE_SHARED_MIB','192'))*2**20) and (cg/'memory.swap.max').read_text().strip()=='0'
 base=sum((I/f).stat().st_size for f in ['physical.refs','cells.bin','plan','aligned.u32','pos-next.u32x2','pred.u8','loc.u32']); start=time.monotonic(); total=rows=ix=nextwin=peak=0
 assert not (D/'boundary').exists(); log=(D/'sets.jsonl').open('x',buffering=1)
 def fields(line):return {k:int(v) for k,v in re.findall(r'(\w+)=(\d+)',line)}
 while True:
+ if (D/'stop.requested').exists():sys.exit(75)
  spill=D/'spill';side=D/'side';assert not spill.exists() and not side.exists();
  def tool(cmd):return subprocess.check_output(list(map(str,cmd)),text=True).strip()
  a=fields(tool([T/'overlap_macro',I/'corpus',I/'physical.refs',I/'plan',I/'loc.u32',spill,m,ix,'joined']));assert a['first']==nextwin and a['limit']>nextwin and a['peak_counted']==base+a['spill'];
- live=base+a['spill']+2**20 # reserve carried boundary
+ live=base+a['spill']+2**20+int(os.environ.get('XSA_GATE_SINK_RESERVE','0')) # reserve carried boundary
  b=fields(tool([T/'overlap_list_join',I,spill,side,a['limit']-nextwin,n,live,nextwin]));peak=max(peak,b['peak_counted']);assert peak<=2*n
  with (D/f'emit-{ix}.log').open('x') as el:subprocess.run(list(map(str,[T/'overlap_spill_emit',I,spill,I/'plan',a['limit'],n,side,nextwin,D/'boundary'])),check=True,stderr=el)
  c=fields((D/f'emit-{ix}.log').read_text().splitlines()[-1]);assert c['index']+1==a['limit'];rows+=c['cumulative_rows'];total+=a['reads']+b['reads']+c['reads'];assert total<=500*n,'aggregate read guard';nextwin=a['limit'];ix+=1

@@ -124,17 +124,28 @@ fn main() {
     };
     let t: &[u8] = &mmap[..];
 
-    if laws::env_u64("XSA_TEST_OVERLAP_STREAM",0)==1 {
+    let triples=laws::env_u64("XSA_TEST_EXTERNAL_TRIPLES",0)==1;
+    if triples || laws::env_u64("XSA_TEST_OVERLAP_STREAM",0)==1 {
         // Experimental in-memory dictionary kernel. Do not scale it by accident.
         if file_n > 101_000_000 || std::env::var_os("TRIE_TAP").is_some(){die("overlap fixture path: <=101 MB, product sink only");}
         let mut cutter=unit::PieceCutter::new(&out_prefix,file_n+1,laws::env_u64("CROSS_V2_PIECE_WINDOW",1100));
         let mut lcp=Vec::with_capacity(262144);let mut live=std::collections::VecDeque::new();
         let (mut base,mut u,mut ends)=(0,0,0);
         let mut publish=|lcp:&mut Vec<u64>|{if !lcp.is_empty(){unit::emit_lcp_slice(&bands_dir,u,lcp.len(),lcp,base,&mut live,laws::env_u64("SS_LCP_SLICE_WINDOW",128),&laws);base+=lcp.len() as u64;u+=1;lcp.clear();laws.scratch_gate("overlap-slice");}};
-        let hints=laws::env_u64("XSA_OVERLAP_PHASE_ADVICE",0)==1;
-        overlap::construct(t,|stage|{laws.stop_check(stage);if hints {let adv=match stage {"@distribute"=>Some(memmap2::Advice::Normal),"@refill"|"@exact-sort"|"@emit"=>Some(memmap2::Advice::Random),_=>None};if let Some(a)=adv{mmap.advise(a).expect("phase madvise");}}},|p,h,raw|{let sym=if p==0{0}else if remap.is_empty(){raw}else{remap[raw as usize]};
+        let mut feed=|p:u64,h:u64,raw:u8|{let sym=if p==0{0}else if remap.is_empty(){raw}else{remap[raw as usize]};
             ends+=u64::from(sym==0);cutter.feed_row(p,sym);lcp.push(h);if lcp.len()==262144{publish(&mut lcp);}
-        });
+        };
+        if triples {
+            let mut stream=std::io::BufReader::with_capacity(1<<20,std::io::stdin().lock());
+            let mut row=[0u8;12];
+            for r in 0..=file_n {stream.read_exact(&mut row).expect("truncated external row stream");
+                let col=|i:usize|u32::from_le_bytes(row[i..i+4].try_into().unwrap()) as u64;let(p,h,b)=(col(0),col(4),col(8));
+                assert!(p<=file_n && (r==0)==(p==file_n) && h<=file_n-p && (if p==0{b==256}else{b<=255}),"invalid external row");feed(p,h,b as u8);
+            }assert_eq!(stream.read(&mut row[..1]).expect("external EOF"),0,"extra external rows");
+        }else{
+            let hints=laws::env_u64("XSA_OVERLAP_PHASE_ADVICE",0)==1;
+            overlap::construct(t,|stage|{laws.stop_check(stage);if hints {let adv=match stage {"@distribute"=>Some(memmap2::Advice::Normal),"@refill"|"@exact-sort"|"@emit"=>Some(memmap2::Advice::Random),_=>None};if let Some(a)=adv{mmap.advise(a).expect("phase madvise");}}},feed);
+        }
         publish(&mut lcp);assert_eq!(base,file_n+1);assert_eq!(ends,1);cutter.finish();
         fs::write(format!("{}/producer.done",bands_dir),b"").expect("producer.done");laws.scratch_gate("overlap-done");laws.scratch_peak();
         eprintln!("SS_DONE_R overlap_stream rows={} total_s={:.2}",base,laws::now_s(t_all));return;
