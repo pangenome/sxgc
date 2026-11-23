@@ -88,7 +88,7 @@ pub fn construct(bytes: &[u8], check: impl Fn(&str), mut emit: impl FnMut(u64, u
     let m = s.len();
     s.push(n);
     if std::env::var_os("XSA_TEST_OVERLAP_BINNED").is_some() {
-        return binned::run(bytes, w, &s, &check, emit);
+        return binned::run(bytes, w, s, &check, emit);
     }
     let mut t: Vec<_> = bytes.iter().map(|&c| i32::from(c) + 2).collect();
     t.push(1);

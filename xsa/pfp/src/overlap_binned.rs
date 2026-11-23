@@ -110,7 +110,7 @@ fn cell(raw: &[u8], eof: bool, o: usize) -> usize {
 pub(super) fn run(
     bytes: &[u8],
     w: usize,
-    s: &[usize],
+    s: Vec<usize>,
     check: &impl Fn(&str),
     mut emit: impl FnMut(u64, u64),
 ) {
@@ -155,10 +155,8 @@ pub(super) fn run(
     let k = words.len();
     let (ps, pl) = order(&pa, k as i32);
     let mut aligned = vec![0; m];
-    let mut prank = vec![0u32; m];
     for (r, &p) in ps.iter().enumerate() {
         let j = p as usize;
-        prank[j] = r as u32;
         if r != 0 {
             let i = ps[r - 1] as usize;
             let z = pl[r];
@@ -185,15 +183,22 @@ pub(super) fn run(
         loc[v + 1] += loc[v];
     }
     let mut cur = loc.clone();
-    let mut occ = vec![0u32; m];
-    for j in std::iter::once(m - 1).chain(ps.iter().filter_map(|&x| (x as usize).checked_sub(1))) {
+    // Each emit-list item needs only its source position and next-rank. Build
+    // both directly in next-rank order: no inverse parse SA or starts in emit.
+    let mut occ = vec![(0u32, 0u32); m];
+    for (j, r) in std::iter::once((m - 1, 0u32)).chain(
+        ps.iter()
+            .enumerate()
+            .filter_map(|(r, &x)| (x as usize).checked_sub(1).map(|j| (j, (r + 1) as u32))),
+    ) {
         let v = pa[j] as usize;
-        occ[cur[v] as usize] = j as u32;
+        occ[cur[v] as usize] = (s[j] as u32, r);
         cur[v] += 1;
     }
     drop(cur);
     drop(ps);
     drop(pa);
+    drop(s);
     // Census and regeneration in physical phrase order, not random reference order.
     let mut phys: Vec<u32> = (0..k as u32).collect();
     phys.sort_unstable_by_key(|&v| words[v as usize].pos);
@@ -213,13 +218,7 @@ pub(super) fn run(
     assert!(cap > 0);
     let largest = hist.iter().copied().max().unwrap();
     assert!(largest<=cap,"overlap two-byte cell {largest} exceeds hard descriptor cap {cap}; deeper partition required");
-    let rank = |j: u32| {
-        if j as usize + 1 == m {
-            0
-        } else {
-            prank[j as usize + 1] + 1
-        }
-    };
+
     let mut heap = BinaryHeap::new();
     let mut rows = 0;
     let mut reps = 0;
@@ -238,11 +237,11 @@ pub(super) fn run(
                 } else {
                     head
                 };
-                emit((s[occ[i] as usize] + o as usize) as u64, h as u64);
+                emit(u64::from(occ[i].0) + u64::from(o), h as u64);
                 rows += 1;
                 prior = Some(r);
                 if i + 1 < end {
-                    q.push(Reverse((rank(occ[i + 1]), i + 1, end, o)));
+                    q.push(Reverse((occ[i + 1].1, i + 1, end, o)));
                 }
             }
         };
@@ -296,7 +295,7 @@ pub(super) fn run(
                 }
                 let v = id.0 as usize;
                 let i = loc[v] as usize;
-                heap.push(Reverse((rank(occ[i]), i, loc[v + 1] as usize, id.1)));
+                heap.push(Reverse((occ[i].1, i, loc[v + 1] as usize, id.1)));
             }
         }
         lo = hi;
