@@ -1,0 +1,1 @@
+CENSUS n=100000503 phrases=3170531 distinct=2689467 descriptors=95434516 longest_raw=2772 counted_bucket_bytes=138046867 max_bucket_bytes=583635 max_bucket_records=15964 reads=123359232 private_input_bytes=100000503
