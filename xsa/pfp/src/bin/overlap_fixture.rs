@@ -34,10 +34,14 @@ fn main() {
     }
     drop(rank);
     let mut r = 0;
-    overlap::construct(&t, |p, h| {
-        assert_eq!((p, h), (sa[r] as u64, l[r] as u64), "row {r}");
-        r += 1;
-    });
+    overlap::construct(
+        &t,
+        |_| {},
+        |p, h| {
+            assert_eq!((p, h), (sa[r] as u64, l[r] as u64), "row {r}");
+            r += 1;
+        },
+    );
     assert_eq!(r, n + 1);
     println!("PASS all {r} streamed SA and LCP rows");
 }

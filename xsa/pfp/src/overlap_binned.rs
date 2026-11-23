@@ -1,34 +1,47 @@
 //! Experimental bounded descriptor sort. The corpus is the only phrase-byte store.
 //! Workspace here bounds descriptor count, NOT all phrase/parse metadata.
 use super::{order, Min};
-use std::{
-    cmp::Reverse,
-    collections::{BTreeMap, BinaryHeap},
-};
+use std::{cmp::Reverse, collections::BinaryHeap};
 type Pair = (u32, u32);
 const ALPH: usize = 258;
 #[derive(Copy, Clone)]
-struct Word<'a> {
-    raw: &'a [u8],
-    eof: bool,
-    width: usize,
+struct Word {
+    pos: u32,
+    span: u32,
 }
-fn tail<'a>(words: &[Word<'a>], (v, o): Pair) -> (&'a [u8], bool) {
+impl Word {
+    fn eof(self) -> bool {
+        self.span >> 31 != 0
+    }
+    fn raw(self, bytes: &[u8]) -> &[u8] {
+        let p = self.pos as usize;
+        &bytes[p..p + (self.span & 0x7fff_ffff) as usize]
+    }
+    fn width(self, w: usize) -> usize {
+        (self.span & 0x7fff_ffff) as usize - if self.eof() { 0 } else { w }
+    }
+}
+fn tail<'a>(bytes: &'a [u8], words: &[Word], (v, o): Pair) -> (&'a [u8], bool) {
     let p = words[v as usize];
-    (&p.raw[o as usize..], p.eof)
+    (&p.raw(bytes)[o as usize..], p.eof())
 }
 fn lcp(a: &[u8], b: &[u8]) -> usize {
     a.iter().zip(b).take_while(|(x, y)| x == y).count()
 }
-fn cell(p: Word, o: usize) -> usize {
-    let a = 2 + p.raw[o] as usize;
-    let b = p
-        .raw
+fn cell(raw: &[u8], eof: bool, o: usize) -> usize {
+    let a = 2 + raw[o] as usize;
+    let b = raw
         .get(o + 1)
-        .map_or(if p.eof { 1 } else { 0 }, |&x| 2 + x as usize);
+        .map_or(if eof { 1 } else { 0 }, |&x| 2 + x as usize);
     a * ALPH + b
 }
-pub(super) fn run(bytes: &[u8], w: usize, s: &[usize], mut emit: impl FnMut(u64, u64)) {
+pub(super) fn run(
+    bytes: &[u8],
+    w: usize,
+    s: &[usize],
+    check: &impl Fn(&str),
+    mut emit: impl FnMut(u64, u64),
+) {
     let n = bytes.len();
     let m = s.len() - 1;
     let key = |j: usize| {
@@ -37,21 +50,36 @@ pub(super) fn run(bytes: &[u8], w: usize, s: &[usize], mut emit: impl FnMut(u64,
             j + 1 == m,
         )
     };
-    let mut table = BTreeMap::new();
-    for j in 0..m {
-        table.insert(key(j), 0i32);
+    assert!(n < i32::MAX as usize);
+    eprintln!("SS_OVERLAP_PHASE dict_sort");
+    let mut indices: Vec<u32> = (0..u32::try_from(m).unwrap()).collect();
+    let mut checks = 0u32;
+    indices.sort_unstable_by(|&a, &b| {
+        checks = checks.wrapping_add(1);
+        if checks % 65536 == 0 {
+            check("dict-sort");
+        }
+        key(a as usize).cmp(&key(b as usize)).then(a.cmp(&b))
+    });
+    eprintln!("SS_OVERLAP_PHASE dedup_scatter");
+    let mut words: Vec<Word> = Vec::with_capacity(m);
+    let mut pa = vec![0i32; m];
+    for (r, j) in indices.into_iter().enumerate() {
+        if r % 32768 == 0 {
+            check("dedup");
+        }
+        let j = j as usize;
+        let (raw, eof) = key(j);
+        if words.last().map(|&p| (p.raw(bytes), p.eof())) != Some((raw, eof)) {
+            words.push(Word {
+                pos: s[j] as u32,
+                span: raw.len() as u32 | ((eof as u32) << 31),
+            });
+        }
+        pa[j] = i32::try_from(words.len() - 1).unwrap();
     }
-    let mut words = Vec::with_capacity(table.len());
-    for (&(raw, eof), id) in table.iter_mut() {
-        *id = i32::try_from(words.len()).unwrap();
-        words.push(Word {
-            raw,
-            eof,
-            width: if eof { raw.len() } else { raw.len() - w },
-        });
-    }
-    let pa: Vec<_> = (0..m).map(|j| table[&key(j)]).collect();
-    drop(table);
+    eprintln!("SS_OVERLAP_PHASE parse_kernel");
+    check("parse-kernel");
     let k = words.len();
     let (ps, pl) = order(&pa, k as i32);
     let mut aligned = vec![0; m];
@@ -62,8 +90,14 @@ pub(super) fn run(bytes: &[u8], w: usize, s: &[usize], mut emit: impl FnMut(u64,
         if r != 0 {
             let i = ps[r - 1] as usize;
             let z = pl[r];
-            aligned[r] =
-                s[i + z] - s[i] + lcp(words[pa[i + z] as usize].raw, words[pa[j + z] as usize].raw);
+            if r % 32768 == 0 {
+                check("aligned-lcp");
+            }
+            aligned[r] = s[i + z] - s[i]
+                + lcp(
+                    words[pa[i + z] as usize].raw(bytes),
+                    words[pa[j + z] as usize].raw(bytes),
+                );
         }
     }
     drop(pl);
@@ -87,12 +121,16 @@ pub(super) fn run(bytes: &[u8], w: usize, s: &[usize], mut emit: impl FnMut(u64,
     drop(pa);
     // Census and regeneration in physical phrase order, not random reference order.
     let mut phys: Vec<u32> = (0..k as u32).collect();
-    phys.sort_unstable_by_key(|&v| words[v as usize].raw.as_ptr());
+    phys.sort_unstable_by_key(|&v| words[v as usize].pos);
+    eprintln!("SS_OVERLAP_PHASE pair_census");
     let mut hist = vec![0usize; ALPH * ALPH];
     for &v in &phys {
         let p = words[v as usize];
-        for o in 0..p.width {
-            hist[cell(p, o)] += 1;
+        if v % 32768 == 0 {
+            check("pair-census");
+        }
+        for o in 0..p.width(w) {
+            hist[cell(p.raw(bytes), p.eof(), o)] += 1;
         }
     }
     let cap =
@@ -146,8 +184,11 @@ pub(super) fn run(bytes: &[u8], w: usize, s: &[usize], mut emit: impl FnMut(u64,
             let mut pairs = Vec::with_capacity(mass);
             for &v in &phys {
                 let p = words[v as usize];
-                for o in 0..p.width {
-                    let c = cell(p, o);
+                if v % 32768 == 0 {
+                    check("distribute");
+                }
+                for o in 0..p.width(w) {
+                    let c = cell(p.raw(bytes), p.eof(), o);
                     if (lo..hi).contains(&c) {
                         pairs.push((v, o as u32));
                     }
@@ -155,10 +196,18 @@ pub(super) fn run(bytes: &[u8], w: usize, s: &[usize], mut emit: impl FnMut(u64,
             }
             assert_eq!(pairs.len(), mass);
             windows += 1;
-            pairs.sort_unstable_by(|&a, &b| tail(&words, a).cmp(&tail(&words, b)));
+            eprintln!("SS_OVERLAP_PHASE window_sort window={windows} pairs={mass}");
+            pairs.sort_unstable_by(|&a, &b| {
+                checks = checks.wrapping_add(1);
+                if checks % 65536 == 0 {
+                    check("descriptor-sort");
+                }
+                tail(bytes, &words, a).cmp(&tail(bytes, &words, b))
+            });
+            eprintln!("SS_OVERLAP_PHASE emit window={windows}");
             for id in pairs {
-                let (raw, eof) = tail(&words, id);
-                let old = prev.map(|p| tail(&words, p));
+                let (raw, eof) = tail(bytes, &words, id);
+                let old = prev.map(|p| tail(bytes, &words, p));
                 if old != Some((raw, eof)) {
                     flush(&mut heap, len, head);
                     head = old.map_or(0, |(a, e)| {

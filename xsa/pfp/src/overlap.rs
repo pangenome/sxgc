@@ -69,11 +69,14 @@ impl Min {
 }
 #[path = "overlap_binned.rs"]
 mod binned;
-pub fn construct(bytes: &[u8], mut emit: impl FnMut(u64, u64)) {
+pub fn construct(bytes: &[u8], check: impl Fn(&str), mut emit: impl FnMut(u64, u64)) {
     let w = 8;
     let n = bytes.len();
     let mut s = vec![0usize];
     for (i, b) in bytes.windows(w).enumerate().skip(1) {
+        if i % 1048576 == 0 {
+            check("anchors");
+        }
         let mut h = 1469598103934665603u64;
         for &c in b {
             h = (h ^ c as u64).wrapping_mul(1099511628211);
@@ -85,7 +88,7 @@ pub fn construct(bytes: &[u8], mut emit: impl FnMut(u64, u64)) {
     let m = s.len();
     s.push(n);
     if std::env::var_os("XSA_TEST_OVERLAP_BINNED").is_some() {
-        return binned::run(bytes, w, &s, emit);
+        return binned::run(bytes, w, &s, &check, emit);
     }
     let mut t: Vec<_> = bytes.iter().map(|&c| i32::from(c) + 2).collect();
     t.push(1);

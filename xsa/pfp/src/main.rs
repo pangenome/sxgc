@@ -131,7 +131,7 @@ fn main() {
         let mut lcp=Vec::with_capacity(262144);let mut live=std::collections::VecDeque::new();
         let (mut base,mut u,mut ends)=(0,0,0);
         let mut publish=|lcp:&mut Vec<u64>|{if !lcp.is_empty(){unit::emit_lcp_slice(&bands_dir,u,lcp.len(),lcp,base,&mut live,laws::env_u64("SS_LCP_SLICE_WINDOW",128),&laws);base+=lcp.len() as u64;u+=1;lcp.clear();laws.scratch_gate("overlap-slice");}};
-        overlap::construct(t,|p,h|{let sym=if p==0{0}else{let raw=t[p as usize-1];if remap.is_empty(){raw}else{remap[raw as usize]}};
+        overlap::construct(t,|stage|laws.stop_check(stage),|p,h|{let sym=if p==0{0}else{let raw=t[p as usize-1];if remap.is_empty(){raw}else{remap[raw as usize]}};
             ends+=u64::from(sym==0);cutter.feed_row(p,sym);lcp.push(h);if lcp.len()==262144{publish(&mut lcp);}
         });
         publish(&mut lcp);assert_eq!(base,file_n+1);assert_eq!(ends,1);cutter.finish();
