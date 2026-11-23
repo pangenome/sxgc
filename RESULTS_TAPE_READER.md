@@ -1087,6 +1087,10 @@ First physical-order pipeline arm `sandbox/private-pipeline-physical-17954078560
 
 `private-pipeline-physical-1795435104816286116`, source scan + position bounds, plus position merge: 575.13 s vs bounds-only 883.12 s. Producer reads 193.08 GB vs 286.84 GB. Local merge 0.784 GB / 12.47 s vs 111.97 GB / 348.21 s. Both processes rc=0, certified 100 MB SHA; shared memory cap reached, no OOM. Remaining reads largely landing 91.26 GB and LCP/emit 81.73 GB. Follow-up opt-in: certify non-extendible tail groups from adjacent sorted entries, emit OWN rows by integer continuation rank without per-occurrence landing, count separately incoming final-owner rows and searched prefix groups.
 
+### Non-overlap representation: integer-only landing shortcut (not classical PFP)
+
+`sandbox/private-pipeline-physical-1795435736517984791`, 384 MiB shared, 131072-row target. Certified SHA, producer/finish rc=0. Lower-level row counts: 64,150,638 fixed by the adjacent-key test, 33,291,475 still searched, 2,558,390 pre-routed to final owner (sum=100,000,503). Wall 585.35 s / producer reads 199.63 GB vs 575.13 s / 193.08 GB with position merge but without the test. No observed whole-build win. These figures apply to **truncated non-overlap tails**, not to the overlapping representative construction in `OVERLAP_PFP_PROBE.md`.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX
