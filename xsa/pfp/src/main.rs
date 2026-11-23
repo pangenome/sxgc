@@ -131,7 +131,8 @@ fn main() {
         let mut lcp=Vec::with_capacity(262144);let mut live=std::collections::VecDeque::new();
         let (mut base,mut u,mut ends)=(0,0,0);
         let mut publish=|lcp:&mut Vec<u64>|{if !lcp.is_empty(){unit::emit_lcp_slice(&bands_dir,u,lcp.len(),lcp,base,&mut live,laws::env_u64("SS_LCP_SLICE_WINDOW",128),&laws);base+=lcp.len() as u64;u+=1;lcp.clear();laws.scratch_gate("overlap-slice");}};
-        overlap::construct(t,|stage|laws.stop_check(stage),|p,h,raw|{let sym=if p==0{0}else if remap.is_empty(){raw}else{remap[raw as usize]};
+        let hints=laws::env_u64("XSA_OVERLAP_PHASE_ADVICE",0)==1;
+        overlap::construct(t,|stage|{laws.stop_check(stage);if hints {let adv=match stage {"@distribute"=>Some(memmap2::Advice::Normal),"@refill"|"@exact-sort"|"@emit"=>Some(memmap2::Advice::Random),_=>None};if let Some(a)=adv{mmap.advise(a).expect("phase madvise");}}},|p,h,raw|{let sym=if p==0{0}else if remap.is_empty(){raw}else{remap[raw as usize]};
             ends+=u64::from(sym==0);cutter.feed_row(p,sym);lcp.push(h);if lcp.len()==262144{publish(&mut lcp);}
         });
         publish(&mut lcp);assert_eq!(base,file_n+1);assert_eq!(ends,1);cutter.finish();
