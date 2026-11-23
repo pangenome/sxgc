@@ -1065,6 +1065,12 @@ First physical-order pipeline arm `sandbox/private-pipeline-physical-17954078560
 
 `private-pipeline-physical-1795408253444069125` and `private-pipeline-dictionary-1795408675921671143` in sandbox. Both producer + finish completed and emitted the certified 100 MB SHA. Source-order: 422.27 s, 131.62 GB sampled producer-attributed reads, 543.11 MB sampled peak allocated disk (includes private corpus). Dictionary-order: 413.14 s, 109.01 GB producer reads, 558.03 MB sampled peak disk. Both reached 536870912 B cgroup peak with swap disabled, zero OOM events. One paired run: despite the isolated scan win there is **no observed whole-build win**. In each run over 98% of producer reads were sampled in intervals following a window-distribution completion marker; this is *not* a measurement of distribution's own reads. Follow up with explicit cumulative-counter boundaries inside each bin and bound the live emit row window in a separate experimental arm.
 
+### Emit-window pressure at 512 MiB: the first end-to-end cold-gate win
+
+`sandbox/private-pipeline-physical-1795409157245559641` (2M target rows) vs `...-1795409562375486224` (131072), physical scan order, same 512 MiB shared hard cgroup, no swap, 2-thread workers. Both rc=[0,0], exact certified 100 MB container SHA. Wall 404.93 → 177.92 s (2.28x); sampled producer-attributed reads 101813493760 → 29147136 B, finish reads 353013760 → 131223552 B. Shared file refaults 24877095 → 19825. Peak counted scratch 120127697 → 119839762 B; whole-arm allocated disk sampled peak 559177728 → 559910912 B. The smaller window trades extra within-bin forwards (28314 → 3362443) for a bounded active row set; these are not cross-bin arrivals. Windows stop at group boundaries so 131072 is a target, not a hard row cap (largest unit 157743).
+
+`gates/bin_io_summary.py <arm>/run.log`: on the large-window arm, level-0 bin 88 alone accounted for 51.57 GB of reads in local merge and 48.25 GB in LCP/emit. On the smaller arm, local merge had no attributed reads and LCP/emit 32768 B across both levels. Timings are one A/B pair with concurrent 10 GB workload; both hit the RAM cap, neither incurred OOM. The entire corpus is only 100 MB: this demonstrates cache-pressure control on this fixture, not a whole pipeline with corpus > RAM.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX
