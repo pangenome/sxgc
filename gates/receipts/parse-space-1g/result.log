@@ -1,0 +1,2 @@
+P1 tokens=31784026 distinct=25336659 singleton_symbols=23861760 bwt_rows=31784027 bwt_runs=28654688 min_runs=25336660
+P2 tokens=1023982 distinct=1018343 bytes_u32=4095928 min_bwt_runs=1018344 dict_symbols_with_separators=40856840 owned_lower_token_descriptors=31691760 max_span_tokens=1237 decoded_token_count=31784026
