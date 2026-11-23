@@ -1,0 +1,2388 @@
+TRACE sec=0.004 stage=anchors reads=1572864
+TRACE sec=0.257 stage=anchors reads=76021760
+SS_OVERLAP_PHASE dict_sort
+TRACE sec=0.507 stage=dict-sort reads=100003840
+TRACE sec=0.758 stage=dict-sort reads=100003840
+TRACE sec=1.008 stage=dict-sort reads=100003840
+TRACE sec=1.261 stage=dict-sort reads=100003840
+TRACE sec=1.512 stage=dict-sort reads=100003840
+TRACE sec=1.763 stage=dict-sort reads=100003840
+SS_OVERLAP_PHASE dedup_scatter
+TRACE sec=2.016 stage=dedup reads=100003840
+TRACE sec=2.269 stage=dedup reads=100003840
+SS_OVERLAP_PHASE parse_kernel
+TRACE sec=2.676 stage=aligned-lcp reads=100003840
+SS_OVERLAP_PHASE pair_census
+TRACE sec=3.121 stage=pair-census reads=163569664
+TRACE sec=3.375 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=1 parent_max=2282770 child_max=2040730 nodes=70434
+TRACE sec=3.626 stage=refine-census reads=200007680
+TRACE sec=3.879 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=2 parent_max=2282770 child_max=1861293 nodes=70950
+TRACE sec=4.133 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=3 parent_max=2282770 child_max=1699819 nodes=71208
+TRACE sec=4.385 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=4 parent_max=2282770 child_max=1583191 nodes=71466
+TRACE sec=4.635 stage=refine-census reads=200007680
+TRACE sec=4.887 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=5 parent_max=2282770 child_max=1474417 nodes=71724
+TRACE sec=5.137 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=6 parent_max=2282770 child_max=1377087 nodes=71982
+TRACE sec=5.389 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=7 parent_max=2282770 child_max=1285246 nodes=72240
+TRACE sec=5.642 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=8 parent_max=2282770 child_max=1218134 nodes=72498
+TRACE sec=5.894 stage=refine-census reads=200007680
+TRACE sec=6.147 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=9 parent_max=2282770 child_max=1154509 nodes=72756
+TRACE sec=6.399 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=10 parent_max=2282770 child_max=1095289 nodes=73014
+TRACE sec=6.651 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=11 parent_max=2282770 child_max=1038338 nodes=73272
+TRACE sec=6.904 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=12 parent_max=2282770 child_max=995860 nodes=73530
+TRACE sec=7.155 stage=refine-census reads=200007680
+TRACE sec=7.408 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=13 parent_max=2282770 child_max=955725 nodes=73788
+TRACE sec=7.660 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=14 parent_max=2282770 child_max=918005 nodes=74046
+TRACE sec=7.912 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=15 parent_max=2282770 child_max=881772 nodes=74304
+TRACE sec=8.162 stage=refine-census reads=200007680
+SS_OVERLAP_REFINE depth=16 parent_max=2282770 child_max=867983 nodes=74562
+TRACE sec=8.377 stage=@distribute reads=200007680
+TRACE sec=8.629 stage=distribute reads=220061696
+SS_OVERLAP_PHASE window_sort window=1 pairs=869376
+TRACE sec=8.858 stage=@prefix-sort reads=263970816
+TRACE sec=8.938 stage=@refill reads=263970816
+TRACE sec=9.038 stage=@prefix-sort reads=280547328
+SS_OVERLAP_REFILL window=1 depth=28 active=257248 bytes=2695430
+TRACE sec=9.096 stage=@refill reads=280547328
+TRACE sec=9.199 stage=@prefix-sort reads=297832448
+SS_OVERLAP_REFILL window=1 depth=40 active=87009 bytes=927984
+TRACE sec=9.250 stage=@refill reads=297832448
+TRACE sec=9.256 stage=@prefix-sort reads=298381312
+SS_OVERLAP_REFILL window=1 depth=52 active=39695 bytes=430648
+TRACE sec=9.306 stage=@refill reads=298381312
+TRACE sec=9.307 stage=@prefix-sort reads=298409984
+SS_OVERLAP_REFILL window=1 depth=64 active=21604 bytes=236233
+TRACE sec=9.307 stage=@exact-sort reads=298409984
+SS_OVERLAP_PHASE emit window=1
+TRACE sec=9.372 stage=@emit reads=298430464
+TRACE sec=9.476 stage=@distribute reads=298430464
+TRACE sec=9.729 stage=distribute reads=346730496
+SS_OVERLAP_PHASE window_sort window=2 pairs=347870
+TRACE sec=9.906 stage=@prefix-sort reads=381722624
+TRACE sec=9.932 stage=@refill reads=381722624
+TRACE sec=10.093 stage=@prefix-sort reads=409604096
+SS_OVERLAP_REFILL window=2 depth=28 active=96620 bytes=1025420
+TRACE sec=10.111 stage=@refill reads=409604096
+TRACE sec=10.137 stage=@prefix-sort reads=410787840
+SS_OVERLAP_REFILL window=2 depth=40 active=37265 bytes=407258
+TRACE sec=10.153 stage=@refill reads=410787840
+TRACE sec=10.156 stage=@prefix-sort reads=410865664
+SS_OVERLAP_REFILL window=2 depth=52 active=22678 bytes=258036
+TRACE sec=10.171 stage=@refill reads=410865664
+TRACE sec=10.171 stage=@prefix-sort reads=410865664
+SS_OVERLAP_REFILL window=2 depth=64 active=16114 bytes=185867
+TRACE sec=10.171 stage=@exact-sort reads=410865664
+SS_OVERLAP_PHASE emit window=2
+TRACE sec=10.195 stage=@emit reads=410865664
+CHECKPOINT rows=1000000 digest=6e5cfabff987de99 reads=410865664 wall=10.212
+TRACE sec=10.243 stage=@distribute reads=410865664
+TRACE sec=10.494 stage=distribute reads=441012224
+SS_OVERLAP_PHASE window_sort window=3 pairs=873757
+TRACE sec=10.678 stage=@prefix-sort reads=474185728
+TRACE sec=10.689 stage=@refill reads=474185728
+TRACE sec=10.722 stage=@prefix-sort reads=476327936
+SS_OVERLAP_REFILL window=3 depth=28 active=873757 bytes=10382261
+TRACE sec=10.773 stage=@refill reads=476327936
+TRACE sec=10.778 stage=@prefix-sort reads=476405760
+SS_OVERLAP_REFILL window=3 depth=40 active=777906 bytes=9054670
+TRACE sec=10.830 stage=@refill reads=476405760
+TRACE sec=10.833 stage=@prefix-sort reads=476405760
+SS_OVERLAP_REFILL window=3 depth=52 active=628958 bytes=7335790
+TRACE sec=10.881 stage=@refill reads=476405760
+TRACE sec=10.884 stage=@prefix-sort reads=476405760
+SS_OVERLAP_REFILL window=3 depth=64 active=521837 bytes=6118286
+TRACE sec=10.884 stage=@exact-sort reads=476405760
+SS_OVERLAP_PHASE emit window=3
+TRACE sec=11.035 stage=@emit reads=476405760
+CHECKPOINT rows=2000000 digest=077460eb2384d611 reads=476405760 wall=11.096
+TRACE sec=11.105 stage=@distribute reads=476405760
+TRACE sec=11.358 stage=distribute reads=514580480
+SS_OVERLAP_PHASE window_sort window=4 pairs=873676
+TRACE sec=11.526 stage=@prefix-sort reads=526536704
+TRACE sec=11.597 stage=@refill reads=526536704
+TRACE sec=11.637 stage=@prefix-sort reads=530632704
+SS_OVERLAP_REFILL window=4 depth=28 active=524819 bytes=5521424
+TRACE sec=11.692 stage=@refill reads=530632704
+TRACE sec=11.694 stage=@prefix-sort reads=530636800
+SS_OVERLAP_REFILL window=4 depth=40 active=214320 bytes=2336524
+TRACE sec=11.741 stage=@refill reads=530636800
+TRACE sec=11.742 stage=@prefix-sort reads=530636800
+SS_OVERLAP_REFILL window=4 depth=52 active=114058 bytes=1271684
+TRACE sec=11.786 stage=@refill reads=530636800
+TRACE sec=11.787 stage=@prefix-sort reads=530636800
+SS_OVERLAP_REFILL window=4 depth=64 active=69947 bytes=796010
+TRACE sec=11.787 stage=@exact-sort reads=530636800
+SS_OVERLAP_PHASE emit window=4
+TRACE sec=11.851 stage=@emit reads=530636800
+CHECKPOINT rows=3000000 digest=e1e54c08e888e0c4 reads=530636800 wall=11.895
+TRACE sec=11.903 stage=@distribute reads=530636800
+TRACE sec=12.156 stage=distribute reads=551899136
+SS_OVERLAP_PHASE window_sort window=5 pairs=861947
+TRACE sec=12.332 stage=@prefix-sort reads=581885952
+TRACE sec=12.397 stage=@refill reads=581885952
+TRACE sec=12.512 stage=@prefix-sort reads=601759744
+SS_OVERLAP_REFILL window=5 depth=28 active=263030 bytes=2782347
+TRACE sec=12.560 stage=@refill reads=601759744
+TRACE sec=12.606 stage=@prefix-sort reads=608165888
+SS_OVERLAP_REFILL window=5 depth=40 active=100793 bytes=1081788
+TRACE sec=12.649 stage=@refill reads=608165888
+TRACE sec=12.650 stage=@prefix-sort reads=608169984
+SS_OVERLAP_REFILL window=5 depth=52 active=48637 bytes=538120
+TRACE sec=12.691 stage=@refill reads=608169984
+TRACE sec=12.691 stage=@prefix-sort reads=608169984
+SS_OVERLAP_REFILL window=5 depth=64 active=28791 bytes=322371
+TRACE sec=12.691 stage=@exact-sort reads=608169984
+SS_OVERLAP_PHASE emit window=5
+TRACE sec=12.752 stage=@emit reads=608174080
+CHECKPOINT rows=4000000 digest=994ecaaa306665fb reads=608174080 wall=12.822
+TRACE sec=12.831 stage=@distribute reads=608174080
+TRACE sec=13.083 stage=distribute reads=642994176
+SS_OVERLAP_PHASE window_sort window=6 pairs=868397
+TRACE sec=13.272 stage=@prefix-sort reads=664223744
+TRACE sec=13.334 stage=@refill reads=664223744
+TRACE sec=13.566 stage=@prefix-sort reads=704991232
+SS_OVERLAP_REFILL window=6 depth=28 active=150458 bytes=1583172
+TRACE sec=13.620 stage=@refill reads=704991232
+TRACE sec=13.677 stage=@prefix-sort reads=710225920
+SS_OVERLAP_REFILL window=6 depth=40 active=47257 bytes=507772
+TRACE sec=13.726 stage=@refill reads=710225920
+TRACE sec=13.742 stage=@prefix-sort reads=710844416
+SS_OVERLAP_REFILL window=6 depth=52 active=22909 bytes=253019
+TRACE sec=13.790 stage=@refill reads=710844416
+TRACE sec=13.792 stage=@prefix-sort reads=710918144
+SS_OVERLAP_REFILL window=6 depth=64 active=13000 bytes=144323
+TRACE sec=13.792 stage=@exact-sort reads=710918144
+SS_OVERLAP_PHASE emit window=6
+TRACE sec=13.863 stage=@emit reads=710918144
+TRACE sec=13.972 stage=@distribute reads=710918144
+TRACE sec=14.227 stage=distribute reads=734523392
+SS_OVERLAP_PHASE window_sort window=7 pairs=822745
+TRACE sec=14.464 stage=@prefix-sort reads=779071488
+TRACE sec=14.530 stage=@refill reads=779071488
+TRACE sec=14.781 stage=restage reads=828284928
+TRACE sec=14.846 stage=@prefix-sort reads=840970240
+SS_OVERLAP_REFILL window=7 depth=28 active=189099 bytes=1945106
+TRACE sec=14.890 stage=@refill reads=840970240
+TRACE sec=14.974 stage=@prefix-sort reads=854183936
+SS_OVERLAP_REFILL window=7 depth=40 active=33737 bytes=356813
+TRACE sec=15.014 stage=@refill reads=854183936
+TRACE sec=15.015 stage=@prefix-sort reads=854212608
+SS_OVERLAP_REFILL window=7 depth=52 active=12592 bytes=135241
+TRACE sec=15.054 stage=@refill reads=854212608
+TRACE sec=15.054 stage=@prefix-sort reads=854216704
+SS_OVERLAP_REFILL window=7 depth=64 active=5687 bytes=62078
+TRACE sec=15.054 stage=@exact-sort reads=854216704
+SS_OVERLAP_PHASE emit window=7
+TRACE sec=15.111 stage=@emit reads=854220800
+CHECKPOINT rows=5000000 digest=5108f96df9481f44 reads=854220800 wall=15.113
+TRACE sec=15.232 stage=@distribute reads=854220800
+TRACE sec=15.482 stage=distribute reads=891252736
+SS_OVERLAP_PHASE window_sort window=8 pairs=800898
+TRACE sec=15.686 stage=@prefix-sort reads=938905600
+TRACE sec=15.751 stage=@refill reads=938905600
+TRACE sec=16.011 stage=restage reads=988930048
+TRACE sec=16.012 stage=@prefix-sort reads=988930048
+SS_OVERLAP_REFILL window=8 depth=28 active=192990 bytes=1988345
+TRACE sec=16.056 stage=@refill reads=988930048
+TRACE sec=16.142 stage=@prefix-sort reads=1004167168
+SS_OVERLAP_REFILL window=8 depth=40 active=39797 bytes=419817
+TRACE sec=16.182 stage=@refill reads=1004167168
+TRACE sec=16.182 stage=@prefix-sort reads=1004167168
+SS_OVERLAP_REFILL window=8 depth=52 active=15398 bytes=165007
+TRACE sec=16.219 stage=@refill reads=1004167168
+TRACE sec=16.219 stage=@prefix-sort reads=1004167168
+SS_OVERLAP_REFILL window=8 depth=64 active=7430 bytes=81153
+TRACE sec=16.219 stage=@exact-sort reads=1004167168
+SS_OVERLAP_PHASE emit window=8
+TRACE sec=16.275 stage=@emit reads=1004175360
+CHECKPOINT rows=6000000 digest=80bcb54036d8a8a4 reads=1004175360 wall=16.300
+TRACE sec=16.380 stage=@distribute reads=1004175360
+TRACE sec=16.634 stage=distribute reads=1032708096
+SS_OVERLAP_PHASE window_sort window=9 pairs=541900
+TRACE sec=16.825 stage=@prefix-sort reads=1070977024
+TRACE sec=16.872 stage=@refill reads=1070977024
+TRACE sec=17.119 stage=@prefix-sort reads=1117089792
+SS_OVERLAP_REFILL window=9 depth=28 active=155331 bytes=1579398
+TRACE sec=17.152 stage=@refill reads=1117089792
+TRACE sec=17.256 stage=@prefix-sort reads=1124655104
+SS_OVERLAP_REFILL window=9 depth=40 active=13987 bytes=144968
+TRACE sec=17.281 stage=@refill reads=1124655104
+TRACE sec=17.281 stage=@prefix-sort reads=1124663296
+SS_OVERLAP_REFILL window=9 depth=52 active=3990 bytes=41926
+TRACE sec=17.304 stage=@refill reads=1124663296
+TRACE sec=17.305 stage=@prefix-sort reads=1124663296
+SS_OVERLAP_REFILL window=9 depth=64 active=1703 bytes=18392
+TRACE sec=17.305 stage=@exact-sort reads=1124663296
+SS_OVERLAP_PHASE emit window=9
+TRACE sec=17.340 stage=@emit reads=1124663296
+CHECKPOINT rows=7000000 digest=acefaacbaf76bf3d reads=1124663296 wall=17.395
+TRACE sec=17.432 stage=@distribute reads=1124663296
+TRACE sec=17.683 stage=distribute reads=1164636160
+SS_OVERLAP_PHASE window_sort window=10 pairs=779497
+TRACE sec=17.877 stage=@prefix-sort reads=1211293696
+TRACE sec=17.946 stage=@refill reads=1211293696
+TRACE sec=18.177 stage=@prefix-sort reads=1255682048
+SS_OVERLAP_REFILL window=10 depth=28 active=247151 bytes=2508607
+TRACE sec=18.220 stage=@refill reads=1255682048
+TRACE sec=18.282 stage=@prefix-sort reads=1266311168
+SS_OVERLAP_REFILL window=10 depth=40 active=21602 bytes=226518
+TRACE sec=18.321 stage=@refill reads=1266311168
+TRACE sec=18.321 stage=@prefix-sort reads=1266315264
+SS_OVERLAP_REFILL window=10 depth=52 active=6960 bytes=75129
+TRACE sec=18.357 stage=@refill reads=1266315264
+TRACE sec=18.357 stage=@prefix-sort reads=1266315264
+SS_OVERLAP_REFILL window=10 depth=64 active=3561 bytes=39311
+TRACE sec=18.357 stage=@exact-sort reads=1266315264
+SS_OVERLAP_PHASE emit window=10
+TRACE sec=18.416 stage=@emit reads=1266315264
+CHECKPOINT rows=8000000 digest=c7b315a0bdd12b2d reads=1266323456 wall=18.541
+TRACE sec=18.551 stage=@distribute reads=1266323456
+TRACE sec=18.803 stage=distribute reads=1300049920
+SS_OVERLAP_PHASE window_sort window=11 pairs=446175
+TRACE sec=19.025 stage=@prefix-sort reads=1318133760
+TRACE sec=19.076 stage=@refill reads=1318133760
+TRACE sec=19.326 stage=@prefix-sort reads=1359556608
+SS_OVERLAP_REFILL window=11 depth=28 active=111025 bytes=1131378
+TRACE sec=19.357 stage=@refill reads=1359556608
+TRACE sec=19.388 stage=@prefix-sort reads=1362571264
+SS_OVERLAP_REFILL window=11 depth=40 active=9822 bytes=102050
+TRACE sec=19.408 stage=@refill reads=1362571264
+TRACE sec=19.408 stage=@prefix-sort reads=1362575360
+SS_OVERLAP_REFILL window=11 depth=52 active=3000 bytes=31743
+TRACE sec=19.428 stage=@refill reads=1362575360
+TRACE sec=19.428 stage=@prefix-sort reads=1362579456
+SS_OVERLAP_REFILL window=11 depth=64 active=1392 bytes=15065
+TRACE sec=19.428 stage=@exact-sort reads=1362579456
+SS_OVERLAP_PHASE emit window=11
+TRACE sec=19.456 stage=@emit reads=1362579456
+TRACE sec=19.629 stage=@distribute reads=1362579456
+TRACE sec=19.884 stage=distribute reads=1390895104
+SS_OVERLAP_PHASE window_sort window=12 pairs=583601
+TRACE sec=20.099 stage=@prefix-sort reads=1429876736
+TRACE sec=20.173 stage=@refill reads=1429876736
+TRACE sec=20.410 stage=@prefix-sort reads=1472872448
+SS_OVERLAP_REFILL window=12 depth=28 active=191705 bytes=1960509
+TRACE sec=20.451 stage=@refill reads=1472872448
+TRACE sec=20.512 stage=@prefix-sort reads=1481580544
+SS_OVERLAP_REFILL window=12 depth=40 active=20156 bytes=212387
+TRACE sec=20.541 stage=@refill reads=1481580544
+TRACE sec=20.544 stage=@prefix-sort reads=1481707520
+SS_OVERLAP_REFILL window=12 depth=52 active=6621 bytes=71293
+TRACE sec=20.571 stage=@refill reads=1481707520
+TRACE sec=20.572 stage=@prefix-sort reads=1481711616
+SS_OVERLAP_REFILL window=12 depth=64 active=3463 bytes=37673
+TRACE sec=20.572 stage=@exact-sort reads=1481711616
+SS_OVERLAP_PHASE emit window=12
+TRACE sec=20.612 stage=@emit reads=1481711616
+CHECKPOINT rows=9000000 digest=3fcfdf46c3df136f reads=1481715712 wall=20.824
+TRACE sec=20.866 stage=emit reads=1481715712
+TRACE sec=20.877 stage=@distribute reads=1481715712
+TRACE sec=21.133 stage=distribute reads=1509822464
+SS_OVERLAP_PHASE window_sort window=13 pairs=699002
+TRACE sec=21.335 stage=@prefix-sort reads=1554280448
+TRACE sec=21.408 stage=@refill reads=1554280448
+TRACE sec=21.666 stage=restage reads=1602355200
+TRACE sec=21.703 stage=@prefix-sort reads=1609015296
+SS_OVERLAP_REFILL window=13 depth=28 active=224012 bytes=2289024
+TRACE sec=21.749 stage=@refill reads=1609015296
+TRACE sec=21.835 stage=@prefix-sort reads=1620426752
+SS_OVERLAP_REFILL window=13 depth=40 active=22968 bytes=238498
+TRACE sec=21.871 stage=@refill reads=1620426752
+TRACE sec=21.872 stage=@prefix-sort reads=1620459520
+SS_OVERLAP_REFILL window=13 depth=52 active=6560 bytes=70080
+TRACE sec=21.905 stage=@refill reads=1620459520
+TRACE sec=21.905 stage=@prefix-sort reads=1620467712
+SS_OVERLAP_REFILL window=13 depth=64 active=2986 bytes=31653
+TRACE sec=21.905 stage=@exact-sort reads=1620467712
+SS_OVERLAP_PHASE emit window=13
+TRACE sec=21.953 stage=@emit reads=1620471808
+TRACE sec=22.148 stage=@distribute reads=1620475904
+TRACE sec=22.399 stage=distribute reads=1650348032
+SS_OVERLAP_PHASE window_sort window=14 pairs=642477
+TRACE sec=22.602 stage=@prefix-sort reads=1689620480
+TRACE sec=22.664 stage=@refill reads=1689620480
+TRACE sec=22.915 stage=restage reads=1737588736
+TRACE sec=22.919 stage=@prefix-sort reads=1737850880
+SS_OVERLAP_REFILL window=14 depth=28 active=174272 bytes=1781680
+TRACE sec=22.957 stage=@refill reads=1737850880
+TRACE sec=23.048 stage=@prefix-sort reads=1746350080
+SS_OVERLAP_REFILL window=14 depth=40 active=18124 bytes=188782
+TRACE sec=23.079 stage=@refill reads=1746350080
+TRACE sec=23.080 stage=@prefix-sort reads=1746358272
+SS_OVERLAP_REFILL window=14 depth=52 active=5894 bytes=63746
+TRACE sec=23.109 stage=@refill reads=1746358272
+TRACE sec=23.109 stage=@prefix-sort reads=1746366464
+SS_OVERLAP_REFILL window=14 depth=64 active=3022 bytes=33554
+TRACE sec=23.109 stage=@exact-sort reads=1746366464
+SS_OVERLAP_PHASE emit window=14
+TRACE sec=23.152 stage=@emit reads=1746370560
+CHECKPOINT rows=10000000 digest=ebe9f803f2e7d932 reads=1746370560 wall=23.193
+TRACE sec=23.318 stage=@distribute reads=1746370560
+TRACE sec=23.569 stage=distribute reads=1783312384
+SS_OVERLAP_PHASE window_sort window=15 pairs=392084
+TRACE sec=23.814 stage=@prefix-sort reads=1828216832
+TRACE sec=23.854 stage=@refill reads=1828216832
+TRACE sec=24.086 stage=@prefix-sort reads=1866293248
+SS_OVERLAP_REFILL window=15 depth=28 active=101758 bytes=1036350
+TRACE sec=24.110 stage=@refill reads=1866293248
+TRACE sec=24.144 stage=@prefix-sort reads=1870151680
+SS_OVERLAP_REFILL window=15 depth=40 active=7260 bytes=75246
+TRACE sec=24.165 stage=@refill reads=1870151680
+TRACE sec=24.165 stage=@prefix-sort reads=1870151680
+SS_OVERLAP_REFILL window=15 depth=52 active=2167 bytes=22918
+TRACE sec=24.185 stage=@refill reads=1870151680
+TRACE sec=24.185 stage=@prefix-sort reads=1870151680
+SS_OVERLAP_REFILL window=15 depth=64 active=964 bytes=10517
+TRACE sec=24.185 stage=@exact-sort reads=1870151680
+SS_OVERLAP_PHASE emit window=15
+TRACE sec=24.215 stage=@emit reads=1870151680
+TRACE sec=24.297 stage=@distribute reads=1870151680
+TRACE sec=24.549 stage=distribute reads=1908092928
+SS_OVERLAP_PHASE window_sort window=16 pairs=833345
+TRACE sec=24.755 stage=@prefix-sort reads=1956802560
+TRACE sec=24.832 stage=@refill reads=1956802560
+TRACE sec=25.045 stage=@prefix-sort reads=1996767232
+SS_OVERLAP_REFILL window=16 depth=28 active=278219 bytes=2837554
+TRACE sec=25.093 stage=@refill reads=1996767232
+TRACE sec=25.170 stage=@prefix-sort reads=2010464256
+SS_OVERLAP_REFILL window=16 depth=40 active=26567 bytes=275757
+TRACE sec=25.213 stage=@refill reads=2010464256
+TRACE sec=25.213 stage=@prefix-sort reads=2010468352
+SS_OVERLAP_REFILL window=16 depth=52 active=7140 bytes=75103
+TRACE sec=25.252 stage=@refill reads=2010468352
+TRACE sec=25.252 stage=@prefix-sort reads=2010468352
+SS_OVERLAP_REFILL window=16 depth=64 active=3143 bytes=33955
+TRACE sec=25.252 stage=@exact-sort reads=2010468352
+SS_OVERLAP_PHASE emit window=16
+TRACE sec=25.311 stage=@emit reads=2010472448
+CHECKPOINT rows=11000000 digest=873cbb2411de4f4f reads=2010472448 wall=25.324
+TRACE sec=25.447 stage=@distribute reads=2010472448
+TRACE sec=25.701 stage=distribute reads=2050830336
+SS_OVERLAP_PHASE window_sort window=17 pairs=657081
+TRACE sec=25.896 stage=@prefix-sort reads=2086174720
+TRACE sec=25.953 stage=@refill reads=2086174720
+TRACE sec=26.216 stage=restage reads=2136805376
+TRACE sec=26.219 stage=@prefix-sort reads=2137051136
+SS_OVERLAP_REFILL window=17 depth=28 active=165363 bytes=1688873
+TRACE sec=26.255 stage=@refill reads=2137051136
+TRACE sec=26.329 stage=@prefix-sort reads=2144452608
+SS_OVERLAP_REFILL window=17 depth=40 active=16055 bytes=167567
+TRACE sec=26.360 stage=@refill reads=2144452608
+TRACE sec=26.361 stage=@prefix-sort reads=2144481280
+SS_OVERLAP_REFILL window=17 depth=52 active=5057 bytes=53754
+TRACE sec=26.391 stage=@refill reads=2144481280
+TRACE sec=26.391 stage=@prefix-sort reads=2144481280
+SS_OVERLAP_REFILL window=17 depth=64 active=2417 bytes=26552
+TRACE sec=26.391 stage=@exact-sort reads=2144481280
+SS_OVERLAP_PHASE emit window=17
+TRACE sec=26.435 stage=@emit reads=2144481280
+CHECKPOINT rows=12000000 digest=6b99746a7b1122dc reads=2144481280 wall=26.475
+TRACE sec=26.548 stage=@distribute reads=2144481280
+TRACE sec=26.801 stage=distribute reads=2190118912
+SS_OVERLAP_PHASE window_sort window=18 pairs=224937
+TRACE sec=26.998 stage=@prefix-sort reads=2233913344
+TRACE sec=27.017 stage=@refill reads=2233913344
+TRACE sec=27.196 stage=@prefix-sort reads=2266951680
+SS_OVERLAP_REFILL window=18 depth=28 active=62802 bytes=648679
+TRACE sec=27.208 stage=@refill reads=2266951680
+TRACE sec=27.250 stage=@prefix-sort reads=2269380608
+SS_OVERLAP_REFILL window=18 depth=40 active=7055 bytes=74275
+TRACE sec=27.260 stage=@refill reads=2269380608
+TRACE sec=27.260 stage=@prefix-sort reads=2269392896
+SS_OVERLAP_REFILL window=18 depth=52 active=2322 bytes=24655
+TRACE sec=27.269 stage=@refill reads=2269392896
+TRACE sec=27.269 stage=@prefix-sort reads=2269392896
+SS_OVERLAP_REFILL window=18 depth=64 active=1081 bytes=11751
+TRACE sec=27.269 stage=@exact-sort reads=2269392896
+SS_OVERLAP_PHASE emit window=18
+TRACE sec=27.283 stage=@emit reads=2269396992
+TRACE sec=27.328 stage=@distribute reads=2269396992
+TRACE sec=27.582 stage=distribute reads=2309124096
+SS_OVERLAP_PHASE window_sort window=19 pairs=763561
+TRACE sec=27.778 stage=@prefix-sort reads=2354659328
+TRACE sec=27.844 stage=@refill reads=2354659328
+TRACE sec=28.069 stage=@prefix-sort reads=2396708864
+SS_OVERLAP_REFILL window=19 depth=28 active=213520 bytes=2170450
+TRACE sec=28.112 stage=@refill reads=2396708864
+TRACE sec=28.175 stage=@prefix-sort reads=2406903808
+SS_OVERLAP_REFILL window=19 depth=40 active=20318 bytes=211699
+TRACE sec=28.212 stage=@refill reads=2406903808
+TRACE sec=28.213 stage=@prefix-sort reads=2406907904
+SS_OVERLAP_REFILL window=19 depth=52 active=6073 bytes=64542
+TRACE sec=28.248 stage=@refill reads=2406907904
+TRACE sec=28.248 stage=@prefix-sort reads=2406907904
+SS_OVERLAP_REFILL window=19 depth=64 active=2801 bytes=30722
+TRACE sec=28.248 stage=@exact-sort reads=2406907904
+SS_OVERLAP_PHASE emit window=19
+TRACE sec=28.300 stage=@emit reads=2406907904
+CHECKPOINT rows=13000000 digest=439886d879757e48 reads=2406907904 wall=28.348
+TRACE sec=28.422 stage=@distribute reads=2406907904
+TRACE sec=28.676 stage=distribute reads=2429943808
+TRACE sec=28.930 stage=distribute reads=2473783296
+SS_OVERLAP_PHASE window_sort window=20 pairs=838504
+TRACE sec=28.950 stage=@prefix-sort reads=2477318144
+TRACE sec=29.036 stage=@refill reads=2477318144
+TRACE sec=29.335 stage=restage reads=2529165312
+TRACE sec=29.340 stage=@prefix-sort reads=2529427456
+SS_OVERLAP_REFILL window=20 depth=28 active=266530 bytes=2704642
+TRACE sec=29.395 stage=@refill reads=2529427456
+TRACE sec=29.467 stage=@prefix-sort reads=2541494272
+SS_OVERLAP_REFILL window=20 depth=40 active=28754 bytes=298816
+TRACE sec=29.509 stage=@refill reads=2541494272
+TRACE sec=29.516 stage=@prefix-sort reads=2541748224
+SS_OVERLAP_REFILL window=20 depth=52 active=8724 bytes=92563
+TRACE sec=29.554 stage=@refill reads=2541748224
+TRACE sec=29.554 stage=@prefix-sort reads=2541752320
+SS_OVERLAP_REFILL window=20 depth=64 active=3773 bytes=40316
+TRACE sec=29.554 stage=@exact-sort reads=2541752320
+SS_OVERLAP_PHASE emit window=20
+TRACE sec=29.613 stage=@emit reads=2541756416
+CHECKPOINT rows=14000000 digest=547b01ad1a03a02d reads=2541756416 wall=29.696
+TRACE sec=29.751 stage=@distribute reads=2541756416
+TRACE sec=30.005 stage=distribute reads=2580746240
+SS_OVERLAP_PHASE window_sort window=21 pairs=822531
+TRACE sec=30.206 stage=@prefix-sort reads=2625826816
+TRACE sec=30.276 stage=@refill reads=2625826816
+TRACE sec=30.541 stage=restage reads=2676797440
+TRACE sec=30.541 stage=@prefix-sort reads=2676797440
+SS_OVERLAP_REFILL window=21 depth=28 active=218679 bytes=2230887
+TRACE sec=30.587 stage=@refill reads=2676797440
+TRACE sec=30.670 stage=@prefix-sort reads=2687868928
+SS_OVERLAP_REFILL window=21 depth=40 active=22986 bytes=240558
+TRACE sec=30.711 stage=@refill reads=2687868928
+TRACE sec=30.711 stage=@prefix-sort reads=2687877120
+SS_OVERLAP_REFILL window=21 depth=52 active=7433 bytes=79584
+TRACE sec=30.749 stage=@refill reads=2687877120
+TRACE sec=30.749 stage=@prefix-sort reads=2687877120
+SS_OVERLAP_REFILL window=21 depth=64 active=3536 bytes=39103
+TRACE sec=30.749 stage=@exact-sort reads=2687877120
+SS_OVERLAP_PHASE emit window=21
+TRACE sec=30.806 stage=@emit reads=2687881216
+CHECKPOINT rows=15000000 digest=410606bfc16a05ce reads=2687881216 wall=30.905
+TRACE sec=30.939 stage=@distribute reads=2687881216
+TRACE sec=31.190 stage=distribute reads=2725761024
+SS_OVERLAP_PHASE window_sort window=22 pairs=151139
+TRACE sec=31.382 stage=@prefix-sort reads=2771234816
+TRACE sec=31.396 stage=@refill reads=2771234816
+TRACE sec=31.604 stage=@prefix-sort reads=2810015744
+SS_OVERLAP_REFILL window=22 depth=28 active=54968 bytes=556328
+TRACE sec=31.612 stage=@refill reads=2810015744
+TRACE sec=31.619 stage=@prefix-sort reads=2810302464
+SS_OVERLAP_REFILL window=22 depth=40 active=3327 bytes=34504
+TRACE sec=31.625 stage=@refill reads=2810302464
+TRACE sec=31.625 stage=@prefix-sort reads=2810302464
+SS_OVERLAP_REFILL window=22 depth=52 active=983 bytes=10417
+TRACE sec=31.631 stage=@refill reads=2810302464
+TRACE sec=31.631 stage=@prefix-sort reads=2810302464
+SS_OVERLAP_REFILL window=22 depth=64 active=442 bytes=4488
+TRACE sec=31.631 stage=@exact-sort reads=2810302464
+SS_OVERLAP_PHASE emit window=22
+TRACE sec=31.639 stage=@emit reads=2810302464
+TRACE sec=31.669 stage=@distribute reads=2810306560
+TRACE sec=31.922 stage=distribute reads=2835546112
+SS_OVERLAP_PHASE window_sort window=23 pairs=873193
+TRACE sec=32.106 stage=@prefix-sort reads=2879836160
+TRACE sec=32.186 stage=@refill reads=2879836160
+TRACE sec=32.366 stage=@prefix-sort reads=2913005568
+SS_OVERLAP_REFILL window=23 depth=28 active=353220 bytes=3587228
+TRACE sec=32.418 stage=@refill reads=2913005568
+TRACE sec=32.529 stage=@prefix-sort reads=2930958336
+SS_OVERLAP_REFILL window=23 depth=40 active=34180 bytes=351428
+TRACE sec=32.573 stage=@refill reads=2930958336
+TRACE sec=32.595 stage=@prefix-sort reads=2931822592
+SS_OVERLAP_REFILL window=23 depth=52 active=8614 bytes=90951
+TRACE sec=32.636 stage=@refill reads=2931822592
+TRACE sec=32.637 stage=@prefix-sort reads=2931826688
+SS_OVERLAP_REFILL window=23 depth=64 active=3957 bytes=43154
+TRACE sec=32.637 stage=@exact-sort reads=2931826688
+SS_OVERLAP_PHASE emit window=23
+TRACE sec=32.698 stage=@emit reads=2931826688
+CHECKPOINT rows=16000000 digest=f7edea81f8a1808d reads=2931826688 wall=32.796
+TRACE sec=32.838 stage=@distribute reads=2931826688
+TRACE sec=33.090 stage=distribute reads=2983403520
+SS_OVERLAP_PHASE window_sort window=24 pairs=777456
+TRACE sec=33.270 stage=@prefix-sort reads=3018526720
+TRACE sec=33.336 stage=@refill reads=3018526720
+TRACE sec=33.557 stage=@prefix-sort reads=3056934912
+SS_OVERLAP_REFILL window=24 depth=28 active=209809 bytes=2145921
+TRACE sec=33.608 stage=@refill reads=3056934912
+TRACE sec=33.704 stage=@prefix-sort reads=3066765312
+SS_OVERLAP_REFILL window=24 depth=40 active=19603 bytes=204914
+TRACE sec=33.749 stage=@refill reads=3066765312
+TRACE sec=33.750 stage=@prefix-sort reads=3066769408
+SS_OVERLAP_REFILL window=24 depth=52 active=6055 bytes=65402
+TRACE sec=33.792 stage=@refill reads=3066769408
+TRACE sec=33.793 stage=@prefix-sort reads=3066773504
+SS_OVERLAP_REFILL window=24 depth=64 active=2919 bytes=31603
+TRACE sec=33.793 stage=@exact-sort reads=3066773504
+SS_OVERLAP_PHASE emit window=24
+TRACE sec=33.858 stage=@emit reads=3066773504
+CHECKPOINT rows=17000000 digest=7f3770b14561783c reads=3066777600 wall=33.975
+TRACE sec=33.991 stage=@distribute reads=3066777600
+TRACE sec=34.245 stage=distribute reads=3085783040
+SS_OVERLAP_PHASE window_sort window=25 pairs=871001
+TRACE sec=34.480 stage=@prefix-sort reads=3127205888
+TRACE sec=34.556 stage=@refill reads=3127205888
+TRACE sec=34.671 stage=@prefix-sort reads=3147665408
+SS_OVERLAP_REFILL window=25 depth=28 active=265869 bytes=2733230
+TRACE sec=34.720 stage=@refill reads=3147665408
+TRACE sec=34.803 stage=@prefix-sort reads=3155988480
+SS_OVERLAP_REFILL window=25 depth=40 active=31760 bytes=335260
+TRACE sec=34.845 stage=@refill reads=3155988480
+TRACE sec=34.888 stage=@prefix-sort reads=3159314432
+SS_OVERLAP_REFILL window=25 depth=52 active=11916 bytes=128965
+TRACE sec=34.929 stage=@refill reads=3159314432
+TRACE sec=34.953 stage=@prefix-sort reads=3161124864
+SS_OVERLAP_REFILL window=25 depth=64 active=6462 bytes=71471
+TRACE sec=34.953 stage=@exact-sort reads=3161124864
+SS_OVERLAP_PHASE emit window=25
+TRACE sec=35.016 stage=@emit reads=3161141248
+CHECKPOINT rows=18000000 digest=6cd323a3b72512a7 reads=3161141248 wall=35.142
+TRACE sec=35.144 stage=@distribute reads=3161141248
+TRACE sec=35.398 stage=distribute reads=3187986432
+SS_OVERLAP_PHASE window_sort window=26 pairs=871314
+TRACE sec=35.584 stage=@prefix-sort reads=3227131904
+TRACE sec=35.649 stage=@refill reads=3227131904
+TRACE sec=35.779 stage=@prefix-sort reads=3250229248
+SS_OVERLAP_REFILL window=26 depth=28 active=208206 bytes=2190261
+TRACE sec=35.826 stage=@refill reads=3250229248
+TRACE sec=35.862 stage=@prefix-sort reads=3254972416
+SS_OVERLAP_REFILL window=26 depth=40 active=63473 bytes=674050
+TRACE sec=35.904 stage=@refill reads=3254972416
+TRACE sec=35.906 stage=@prefix-sort reads=3254988800
+SS_OVERLAP_REFILL window=26 depth=52 active=26465 bytes=286661
+TRACE sec=35.946 stage=@refill reads=3254988800
+TRACE sec=35.946 stage=@prefix-sort reads=3254988800
+SS_OVERLAP_REFILL window=26 depth=64 active=13777 bytes=152160
+TRACE sec=35.946 stage=@exact-sort reads=3254988800
+SS_OVERLAP_PHASE emit window=26
+TRACE sec=36.007 stage=@emit reads=3254992896
+TRACE sec=36.091 stage=@distribute reads=3254996992
+TRACE sec=36.344 stage=distribute reads=3278110720
+SS_OVERLAP_PHASE window_sort window=27 pairs=825929
+TRACE sec=36.539 stage=@prefix-sort reads=3315642368
+TRACE sec=36.600 stage=@refill reads=3315642368
+TRACE sec=36.729 stage=@prefix-sort reads=3339808768
+SS_OVERLAP_REFILL window=27 depth=28 active=205198 bytes=2165768
+TRACE sec=36.774 stage=@refill reads=3339808768
+TRACE sec=36.811 stage=@prefix-sort reads=3345989632
+SS_OVERLAP_REFILL window=27 depth=40 active=77611 bytes=844844
+TRACE sec=36.857 stage=@refill reads=3345989632
+TRACE sec=36.857 stage=@prefix-sort reads=3345989632
+SS_OVERLAP_REFILL window=27 depth=52 active=39563 bytes=431223
+TRACE sec=36.895 stage=@refill reads=3345989632
+TRACE sec=36.896 stage=@prefix-sort reads=3345989632
+SS_OVERLAP_REFILL window=27 depth=64 active=22220 bytes=243138
+TRACE sec=36.896 stage=@exact-sort reads=3345989632
+SS_OVERLAP_PHASE emit window=27
+TRACE sec=36.954 stage=@emit reads=3345989632
+CHECKPOINT rows=19000000 digest=80d5b2efd02afe03 reads=3345989632 wall=36.964
+TRACE sec=37.031 stage=@distribute reads=3345989632
+TRACE sec=37.284 stage=distribute reads=3382071296
+SS_OVERLAP_PHASE window_sort window=28 pairs=846676
+TRACE sec=37.477 stage=@prefix-sort reads=3424403456
+TRACE sec=37.546 stage=@refill reads=3424403456
+TRACE sec=37.763 stage=@prefix-sort reads=3465768960
+SS_OVERLAP_REFILL window=28 depth=28 active=196297 bytes=2013978
+TRACE sec=37.809 stage=@refill reads=3465768960
+TRACE sec=37.880 stage=@prefix-sort reads=3476652032
+SS_OVERLAP_REFILL window=28 depth=40 active=29158 bytes=308506
+TRACE sec=37.922 stage=@refill reads=3476652032
+TRACE sec=37.922 stage=@prefix-sort reads=3476656128
+SS_OVERLAP_REFILL window=28 depth=52 active=11310 bytes=122139
+TRACE sec=37.961 stage=@refill reads=3476656128
+TRACE sec=37.962 stage=@prefix-sort reads=3476656128
+SS_OVERLAP_REFILL window=28 depth=64 active=5472 bytes=59646
+TRACE sec=37.962 stage=@exact-sort reads=3476656128
+SS_OVERLAP_PHASE emit window=28
+TRACE sec=38.020 stage=@emit reads=3476660224
+CHECKPOINT rows=20000000 digest=c66f92bf9f93aa37 reads=3476660224 wall=38.048
+TRACE sec=38.147 stage=@distribute reads=3476660224
+TRACE sec=38.399 stage=distribute reads=3516747776
+SS_OVERLAP_PHASE window_sort window=29 pairs=716797
+TRACE sec=38.617 stage=@prefix-sort reads=3554099200
+TRACE sec=38.675 stage=@refill reads=3554099200
+TRACE sec=38.815 stage=@prefix-sort reads=3575771136
+SS_OVERLAP_REFILL window=29 depth=28 active=381942 bytes=4374447
+TRACE sec=38.864 stage=@refill reads=3575771136
+TRACE sec=38.900 stage=@prefix-sort reads=3579035648
+SS_OVERLAP_REFILL window=29 depth=40 active=269292 bytes=3132739
+TRACE sec=38.946 stage=@refill reads=3579035648
+TRACE sec=38.947 stage=@prefix-sort reads=3579035648
+SS_OVERLAP_REFILL window=29 depth=52 active=209074 bytes=2449417
+TRACE sec=38.991 stage=@refill reads=3579035648
+TRACE sec=38.992 stage=@prefix-sort reads=3579035648
+SS_OVERLAP_REFILL window=29 depth=64 active=166440 bytes=1955335
+TRACE sec=38.992 stage=@exact-sort reads=3579035648
+SS_OVERLAP_PHASE emit window=29
+TRACE sec=39.076 stage=@emit reads=3579043840
+CHECKPOINT rows=21000000 digest=bb1fcf85595162df reads=3579047936 wall=39.104
+TRACE sec=39.165 stage=@distribute reads=3579047936
+TRACE sec=39.419 stage=distribute reads=3614162944
+SS_OVERLAP_PHASE window_sort window=30 pairs=868316
+TRACE sec=39.639 stage=@prefix-sort reads=3663597568
+TRACE sec=39.708 stage=@refill reads=3663597568
+TRACE sec=39.963 stage=restage reads=3712000000
+TRACE sec=39.964 stage=@prefix-sort reads=3712000000
+SS_OVERLAP_REFILL window=30 depth=28 active=200801 bytes=2081323
+TRACE sec=40.010 stage=@refill reads=3712000000
+TRACE sec=40.074 stage=@prefix-sort reads=3723931648
+SS_OVERLAP_REFILL window=30 depth=40 active=38352 bytes=418925
+TRACE sec=40.116 stage=@refill reads=3723931648
+TRACE sec=40.117 stage=@prefix-sort reads=3723952128
+SS_OVERLAP_REFILL window=30 depth=52 active=18939 bytes=211841
+TRACE sec=40.158 stage=@refill reads=3723952128
+TRACE sec=40.159 stage=@prefix-sort reads=3723960320
+SS_OVERLAP_REFILL window=30 depth=64 active=11192 bytes=126201
+TRACE sec=40.159 stage=@exact-sort reads=3723960320
+SS_OVERLAP_PHASE emit window=30
+TRACE sec=40.221 stage=@emit reads=3723964416
+CHECKPOINT rows=22000000 digest=c2230c7bfd4d6d04 reads=3723964416 wall=40.315
+TRACE sec=40.348 stage=@distribute reads=3723964416
+TRACE sec=40.599 stage=distribute reads=3762831360
+SS_OVERLAP_PHASE window_sort window=31 pairs=844718
+TRACE sec=40.799 stage=@prefix-sort reads=3809816576
+TRACE sec=40.859 stage=@refill reads=3809816576
+TRACE sec=41.033 stage=@prefix-sort reads=3842158592
+SS_OVERLAP_REFILL window=31 depth=28 active=181741 bytes=1933375
+TRACE sec=41.078 stage=@refill reads=3842158592
+TRACE sec=41.079 stage=@prefix-sort reads=3842170880
+SS_OVERLAP_REFILL window=31 depth=40 active=66513 bytes=719885
+TRACE sec=41.120 stage=@refill reads=3842170880
+TRACE sec=41.120 stage=@prefix-sort reads=3842179072
+SS_OVERLAP_REFILL window=31 depth=52 active=31216 bytes=340444
+TRACE sec=41.160 stage=@refill reads=3842179072
+TRACE sec=41.160 stage=@prefix-sort reads=3842179072
+SS_OVERLAP_REFILL window=31 depth=64 active=16165 bytes=180356
+TRACE sec=41.160 stage=@exact-sort reads=3842179072
+SS_OVERLAP_PHASE emit window=31
+TRACE sec=41.218 stage=@emit reads=3842183168
+CHECKPOINT rows=23000000 digest=139f6afc208510b3 reads=3842183168 wall=41.284
+TRACE sec=41.305 stage=@distribute reads=3842183168
+TRACE sec=41.555 stage=distribute reads=3873189888
+SS_OVERLAP_PHASE window_sort window=32 pairs=873307
+TRACE sec=41.751 stage=@prefix-sort reads=3919929344
+TRACE sec=41.809 stage=@refill reads=3919929344
+TRACE sec=41.911 stage=@prefix-sort reads=3937030144
+SS_OVERLAP_REFILL window=32 depth=28 active=123218 bytes=1313874
+TRACE sec=41.955 stage=@refill reads=3937030144
+TRACE sec=41.982 stage=@prefix-sort reads=3940237312
+SS_OVERLAP_REFILL window=32 depth=40 active=40271 bytes=431201
+TRACE sec=42.023 stage=@refill reads=3940237312
+TRACE sec=42.024 stage=@prefix-sort reads=3940249600
+SS_OVERLAP_REFILL window=32 depth=52 active=17015 bytes=187088
+TRACE sec=42.063 stage=@refill reads=3940249600
+TRACE sec=42.063 stage=@prefix-sort reads=3940249600
+SS_OVERLAP_REFILL window=32 depth=64 active=8499 bytes=96440
+TRACE sec=42.063 stage=@exact-sort reads=3940249600
+SS_OVERLAP_PHASE emit window=32
+TRACE sec=42.122 stage=@emit reads=3940257792
+CHECKPOINT rows=24000000 digest=5dec045d40e7aa0d reads=3940257792 wall=42.197
+TRACE sec=42.210 stage=@distribute reads=3940257792
+TRACE sec=42.464 stage=distribute reads=3970883584
+SS_OVERLAP_PHASE window_sort window=33 pairs=870978
+TRACE sec=42.658 stage=@prefix-sort reads=4007841792
+TRACE sec=42.715 stage=@refill reads=4007841792
+TRACE sec=42.837 stage=@prefix-sort reads=4026638336
+SS_OVERLAP_REFILL window=33 depth=28 active=118914 bytes=1266231
+TRACE sec=42.881 stage=@refill reads=4026638336
+TRACE sec=42.922 stage=@prefix-sort reads=4029349888
+SS_OVERLAP_REFILL window=33 depth=40 active=38280 bytes=413801
+TRACE sec=42.963 stage=@refill reads=4029349888
+TRACE sec=42.963 stage=@prefix-sort reads=4029353984
+SS_OVERLAP_REFILL window=33 depth=52 active=16647 bytes=184338
+TRACE sec=43.002 stage=@refill reads=4029353984
+TRACE sec=43.002 stage=@prefix-sort reads=4029353984
+SS_OVERLAP_REFILL window=33 depth=64 active=8351 bytes=93575
+TRACE sec=43.002 stage=@exact-sort reads=4029353984
+SS_OVERLAP_PHASE emit window=33
+TRACE sec=43.060 stage=@emit reads=4029353984
+CHECKPOINT rows=25000000 digest=ea2cc5ca0abbb32d reads=4029353984 wall=43.137
+TRACE sec=43.144 stage=@distribute reads=4029353984
+TRACE sec=43.397 stage=distribute reads=4057935872
+SS_OVERLAP_PHASE window_sort window=34 pairs=873799
+TRACE sec=43.606 stage=@prefix-sort reads=4095033344
+TRACE sec=43.679 stage=@refill reads=4095033344
+TRACE sec=43.914 stage=@prefix-sort reads=4133359616
+SS_OVERLAP_REFILL window=34 depth=28 active=267159 bytes=2856085
+TRACE sec=43.966 stage=@refill reads=4133359616
+TRACE sec=44.057 stage=@prefix-sort reads=4145197056
+SS_OVERLAP_REFILL window=34 depth=40 active=105126 bytes=1144538
+TRACE sec=44.104 stage=@refill reads=4145197056
+TRACE sec=44.110 stage=@prefix-sort reads=4145401856
+SS_OVERLAP_REFILL window=34 depth=52 active=50485 bytes=555538
+TRACE sec=44.155 stage=@refill reads=4145401856
+TRACE sec=44.155 stage=@prefix-sort reads=4145401856
+SS_OVERLAP_REFILL window=34 depth=64 active=26868 bytes=298635
+TRACE sec=44.155 stage=@exact-sort reads=4145401856
+SS_OVERLAP_PHASE emit window=34
+TRACE sec=44.225 stage=@emit reads=4145401856
+CHECKPOINT rows=26000000 digest=32ab84e571a74747 reads=4145401856 wall=44.326
+TRACE sec=44.329 stage=@distribute reads=4145401856
+TRACE sec=44.582 stage=distribute reads=4170186752
+SS_OVERLAP_PHASE window_sort window=35 pairs=868810
+TRACE sec=44.790 stage=@prefix-sort reads=4213051392
+TRACE sec=44.854 stage=@refill reads=4213051392
+TRACE sec=45.056 stage=@prefix-sort reads=4250566656
+SS_OVERLAP_REFILL window=35 depth=28 active=193337 bytes=2021693
+TRACE sec=45.103 stage=@refill reads=4250566656
+TRACE sec=45.187 stage=@prefix-sort reads=4265975808
+SS_OVERLAP_REFILL window=35 depth=40 active=55543 bytes=592948
+TRACE sec=45.230 stage=@refill reads=4265975808
+TRACE sec=45.230 stage=@prefix-sort reads=4265975808
+SS_OVERLAP_REFILL window=35 depth=52 active=21975 bytes=238717
+TRACE sec=45.271 stage=@refill reads=4265975808
+TRACE sec=45.271 stage=@prefix-sort reads=4265979904
+SS_OVERLAP_REFILL window=35 depth=64 active=10717 bytes=118158
+TRACE sec=45.271 stage=@exact-sort reads=4265979904
+SS_OVERLAP_PHASE emit window=35
+TRACE sec=45.333 stage=@emit reads=4265988096
+TRACE sec=45.442 stage=@distribute reads=4265988096
+TRACE sec=45.692 stage=distribute reads=4302573568
+SS_OVERLAP_PHASE window_sort window=36 pairs=859759
+TRACE sec=45.893 stage=@prefix-sort reads=4350541824
+TRACE sec=45.959 stage=@refill reads=4350541824
+TRACE sec=46.211 stage=restage reads=4398694400
+TRACE sec=46.212 stage=@prefix-sort reads=4398694400
+SS_OVERLAP_REFILL window=36 depth=28 active=186345 bytes=1931217
+TRACE sec=46.258 stage=@refill reads=4398694400
+TRACE sec=46.332 stage=@prefix-sort reads=4412137472
+SS_OVERLAP_REFILL window=36 depth=40 active=44123 bytes=471077
+TRACE sec=46.374 stage=@refill reads=4412137472
+TRACE sec=46.374 stage=@prefix-sort reads=4412137472
+SS_OVERLAP_REFILL window=36 depth=52 active=17737 bytes=190135
+TRACE sec=46.414 stage=@refill reads=4412137472
+TRACE sec=46.414 stage=@prefix-sort reads=4412137472
+SS_OVERLAP_REFILL window=36 depth=64 active=7806 bytes=84495
+TRACE sec=46.414 stage=@exact-sort reads=4412137472
+SS_OVERLAP_PHASE emit window=36
+TRACE sec=46.474 stage=@emit reads=4412137472
+CHECKPOINT rows=27000000 digest=740dd4595e18f420 reads=4412137472 wall=46.483
+TRACE sec=46.586 stage=@distribute reads=4412137472
+TRACE sec=46.840 stage=distribute reads=4451434496
+SS_OVERLAP_PHASE window_sort window=37 pairs=866823
+TRACE sec=47.036 stage=@prefix-sort reads=4498087936
+TRACE sec=47.101 stage=@refill reads=4498087936
+TRACE sec=47.350 stage=@prefix-sort reads=4545081344
+SS_OVERLAP_REFILL window=37 depth=28 active=190437 bytes=1999780
+TRACE sec=47.398 stage=@refill reads=4545081344
+TRACE sec=47.466 stage=@prefix-sort reads=4557398016
+SS_OVERLAP_REFILL window=37 depth=40 active=55577 bytes=595273
+TRACE sec=47.509 stage=@refill reads=4557398016
+TRACE sec=47.509 stage=@prefix-sort reads=4557398016
+SS_OVERLAP_REFILL window=37 depth=52 active=22490 bytes=243023
+TRACE sec=47.550 stage=@refill reads=4557398016
+TRACE sec=47.550 stage=@prefix-sort reads=4557398016
+SS_OVERLAP_REFILL window=37 depth=64 active=10697 bytes=116535
+TRACE sec=47.550 stage=@exact-sort reads=4557398016
+SS_OVERLAP_PHASE emit window=37
+TRACE sec=47.611 stage=@emit reads=4557402112
+CHECKPOINT rows=28000000 digest=2637ff98a4582534 reads=4557402112 wall=47.629
+TRACE sec=47.710 stage=@distribute reads=4557402112
+TRACE sec=47.961 stage=distribute reads=4598132736
+SS_OVERLAP_PHASE window_sort window=38 pairs=872925
+TRACE sec=48.157 stage=@prefix-sort reads=4644659200
+TRACE sec=48.224 stage=@refill reads=4644659200
+TRACE sec=48.461 stage=@prefix-sort reads=4688896000
+SS_OVERLAP_REFILL window=38 depth=28 active=206084 bytes=2140610
+TRACE sec=48.509 stage=@refill reads=4688896000
+TRACE sec=48.631 stage=@prefix-sort reads=4708290560
+SS_OVERLAP_REFILL window=38 depth=40 active=53688 bytes=566889
+TRACE sec=48.682 stage=@refill reads=4708290560
+TRACE sec=48.683 stage=@prefix-sort reads=4708298752
+SS_OVERLAP_REFILL window=38 depth=52 active=21104 bytes=228962
+TRACE sec=48.731 stage=@refill reads=4708298752
+TRACE sec=48.732 stage=@prefix-sort reads=4708302848
+SS_OVERLAP_REFILL window=38 depth=64 active=10284 bytes=112104
+TRACE sec=48.732 stage=@exact-sort reads=4708302848
+SS_OVERLAP_PHASE emit window=38
+TRACE sec=48.804 stage=@emit reads=4708302848
+CHECKPOINT rows=29000000 digest=efd3c1a3f9b84ee9 reads=4708302848 wall=48.836
+TRACE sec=48.931 stage=@distribute reads=4708302848
+TRACE sec=49.184 stage=distribute reads=4736733184
+SS_OVERLAP_PHASE window_sort window=39 pairs=557401
+TRACE sec=49.434 stage=@prefix-sort reads=4785348608
+TRACE sec=49.475 stage=@refill reads=4785348608
+TRACE sec=49.531 stage=@prefix-sort reads=4794515456
+SS_OVERLAP_REFILL window=39 depth=28 active=177282 bytes=1873380
+TRACE sec=49.561 stage=@refill reads=4794515456
+TRACE sec=49.568 stage=@prefix-sort reads=4795392000
+SS_OVERLAP_REFILL window=39 depth=40 active=62707 bytes=671925
+TRACE sec=49.594 stage=@refill reads=4795392000
+TRACE sec=49.595 stage=@prefix-sort reads=4795392000
+SS_OVERLAP_REFILL window=39 depth=52 active=27733 bytes=301525
+TRACE sec=49.620 stage=@refill reads=4795392000
+TRACE sec=49.620 stage=@prefix-sort reads=4795392000
+SS_OVERLAP_REFILL window=39 depth=64 active=13694 bytes=150777
+TRACE sec=49.620 stage=@exact-sort reads=4795392000
+SS_OVERLAP_PHASE emit window=39
+TRACE sec=49.658 stage=@emit reads=4795392000
+CHECKPOINT rows=30000000 digest=b92409732f6c9a79 reads=4795392000 wall=49.678
+TRACE sec=49.700 stage=@distribute reads=4795392000
+TRACE sec=49.954 stage=distribute reads=4837257216
+SS_OVERLAP_PHASE window_sort window=40 pairs=833615
+TRACE sec=50.150 stage=@prefix-sort reads=4876967936
+TRACE sec=50.217 stage=@refill reads=4876967936
+TRACE sec=50.403 stage=@prefix-sort reads=4912152576
+SS_OVERLAP_REFILL window=40 depth=28 active=169252 bytes=1744676
+TRACE sec=50.448 stage=@refill reads=4912152576
+TRACE sec=50.510 stage=@prefix-sort reads=4923543552
+SS_OVERLAP_REFILL window=40 depth=40 active=27549 bytes=292047
+TRACE sec=50.550 stage=@refill reads=4923543552
+TRACE sec=50.551 stage=@prefix-sort reads=4923547648
+SS_OVERLAP_REFILL window=40 depth=52 active=10571 bytes=113277
+TRACE sec=50.589 stage=@refill reads=4923547648
+TRACE sec=50.590 stage=@prefix-sort reads=4923547648
+SS_OVERLAP_REFILL window=40 depth=64 active=5017 bytes=54655
+TRACE sec=50.590 stage=@exact-sort reads=4923547648
+SS_OVERLAP_PHASE emit window=40
+TRACE sec=50.647 stage=@emit reads=4923547648
+CHECKPOINT rows=31000000 digest=63c078bd3fad9ebf reads=4923551744 wall=50.749
+TRACE sec=50.777 stage=@distribute reads=4923551744
+TRACE sec=51.028 stage=distribute reads=4958457856
+SS_OVERLAP_PHASE window_sort window=41 pairs=566334
+TRACE sec=51.218 stage=@prefix-sort reads=4999872512
+TRACE sec=51.261 stage=@refill reads=4999872512
+TRACE sec=51.524 stage=restage reads=5051060224
+TRACE sec=51.547 stage=@prefix-sort reads=5055356928
+SS_OVERLAP_REFILL window=41 depth=28 active=94877 bytes=976117
+TRACE sec=51.576 stage=@refill reads=5055356928
+TRACE sec=51.610 stage=@prefix-sort reads=5060411392
+SS_OVERLAP_REFILL window=41 depth=40 active=14103 bytes=147819
+TRACE sec=51.636 stage=@refill reads=5060411392
+TRACE sec=51.636 stage=@prefix-sort reads=5060419584
+SS_OVERLAP_REFILL window=41 depth=52 active=5353 bytes=57306
+TRACE sec=51.660 stage=@refill reads=5060419584
+TRACE sec=51.661 stage=@prefix-sort reads=5060423680
+SS_OVERLAP_REFILL window=41 depth=64 active=2514 bytes=27663
+TRACE sec=51.661 stage=@exact-sort reads=5060423680
+SS_OVERLAP_PHASE emit window=41
+TRACE sec=51.697 stage=@emit reads=5060427776
+TRACE sec=51.789 stage=@distribute reads=5060427776
+TRACE sec=52.041 stage=distribute reads=5108617216
+SS_OVERLAP_PHASE window_sort window=42 pairs=743895
+TRACE sec=52.246 stage=@prefix-sort reads=5155274752
+TRACE sec=52.307 stage=@refill reads=5155274752
+TRACE sec=52.496 stage=@prefix-sort reads=5191991296
+SS_OVERLAP_REFILL window=42 depth=28 active=156716 bytes=1610215
+TRACE sec=52.536 stage=@refill reads=5191991296
+TRACE sec=52.608 stage=@prefix-sort reads=5203034112
+SS_OVERLAP_REFILL window=42 depth=40 active=24284 bytes=260097
+TRACE sec=52.645 stage=@refill reads=5203034112
+TRACE sec=52.645 stage=@prefix-sort reads=5203038208
+SS_OVERLAP_REFILL window=42 depth=52 active=9509 bytes=102722
+TRACE sec=52.679 stage=@refill reads=5203038208
+TRACE sec=52.679 stage=@prefix-sort reads=5203042304
+SS_OVERLAP_REFILL window=42 depth=64 active=4447 bytes=48164
+TRACE sec=52.679 stage=@exact-sort reads=5203042304
+SS_OVERLAP_PHASE emit window=42
+TRACE sec=52.731 stage=@emit reads=5203050496
+CHECKPOINT rows=32000000 digest=13e590c8f56d03b1 reads=5203050496 wall=52.772
+TRACE sec=52.856 stage=@distribute reads=5203050496
+TRACE sec=53.108 stage=distribute reads=5235646464
+SS_OVERLAP_PHASE window_sort window=43 pairs=797945
+TRACE sec=53.294 stage=@prefix-sort reads=5280071680
+TRACE sec=53.361 stage=@refill reads=5280071680
+TRACE sec=53.632 stage=restage reads=5330374656
+TRACE sec=53.634 stage=@prefix-sort reads=5330374656
+SS_OVERLAP_REFILL window=43 depth=28 active=172488 bytes=1765354
+TRACE sec=53.684 stage=@refill reads=5330374656
+TRACE sec=53.734 stage=@prefix-sort reads=5338624000
+SS_OVERLAP_REFILL window=43 depth=40 active=20318 bytes=216806
+TRACE sec=53.777 stage=@refill reads=5338624000
+TRACE sec=53.778 stage=@prefix-sort reads=5338632192
+SS_OVERLAP_REFILL window=43 depth=52 active=7859 bytes=84557
+TRACE sec=53.816 stage=@refill reads=5338632192
+TRACE sec=53.816 stage=@prefix-sort reads=5338636288
+SS_OVERLAP_REFILL window=43 depth=64 active=3926 bytes=43382
+TRACE sec=53.816 stage=@exact-sort reads=5338636288
+SS_OVERLAP_PHASE emit window=43
+TRACE sec=53.873 stage=@emit reads=5338640384
+CHECKPOINT rows=33000000 digest=d619666d9e4a527e reads=5338640384 wall=53.944
+TRACE sec=54.003 stage=@distribute reads=5338640384
+TRACE sec=54.253 stage=distribute reads=5380317184
+SS_OVERLAP_PHASE window_sort window=44 pairs=779379
+TRACE sec=54.461 stage=@prefix-sort reads=5417537536
+TRACE sec=54.524 stage=@refill reads=5417537536
+TRACE sec=54.660 stage=@prefix-sort reads=5443215360
+SS_OVERLAP_REFILL window=44 depth=28 active=159829 bytes=1645897
+TRACE sec=54.702 stage=@refill reads=5443215360
+TRACE sec=54.753 stage=@prefix-sort reads=5452320768
+SS_OVERLAP_REFILL window=44 depth=40 active=23319 bytes=246655
+TRACE sec=54.791 stage=@refill reads=5452320768
+TRACE sec=54.806 stage=@prefix-sort reads=5452959744
+SS_OVERLAP_REFILL window=44 depth=52 active=9258 bytes=98785
+TRACE sec=54.842 stage=@refill reads=5452959744
+TRACE sec=54.842 stage=@prefix-sort reads=5452959744
+SS_OVERLAP_REFILL window=44 depth=64 active=4567 bytes=49540
+TRACE sec=54.842 stage=@exact-sort reads=5452959744
+SS_OVERLAP_PHASE emit window=44
+TRACE sec=54.896 stage=@emit reads=5452963840
+CHECKPOINT rows=34000000 digest=8a77f182b6976a81 reads=5452967936 wall=54.988
+TRACE sec=55.018 stage=@distribute reads=5452967936
+TRACE sec=55.273 stage=distribute reads=5498605568
+SS_OVERLAP_PHASE window_sort window=45 pairs=440316
+TRACE sec=55.454 stage=@prefix-sort reads=5541593088
+TRACE sec=55.489 stage=@refill reads=5541593088
+TRACE sec=55.667 stage=@prefix-sort reads=5576040448
+SS_OVERLAP_REFILL window=45 depth=28 active=99581 bytes=1018357
+TRACE sec=55.690 stage=@refill reads=5576040448
+TRACE sec=55.758 stage=@prefix-sort reads=5580935168
+SS_OVERLAP_REFILL window=45 depth=40 active=12438 bytes=131620
+TRACE sec=55.778 stage=@refill reads=5580935168
+TRACE sec=55.778 stage=@prefix-sort reads=5580939264
+SS_OVERLAP_REFILL window=45 depth=52 active=4326 bytes=46227
+TRACE sec=55.797 stage=@refill reads=5580939264
+TRACE sec=55.797 stage=@prefix-sort reads=5580939264
+SS_OVERLAP_REFILL window=45 depth=64 active=2088 bytes=23058
+TRACE sec=55.797 stage=@exact-sort reads=5580939264
+SS_OVERLAP_PHASE emit window=45
+TRACE sec=55.825 stage=@emit reads=5580939264
+TRACE sec=55.899 stage=@distribute reads=5580939264
+TRACE sec=56.150 stage=distribute reads=5630181376
+SS_OVERLAP_PHASE window_sort window=46 pairs=819531
+TRACE sec=56.342 stage=@prefix-sort reads=5674217472
+TRACE sec=56.411 stage=@refill reads=5674217472
+TRACE sec=56.620 stage=@prefix-sort reads=5714132992
+SS_OVERLAP_REFILL window=46 depth=28 active=206393 bytes=2123151
+TRACE sec=56.665 stage=@refill reads=5714132992
+TRACE sec=56.757 stage=@prefix-sort reads=5726867456
+SS_OVERLAP_REFILL window=46 depth=40 active=30613 bytes=323210
+TRACE sec=56.797 stage=@refill reads=5726867456
+TRACE sec=56.797 stage=@prefix-sort reads=5726867456
+SS_OVERLAP_REFILL window=46 depth=52 active=10947 bytes=118186
+TRACE sec=56.836 stage=@refill reads=5726867456
+TRACE sec=56.836 stage=@prefix-sort reads=5726871552
+SS_OVERLAP_REFILL window=46 depth=64 active=5088 bytes=54318
+TRACE sec=56.836 stage=@exact-sort reads=5726871552
+SS_OVERLAP_PHASE emit window=46
+TRACE sec=56.894 stage=@emit reads=5726875648
+CHECKPOINT rows=35000000 digest=f446714e22a1db06 reads=5726875648 wall=56.948
+TRACE sec=57.017 stage=@distribute reads=5726875648
+TRACE sec=57.272 stage=distribute reads=5767499776
+SS_OVERLAP_PHASE window_sort window=47 pairs=822483
+TRACE sec=57.477 stage=@prefix-sort reads=5805895680
+TRACE sec=57.542 stage=@refill reads=5805895680
+TRACE sec=57.777 stage=@prefix-sort reads=5850574848
+SS_OVERLAP_REFILL window=47 depth=28 active=161643 bytes=1667791
+TRACE sec=57.820 stage=@refill reads=5850574848
+TRACE sec=57.901 stage=@prefix-sort reads=5860597760
+SS_OVERLAP_REFILL window=47 depth=40 active=23304 bytes=247964
+TRACE sec=57.941 stage=@refill reads=5860597760
+TRACE sec=57.942 stage=@prefix-sort reads=5860614144
+SS_OVERLAP_REFILL window=47 depth=52 active=8957 bytes=97169
+TRACE sec=57.980 stage=@refill reads=5860614144
+TRACE sec=57.980 stage=@prefix-sort reads=5860651008
+SS_OVERLAP_REFILL window=47 depth=64 active=4483 bytes=48683
+TRACE sec=57.980 stage=@exact-sort reads=5860651008
+SS_OVERLAP_PHASE emit window=47
+TRACE sec=58.036 stage=@emit reads=5860651008
+CHECKPOINT rows=36000000 digest=8a9bf2b9fdb8f99c reads=5860651008 wall=58.110
+TRACE sec=58.162 stage=@distribute reads=5860651008
+TRACE sec=58.416 stage=distribute reads=5892694016
+SS_OVERLAP_PHASE window_sort window=48 pairs=855493
+TRACE sec=58.622 stage=@prefix-sort reads=5936357376
+TRACE sec=58.692 stage=@refill reads=5936357376
+TRACE sec=58.943 stage=restage reads=5981933568
+TRACE sec=59.033 stage=@prefix-sort reads=5998104576
+SS_OVERLAP_REFILL window=48 depth=28 active=174150 bytes=1799664
+TRACE sec=59.081 stage=@refill reads=5998104576
+TRACE sec=59.143 stage=@prefix-sort reads=6008750080
+SS_OVERLAP_REFILL window=48 depth=40 active=28816 bytes=305393
+TRACE sec=59.189 stage=@refill reads=6008750080
+TRACE sec=59.190 stage=@prefix-sort reads=6008762368
+SS_OVERLAP_REFILL window=48 depth=52 active=11116 bytes=120233
+TRACE sec=59.237 stage=@refill reads=6008762368
+TRACE sec=59.237 stage=@prefix-sort reads=6008762368
+SS_OVERLAP_REFILL window=48 depth=64 active=5435 bytes=58993
+TRACE sec=59.238 stage=@exact-sort reads=6008762368
+SS_OVERLAP_PHASE emit window=48
+TRACE sec=59.304 stage=@emit reads=6008766464
+CHECKPOINT rows=37000000 digest=06f19b013e12b5dc reads=6008766464 wall=59.393
+TRACE sec=59.431 stage=@distribute reads=6008766464
+TRACE sec=59.685 stage=distribute reads=6051221504
+SS_OVERLAP_PHASE window_sort window=49 pairs=827155
+TRACE sec=59.886 stage=@prefix-sort reads=6097858560
+TRACE sec=59.950 stage=@refill reads=6097858560
+TRACE sec=60.178 stage=@prefix-sort reads=6141755392
+SS_OVERLAP_REFILL window=49 depth=28 active=154920 bytes=1595709
+TRACE sec=60.222 stage=@refill reads=6141755392
+TRACE sec=60.277 stage=@prefix-sort reads=6151667712
+SS_OVERLAP_REFILL window=49 depth=40 active=26056 bytes=279471
+TRACE sec=60.317 stage=@refill reads=6151667712
+TRACE sec=60.318 stage=@prefix-sort reads=6151729152
+SS_OVERLAP_REFILL window=49 depth=52 active=11555 bytes=126153
+TRACE sec=60.356 stage=@refill reads=6151729152
+TRACE sec=60.357 stage=@prefix-sort reads=6151737344
+SS_OVERLAP_REFILL window=49 depth=64 active=6634 bytes=74050
+TRACE sec=60.357 stage=@exact-sort reads=6151737344
+SS_OVERLAP_PHASE emit window=49
+TRACE sec=60.413 stage=@emit reads=6151745536
+CHECKPOINT rows=38000000 digest=ba8b1cb5ba1584b0 reads=6151749632 wall=60.522
+TRACE sec=60.545 stage=@distribute reads=6151749632
+TRACE sec=60.797 stage=distribute reads=6191874048
+SS_OVERLAP_PHASE window_sort window=50 pairs=848954
+TRACE sec=60.991 stage=@prefix-sort reads=6237331456
+TRACE sec=61.061 stage=@refill reads=6237331456
+TRACE sec=61.325 stage=restage reads=6289182720
+TRACE sec=61.384 stage=@prefix-sort reads=6300696576
+SS_OVERLAP_REFILL window=50 depth=28 active=222473 bytes=2291939
+TRACE sec=61.431 stage=@refill reads=6300696576
+TRACE sec=61.502 stage=@prefix-sort reads=6312316928
+SS_OVERLAP_REFILL window=50 depth=40 active=33975 bytes=359313
+TRACE sec=61.544 stage=@refill reads=6312316928
+TRACE sec=61.556 stage=@prefix-sort reads=6312783872
+SS_OVERLAP_REFILL window=50 depth=52 active=12770 bytes=137455
+TRACE sec=61.596 stage=@refill reads=6312783872
+TRACE sec=61.596 stage=@prefix-sort reads=6312783872
+SS_OVERLAP_REFILL window=50 depth=64 active=6343 bytes=68658
+TRACE sec=61.596 stage=@exact-sort reads=6312783872
+SS_OVERLAP_PHASE emit window=50
+TRACE sec=61.656 stage=@emit reads=6312787968
+CHECKPOINT rows=39000000 digest=bf7586c0e3b70990 reads=6312792064 wall=61.781
+TRACE sec=61.792 stage=@distribute reads=6312792064
+TRACE sec=62.045 stage=distribute reads=6343675904
+SS_OVERLAP_PHASE window_sort window=51 pairs=850169
+TRACE sec=62.245 stage=@prefix-sort reads=6384021504
+TRACE sec=62.314 stage=@refill reads=6384021504
+TRACE sec=62.464 stage=@prefix-sort reads=6410702848
+SS_OVERLAP_REFILL window=51 depth=28 active=167704 bytes=1719598
+TRACE sec=62.508 stage=@refill reads=6410702848
+TRACE sec=62.570 stage=@prefix-sort reads=6419120128
+SS_OVERLAP_REFILL window=51 depth=40 active=20071 bytes=212199
+TRACE sec=62.611 stage=@refill reads=6419120128
+TRACE sec=62.616 stage=@prefix-sort reads=6419300352
+SS_OVERLAP_REFILL window=51 depth=52 active=7385 bytes=79139
+TRACE sec=62.655 stage=@refill reads=6419300352
+TRACE sec=62.655 stage=@prefix-sort reads=6419300352
+SS_OVERLAP_REFILL window=51 depth=64 active=3449 bytes=37452
+TRACE sec=62.655 stage=@exact-sort reads=6419300352
+SS_OVERLAP_PHASE emit window=51
+TRACE sec=62.714 stage=@emit reads=6419300352
+TRACE sec=62.849 stage=@distribute reads=6419300352
+TRACE sec=63.104 stage=distribute reads=6447325184
+SS_OVERLAP_PHASE window_sort window=52 pairs=696025
+TRACE sec=63.297 stage=@prefix-sort reads=6481113088
+TRACE sec=63.353 stage=@refill reads=6481113088
+TRACE sec=63.538 stage=@prefix-sort reads=6512095232
+SS_OVERLAP_REFILL window=52 depth=28 active=139881 bytes=1439346
+TRACE sec=63.581 stage=@refill reads=6512095232
+TRACE sec=63.688 stage=@prefix-sort reads=6519820288
+SS_OVERLAP_REFILL window=52 depth=40 active=19477 bytes=207335
+TRACE sec=63.727 stage=@refill reads=6519820288
+TRACE sec=63.727 stage=@prefix-sort reads=6519820288
+SS_OVERLAP_REFILL window=52 depth=52 active=8274 bytes=90648
+TRACE sec=63.765 stage=@refill reads=6519820288
+TRACE sec=63.765 stage=@prefix-sort reads=6519820288
+SS_OVERLAP_REFILL window=52 depth=64 active=4533 bytes=50174
+TRACE sec=63.765 stage=@exact-sort reads=6519820288
+SS_OVERLAP_PHASE emit window=52
+TRACE sec=63.821 stage=@emit reads=6519824384
+CHECKPOINT rows=40000000 digest=efebf8dd1e99233e reads=6519828480 wall=63.834
+TRACE sec=63.939 stage=@distribute reads=6519828480
+TRACE sec=64.195 stage=distribute reads=6553427968
+SS_OVERLAP_PHASE window_sort window=53 pairs=855308
+TRACE sec=64.438 stage=@prefix-sort reads=6604820480
+TRACE sec=64.507 stage=@refill reads=6604820480
+TRACE sec=64.713 stage=@prefix-sort reads=6643019776
+SS_OVERLAP_REFILL window=53 depth=28 active=198485 bytes=2040388
+TRACE sec=64.759 stage=@refill reads=6643019776
+TRACE sec=64.830 stage=@prefix-sort reads=6656016384
+SS_OVERLAP_REFILL window=53 depth=40 active=30038 bytes=317295
+TRACE sec=64.872 stage=@refill reads=6656016384
+TRACE sec=64.872 stage=@prefix-sort reads=6656024576
+SS_OVERLAP_REFILL window=53 depth=52 active=10598 bytes=115557
+TRACE sec=64.912 stage=@refill reads=6656024576
+TRACE sec=64.912 stage=@prefix-sort reads=6656028672
+SS_OVERLAP_REFILL window=53 depth=64 active=5339 bytes=57763
+TRACE sec=64.912 stage=@exact-sort reads=6656028672
+SS_OVERLAP_PHASE emit window=53
+TRACE sec=64.971 stage=@emit reads=6656032768
+CHECKPOINT rows=41000000 digest=bec44c14ece1f827 reads=6656032768 wall=65.024
+TRACE sec=65.102 stage=@distribute reads=6656032768
+TRACE sec=65.354 stage=distribute reads=6709891072
+SS_OVERLAP_PHASE window_sort window=54 pairs=807062
+TRACE sec=65.547 stage=@prefix-sort reads=6753980416
+TRACE sec=65.611 stage=@refill reads=6753980416
+TRACE sec=65.862 stage=restage reads=6801629184
+TRACE sec=65.862 stage=@prefix-sort reads=6801629184
+SS_OVERLAP_REFILL window=54 depth=28 active=166645 bytes=1718810
+TRACE sec=65.906 stage=@refill reads=6801629184
+TRACE sec=65.993 stage=@prefix-sort reads=6815367168
+SS_OVERLAP_REFILL window=54 depth=40 active=27303 bytes=289031
+TRACE sec=66.032 stage=@refill reads=6815367168
+TRACE sec=66.033 stage=@prefix-sort reads=6815391744
+SS_OVERLAP_REFILL window=54 depth=52 active=10124 bytes=111087
+TRACE sec=66.070 stage=@refill reads=6815391744
+TRACE sec=66.070 stage=@prefix-sort reads=6815399936
+SS_OVERLAP_REFILL window=54 depth=64 active=5151 bytes=57124
+TRACE sec=66.070 stage=@exact-sort reads=6815399936
+SS_OVERLAP_PHASE emit window=54
+TRACE sec=66.126 stage=@emit reads=6815404032
+CHECKPOINT rows=42000000 digest=6635cb095f5aebe1 reads=6815404032 wall=66.193
+TRACE sec=66.252 stage=@distribute reads=6815404032
+TRACE sec=66.506 stage=distribute reads=6854049792
+SS_OVERLAP_PHASE window_sort window=55 pairs=779313
+TRACE sec=66.703 stage=@prefix-sort reads=6900707328
+TRACE sec=66.771 stage=@refill reads=6900707328
+TRACE sec=66.967 stage=@prefix-sort reads=6937743360
+SS_OVERLAP_REFILL window=55 depth=28 active=213102 bytes=2182551
+TRACE sec=67.009 stage=@refill reads=6937743360
+TRACE sec=67.063 stage=@prefix-sort reads=6947422208
+SS_OVERLAP_REFILL window=55 depth=40 active=19397 bytes=202772
+TRACE sec=67.103 stage=@refill reads=6947422208
+TRACE sec=67.104 stage=@prefix-sort reads=6947454976
+SS_OVERLAP_REFILL window=55 depth=52 active=5855 bytes=62693
+TRACE sec=67.143 stage=@refill reads=6947454976
+TRACE sec=67.143 stage=@prefix-sort reads=6947459072
+SS_OVERLAP_REFILL window=55 depth=64 active=2904 bytes=31905
+TRACE sec=67.143 stage=@exact-sort reads=6947459072
+SS_OVERLAP_PHASE emit window=55
+TRACE sec=67.196 stage=@emit reads=6947459072
+CHECKPOINT rows=43000000 digest=4eb39dbef82b4313 reads=6947467264 wall=67.290
+TRACE sec=67.323 stage=@distribute reads=6947467264
+TRACE sec=67.575 stage=distribute reads=6992330752
+SS_OVERLAP_PHASE window_sort window=56 pairs=873641
+TRACE sec=67.768 stage=@prefix-sort reads=7037071360
+TRACE sec=67.843 stage=@refill reads=7037071360
+TRACE sec=68.146 stage=restage reads=7096217600
+TRACE sec=68.147 stage=@prefix-sort reads=7096217600
+SS_OVERLAP_REFILL window=56 depth=28 active=229185 bytes=2334333
+TRACE sec=68.195 stage=@refill reads=7096217600
+TRACE sec=68.263 stage=@prefix-sort reads=7105449984
+SS_OVERLAP_REFILL window=56 depth=40 active=20733 bytes=217498
+TRACE sec=68.306 stage=@refill reads=7105449984
+TRACE sec=68.306 stage=@prefix-sort reads=7105449984
+SS_OVERLAP_REFILL window=56 depth=52 active=6599 bytes=69551
+TRACE sec=68.347 stage=@refill reads=7105449984
+TRACE sec=68.347 stage=@prefix-sort reads=7105449984
+SS_OVERLAP_REFILL window=56 depth=64 active=3083 bytes=33628
+TRACE sec=68.347 stage=@exact-sort reads=7105449984
+SS_OVERLAP_PHASE emit window=56
+TRACE sec=68.408 stage=@emit reads=7105454080
+CHECKPOINT rows=44000000 digest=d10649a708b5c56b reads=7105458176 wall=68.520
+TRACE sec=68.539 stage=@distribute reads=7105458176
+TRACE sec=68.791 stage=distribute reads=7148593152
+SS_OVERLAP_PHASE window_sort window=57 pairs=753523
+TRACE sec=69.005 stage=@prefix-sort reads=7193350144
+TRACE sec=69.067 stage=@refill reads=7193350144
+TRACE sec=69.308 stage=@prefix-sort reads=7236472832
+SS_OVERLAP_REFILL window=57 depth=28 active=139711 bytes=1451342
+TRACE sec=69.354 stage=@refill reads=7236472832
+TRACE sec=69.435 stage=@prefix-sort reads=7245717504
+SS_OVERLAP_REFILL window=57 depth=40 active=30296 bytes=326560
+TRACE sec=69.471 stage=@refill reads=7245717504
+TRACE sec=69.472 stage=@prefix-sort reads=7245717504
+SS_OVERLAP_REFILL window=57 depth=52 active=13548 bytes=145870
+TRACE sec=69.506 stage=@refill reads=7245717504
+TRACE sec=69.507 stage=@prefix-sort reads=7245729792
+SS_OVERLAP_REFILL window=57 depth=64 active=6909 bytes=76060
+TRACE sec=69.507 stage=@exact-sort reads=7245729792
+SS_OVERLAP_PHASE emit window=57
+TRACE sec=69.558 stage=@emit reads=7245729792
+TRACE sec=69.676 stage=@distribute reads=7245729792
+TRACE sec=69.927 stage=distribute reads=7288016896
+SS_OVERLAP_PHASE window_sort window=58 pairs=860664
+TRACE sec=70.122 stage=@prefix-sort reads=7333232640
+TRACE sec=70.194 stage=@refill reads=7333232640
+TRACE sec=70.371 stage=@prefix-sort reads=7366676480
+SS_OVERLAP_REFILL window=58 depth=28 active=211256 bytes=2166185
+TRACE sec=70.417 stage=@refill reads=7366676480
+TRACE sec=70.500 stage=@prefix-sort reads=7378403328
+SS_OVERLAP_REFILL window=58 depth=40 active=26713 bytes=284215
+TRACE sec=70.542 stage=@refill reads=7378403328
+TRACE sec=70.543 stage=@prefix-sort reads=7378411520
+SS_OVERLAP_REFILL window=58 depth=52 active=10544 bytes=114908
+TRACE sec=70.582 stage=@refill reads=7378411520
+TRACE sec=70.583 stage=@prefix-sort reads=7378411520
+SS_OVERLAP_REFILL window=58 depth=64 active=5581 bytes=61562
+TRACE sec=70.583 stage=@exact-sort reads=7378411520
+SS_OVERLAP_PHASE emit window=58
+TRACE sec=70.643 stage=@emit reads=7378411520
+CHECKPOINT rows=45000000 digest=9ea92f87f8929e4f reads=7378415616 wall=70.659
+TRACE sec=70.783 stage=@distribute reads=7378415616
+TRACE sec=71.035 stage=distribute reads=7412219904
+SS_OVERLAP_PHASE window_sort window=59 pairs=769498
+TRACE sec=71.227 stage=@prefix-sort reads=7453110272
+TRACE sec=71.287 stage=@refill reads=7453110272
+TRACE sec=71.555 stage=restage reads=7504900096
+TRACE sec=71.587 stage=@prefix-sort reads=7510949888
+SS_OVERLAP_REFILL window=59 depth=28 active=153189 bytes=1577608
+TRACE sec=71.628 stage=@refill reads=7510949888
+TRACE sec=71.687 stage=@prefix-sort reads=7521705984
+SS_OVERLAP_REFILL window=59 depth=40 active=25747 bytes=271636
+TRACE sec=71.724 stage=@refill reads=7521705984
+TRACE sec=71.727 stage=@prefix-sort reads=7521783808
+SS_OVERLAP_REFILL window=59 depth=52 active=9774 bytes=105623
+TRACE sec=71.762 stage=@refill reads=7521783808
+TRACE sec=71.762 stage=@prefix-sort reads=7521783808
+SS_OVERLAP_REFILL window=59 depth=64 active=4628 bytes=50794
+TRACE sec=71.762 stage=@exact-sort reads=7521783808
+SS_OVERLAP_PHASE emit window=59
+TRACE sec=71.815 stage=@emit reads=7521796096
+CHECKPOINT rows=46000000 digest=5fb05cd6a0e785a7 reads=7521796096 wall=71.848
+TRACE sec=71.935 stage=@distribute reads=7521796096
+TRACE sec=72.186 stage=distribute reads=7562727424
+SS_OVERLAP_PHASE window_sort window=60 pairs=187245
+TRACE sec=72.391 stage=@prefix-sort reads=7606562816
+TRACE sec=72.406 stage=@refill reads=7606562816
+TRACE sec=72.545 stage=@prefix-sort reads=7630405632
+SS_OVERLAP_REFILL window=60 depth=28 active=39802 bytes=411271
+TRACE sec=72.554 stage=@refill reads=7630405632
+TRACE sec=72.562 stage=@prefix-sort reads=7630913536
+SS_OVERLAP_REFILL window=60 depth=40 active=6123 bytes=64350
+TRACE sec=72.570 stage=@refill reads=7630913536
+TRACE sec=72.570 stage=@prefix-sort reads=7630913536
+SS_OVERLAP_REFILL window=60 depth=52 active=2156 bytes=23406
+TRACE sec=72.577 stage=@refill reads=7630913536
+TRACE sec=72.577 stage=@prefix-sort reads=7630917632
+SS_OVERLAP_REFILL window=60 depth=64 active=1091 bytes=12080
+TRACE sec=72.578 stage=@exact-sort reads=7630917632
+SS_OVERLAP_PHASE emit window=60
+TRACE sec=72.589 stage=@emit reads=7630917632
+TRACE sec=72.622 stage=@distribute reads=7630917632
+TRACE sec=72.873 stage=distribute reads=7663202304
+SS_OVERLAP_PHASE window_sort window=61 pairs=863129
+TRACE sec=73.073 stage=@prefix-sort reads=7710027776
+TRACE sec=73.143 stage=@refill reads=7710027776
+TRACE sec=73.414 stage=restage reads=7761510400
+TRACE sec=73.416 stage=@prefix-sort reads=7761510400
+SS_OVERLAP_REFILL window=61 depth=28 active=179308 bytes=1844021
+TRACE sec=73.463 stage=@refill reads=7761510400
+TRACE sec=73.549 stage=@prefix-sort reads=7772909568
+SS_OVERLAP_REFILL window=61 depth=40 active=26324 bytes=276428
+TRACE sec=73.599 stage=@refill reads=7772909568
+TRACE sec=73.600 stage=@prefix-sort reads=7772909568
+SS_OVERLAP_REFILL window=61 depth=52 active=9688 bytes=105618
+TRACE sec=73.647 stage=@refill reads=7772909568
+TRACE sec=73.647 stage=@prefix-sort reads=7772913664
+SS_OVERLAP_REFILL window=61 depth=64 active=4999 bytes=54984
+TRACE sec=73.648 stage=@exact-sort reads=7772913664
+SS_OVERLAP_PHASE emit window=61
+TRACE sec=73.719 stage=@emit reads=7772921856
+CHECKPOINT rows=47000000 digest=a40fe9278fe8ca24 reads=7772925952 wall=73.757
+TRACE sec=73.872 stage=@distribute reads=7772925952
+TRACE sec=74.124 stage=distribute reads=7803052032
+TRACE sec=74.376 stage=distribute reads=7851155456
+SS_OVERLAP_PHASE window_sort window=62 pairs=859442
+TRACE sec=74.397 stage=@prefix-sort reads=7855738880
+TRACE sec=74.467 stage=@refill reads=7855738880
+TRACE sec=74.737 stage=restage reads=7907708928
+TRACE sec=74.760 stage=@prefix-sort reads=7912005632
+SS_OVERLAP_REFILL window=62 depth=28 active=182712 bytes=1881574
+TRACE sec=74.806 stage=@refill reads=7912005632
+TRACE sec=74.891 stage=@prefix-sort reads=7923007488
+SS_OVERLAP_REFILL window=62 depth=40 active=25942 bytes=272588
+TRACE sec=74.933 stage=@refill reads=7923007488
+TRACE sec=74.934 stage=@prefix-sort reads=7923023872
+SS_OVERLAP_REFILL window=62 depth=52 active=9703 bytes=105042
+TRACE sec=74.974 stage=@refill reads=7923023872
+TRACE sec=74.975 stage=@prefix-sort reads=7923032064
+SS_OVERLAP_REFILL window=62 depth=64 active=4708 bytes=50403
+TRACE sec=74.975 stage=@exact-sort reads=7923032064
+SS_OVERLAP_PHASE emit window=62
+TRACE sec=75.034 stage=@emit reads=7923032064
+CHECKPOINT rows=48000000 digest=987a0f4175c6f08e reads=7923032064 wall=75.080
+TRACE sec=75.170 stage=@distribute reads=7923032064
+TRACE sec=75.422 stage=distribute reads=7963480064
+SS_OVERLAP_PHASE window_sort window=63 pairs=205757
+TRACE sec=75.613 stage=@prefix-sort reads=8005419008
+TRACE sec=75.629 stage=@refill reads=8005419008
+TRACE sec=75.783 stage=@prefix-sort reads=8033222656
+SS_OVERLAP_REFILL window=63 depth=28 active=39033 bytes=401309
+TRACE sec=75.793 stage=@refill reads=8033222656
+TRACE sec=75.809 stage=@prefix-sort reads=8033927168
+SS_OVERLAP_REFILL window=63 depth=40 active=5658 bytes=60224
+TRACE sec=75.817 stage=@refill reads=8033927168
+TRACE sec=75.818 stage=@prefix-sort reads=8033931264
+SS_OVERLAP_REFILL window=63 depth=52 active=2094 bytes=22095
+TRACE sec=75.826 stage=@refill reads=8033931264
+TRACE sec=75.826 stage=@prefix-sort reads=8033931264
+SS_OVERLAP_REFILL window=63 depth=64 active=971 bytes=10947
+TRACE sec=75.826 stage=@exact-sort reads=8033931264
+SS_OVERLAP_PHASE emit window=63
+TRACE sec=75.838 stage=@emit reads=8033935360
+TRACE sec=75.875 stage=@distribute reads=8033935360
+TRACE sec=76.126 stage=distribute reads=8064438272
+SS_OVERLAP_PHASE window_sort window=64 pairs=676711
+TRACE sec=76.321 stage=@prefix-sort reads=8108335104
+TRACE sec=76.376 stage=@refill reads=8108335104
+TRACE sec=76.525 stage=@prefix-sort reads=8134811648
+SS_OVERLAP_REFILL window=64 depth=28 active=150834 bytes=1549896
+TRACE sec=76.561 stage=@refill reads=8134811648
+TRACE sec=76.661 stage=@prefix-sort reads=8144588800
+SS_OVERLAP_REFILL window=64 depth=40 active=20733 bytes=219041
+TRACE sec=76.693 stage=@refill reads=8144588800
+TRACE sec=76.708 stage=@prefix-sort reads=8145207296
+SS_OVERLAP_REFILL window=64 depth=52 active=8001 bytes=86815
+TRACE sec=76.739 stage=@refill reads=8145207296
+TRACE sec=76.739 stage=@prefix-sort reads=8145207296
+SS_OVERLAP_REFILL window=64 depth=64 active=4265 bytes=46603
+TRACE sec=76.739 stage=@exact-sort reads=8145207296
+SS_OVERLAP_PHASE emit window=64
+TRACE sec=76.786 stage=@emit reads=8145211392
+CHECKPOINT rows=49000000 digest=ca3ee185fabd81d9 reads=8145215488 wall=76.816
+TRACE sec=76.892 stage=@distribute reads=8145215488
+TRACE sec=77.143 stage=distribute reads=8190472192
+SS_OVERLAP_PHASE window_sort window=65 pairs=703700
+TRACE sec=77.341 stage=@prefix-sort reads=8235491328
+TRACE sec=77.397 stage=@refill reads=8235491328
+TRACE sec=77.586 stage=@prefix-sort reads=8270237696
+SS_OVERLAP_REFILL window=65 depth=28 active=149086 bytes=1538895
+TRACE sec=77.623 stage=@refill reads=8270237696
+TRACE sec=77.741 stage=@prefix-sort reads=8279691264
+SS_OVERLAP_REFILL window=65 depth=40 active=25190 bytes=266802
+TRACE sec=77.775 stage=@refill reads=8279691264
+TRACE sec=77.775 stage=@prefix-sort reads=8279691264
+SS_OVERLAP_REFILL window=65 depth=52 active=9536 bytes=104074
+TRACE sec=77.807 stage=@refill reads=8279691264
+TRACE sec=77.807 stage=@prefix-sort reads=8279691264
+SS_OVERLAP_REFILL window=65 depth=64 active=4554 bytes=49221
+TRACE sec=77.807 stage=@exact-sort reads=8279691264
+SS_OVERLAP_PHASE emit window=65
+TRACE sec=77.855 stage=@emit reads=8279691264
+CHECKPOINT rows=50000000 digest=391b5f48169cff57 reads=8279691264 wall=77.925
+TRACE sec=77.964 stage=@distribute reads=8279691264
+TRACE sec=78.217 stage=distribute reads=8332070912
+SS_OVERLAP_PHASE window_sort window=66 pairs=775860
+TRACE sec=78.408 stage=@prefix-sort reads=8373125120
+TRACE sec=78.479 stage=@refill reads=8373125120
+TRACE sec=78.673 stage=@prefix-sort reads=8405991424
+SS_OVERLAP_REFILL window=66 depth=28 active=175362 bytes=1789655
+TRACE sec=78.722 stage=@refill reads=8405991424
+TRACE sec=78.797 stage=@prefix-sort reads=8416514048
+SS_OVERLAP_REFILL window=66 depth=40 active=25046 bytes=263659
+TRACE sec=78.841 stage=@refill reads=8416514048
+TRACE sec=78.842 stage=@prefix-sort reads=8416526336
+SS_OVERLAP_REFILL window=66 depth=52 active=8669 bytes=92276
+TRACE sec=78.884 stage=@refill reads=8416526336
+TRACE sec=78.884 stage=@prefix-sort reads=8416526336
+SS_OVERLAP_REFILL window=66 depth=64 active=3761 bytes=40822
+TRACE sec=78.884 stage=@exact-sort reads=8416526336
+SS_OVERLAP_PHASE emit window=66
+TRACE sec=78.947 stage=@emit reads=8416534528
+CHECKPOINT rows=51000000 digest=d28013e83ceecdd0 reads=8416534528 wall=79.068
+TRACE sec=79.081 stage=@distribute reads=8416534528
+TRACE sec=79.332 stage=distribute reads=8437264384
+SS_OVERLAP_PHASE window_sort window=67 pairs=659907
+TRACE sec=79.564 stage=@prefix-sort reads=8487137280
+TRACE sec=79.619 stage=@refill reads=8487137280
+TRACE sec=79.787 stage=@prefix-sort reads=8517455872
+SS_OVERLAP_REFILL window=67 depth=28 active=160569 bytes=1653458
+TRACE sec=79.823 stage=@refill reads=8517455872
+TRACE sec=79.926 stage=@prefix-sort reads=8528330752
+SS_OVERLAP_REFILL window=67 depth=40 active=24140 bytes=255708
+TRACE sec=79.958 stage=@refill reads=8528330752
+TRACE sec=79.958 stage=@prefix-sort reads=8528334848
+SS_OVERLAP_REFILL window=67 depth=52 active=9854 bytes=106646
+TRACE sec=79.989 stage=@refill reads=8528334848
+TRACE sec=79.989 stage=@prefix-sort reads=8528334848
+SS_OVERLAP_REFILL window=67 depth=64 active=5081 bytes=56328
+TRACE sec=79.989 stage=@exact-sort reads=8528334848
+SS_OVERLAP_PHASE emit window=67
+TRACE sec=80.034 stage=@emit reads=8528334848
+TRACE sec=80.141 stage=@distribute reads=8528334848
+TRACE sec=80.395 stage=distribute reads=8555372544
+SS_OVERLAP_PHASE window_sort window=68 pairs=796206
+TRACE sec=80.585 stage=@prefix-sort reads=8583868416
+TRACE sec=80.646 stage=@refill reads=8583868416
+TRACE sec=80.844 stage=@prefix-sort reads=8620376064
+SS_OVERLAP_REFILL window=68 depth=28 active=130492 bytes=1349639
+TRACE sec=80.885 stage=@refill reads=8620376064
+TRACE sec=80.937 stage=@prefix-sort reads=8626311168
+SS_OVERLAP_REFILL window=68 depth=40 active=21717 bytes=232587
+TRACE sec=80.975 stage=@refill reads=8626311168
+TRACE sec=80.986 stage=@prefix-sort reads=8627019776
+SS_OVERLAP_REFILL window=68 depth=52 active=8994 bytes=97470
+TRACE sec=81.022 stage=@refill reads=8627019776
+TRACE sec=81.022 stage=@prefix-sort reads=8627019776
+SS_OVERLAP_REFILL window=68 depth=64 active=4320 bytes=46916
+TRACE sec=81.023 stage=@exact-sort reads=8627019776
+SS_OVERLAP_PHASE emit window=68
+TRACE sec=81.077 stage=@emit reads=8627023872
+CHECKPOINT rows=52000000 digest=ef0aa889062f0755 reads=8627027968 wall=81.115
+TRACE sec=81.203 stage=@distribute reads=8627027968
+TRACE sec=81.457 stage=distribute reads=8659918848
+SS_OVERLAP_PHASE window_sort window=69 pairs=873802
+TRACE sec=81.651 stage=@prefix-sort reads=8680099840
+TRACE sec=81.719 stage=@refill reads=8680099840
+TRACE sec=81.952 stage=@prefix-sort reads=8723779584
+SS_OVERLAP_REFILL window=69 depth=28 active=151724 bytes=1570985
+TRACE sec=81.998 stage=@refill reads=8723779584
+TRACE sec=82.106 stage=@prefix-sort reads=8734523392
+SS_OVERLAP_REFILL window=69 depth=40 active=26778 bytes=282124
+TRACE sec=82.151 stage=@refill reads=8734523392
+TRACE sec=82.152 stage=@prefix-sort reads=8734547968
+SS_OVERLAP_REFILL window=69 depth=52 active=9995 bytes=106764
+TRACE sec=82.192 stage=@refill reads=8734547968
+TRACE sec=82.192 stage=@prefix-sort reads=8734547968
+SS_OVERLAP_REFILL window=69 depth=64 active=4585 bytes=50084
+TRACE sec=82.192 stage=@exact-sort reads=8734547968
+SS_OVERLAP_PHASE emit window=69
+TRACE sec=82.252 stage=@emit reads=8734552064
+CHECKPOINT rows=53000000 digest=e4419afe8daf7255 reads=8734552064 wall=82.315
+TRACE sec=82.393 stage=@distribute reads=8734552064
+TRACE sec=82.647 stage=distribute reads=8772800512
+SS_OVERLAP_PHASE window_sort window=70 pairs=464815
+TRACE sec=82.833 stage=@prefix-sort reads=8815329280
+TRACE sec=82.871 stage=@refill reads=8815329280
+TRACE sec=83.099 stage=@prefix-sort reads=8858644480
+SS_OVERLAP_REFILL window=70 depth=28 active=114962 bytes=1173038
+TRACE sec=83.123 stage=@refill reads=8858644480
+TRACE sec=83.157 stage=@prefix-sort reads=8862552064
+SS_OVERLAP_REFILL window=70 depth=40 active=11216 bytes=118501
+TRACE sec=83.178 stage=@refill reads=8862552064
+TRACE sec=83.178 stage=@prefix-sort reads=8862552064
+SS_OVERLAP_REFILL window=70 depth=52 active=4131 bytes=43662
+TRACE sec=83.197 stage=@refill reads=8862552064
+TRACE sec=83.198 stage=@prefix-sort reads=8862552064
+SS_OVERLAP_REFILL window=70 depth=64 active=1984 bytes=21227
+TRACE sec=83.198 stage=@exact-sort reads=8862552064
+SS_OVERLAP_PHASE emit window=70
+TRACE sec=83.227 stage=@emit reads=8862552064
+CHECKPOINT rows=54000000 digest=4b214cd40c1625a2 reads=8862552064 wall=83.293
+TRACE sec=83.294 stage=@distribute reads=8862552064
+TRACE sec=83.546 stage=distribute reads=8891416576
+SS_OVERLAP_PHASE window_sort window=71 pairs=863688
+TRACE sec=83.774 stage=@prefix-sort reads=8937287680
+TRACE sec=83.857 stage=@refill reads=8937287680
+TRACE sec=84.069 stage=@prefix-sort reads=8972935168
+SS_OVERLAP_REFILL window=71 depth=28 active=268695 bytes=2742596
+TRACE sec=84.127 stage=@refill reads=8972935168
+TRACE sec=84.230 stage=@prefix-sort reads=8985980928
+SS_OVERLAP_REFILL window=71 depth=40 active=32306 bytes=335704
+TRACE sec=84.281 stage=@refill reads=8985980928
+TRACE sec=84.281 stage=@prefix-sort reads=8985985024
+SS_OVERLAP_REFILL window=71 depth=52 active=9819 bytes=104076
+TRACE sec=84.326 stage=@refill reads=8985985024
+TRACE sec=84.327 stage=@prefix-sort reads=8985985024
+SS_OVERLAP_REFILL window=71 depth=64 active=4840 bytes=52812
+TRACE sec=84.327 stage=@exact-sort reads=8985985024
+SS_OVERLAP_PHASE emit window=71
+TRACE sec=84.388 stage=@emit reads=8985989120
+TRACE sec=84.517 stage=@distribute reads=8985989120
+TRACE sec=84.768 stage=distribute reads=8999432192
+SS_OVERLAP_PHASE window_sort window=72 pairs=717280
+TRACE sec=84.969 stage=@prefix-sort reads=9036058624
+TRACE sec=85.027 stage=@refill reads=9036058624
+TRACE sec=85.167 stage=@prefix-sort reads=9060425728
+SS_OVERLAP_REFILL window=72 depth=28 active=146804 bytes=1505387
+TRACE sec=85.205 stage=@refill reads=9060425728
+TRACE sec=85.277 stage=@prefix-sort reads=9068306432
+SS_OVERLAP_REFILL window=72 depth=40 active=16100 bytes=170109
+TRACE sec=85.311 stage=@refill reads=9068306432
+TRACE sec=85.325 stage=@prefix-sort reads=9068883968
+SS_OVERLAP_REFILL window=72 depth=52 active=6037 bytes=64743
+TRACE sec=85.357 stage=@refill reads=9068883968
+TRACE sec=85.358 stage=@prefix-sort reads=9068883968
+SS_OVERLAP_REFILL window=72 depth=64 active=3093 bytes=33863
+TRACE sec=85.358 stage=@exact-sort reads=9068883968
+SS_OVERLAP_PHASE emit window=72
+TRACE sec=85.406 stage=@emit reads=9068883968
+CHECKPOINT rows=55000000 digest=d335097bb4270149 reads=9068888064 wall=85.420
+TRACE sec=85.508 stage=@distribute reads=9068888064
+TRACE sec=85.758 stage=distribute reads=9092927488
+SS_OVERLAP_PHASE window_sort window=73 pairs=684206
+TRACE sec=85.956 stage=@prefix-sort reads=9132769280
+TRACE sec=86.010 stage=@refill reads=9132769280
+TRACE sec=86.180 stage=@prefix-sort reads=9162940416
+SS_OVERLAP_REFILL window=73 depth=28 active=127868 bytes=1320239
+TRACE sec=86.216 stage=@refill reads=9162940416
+TRACE sec=86.292 stage=@prefix-sort reads=9172951040
+SS_OVERLAP_REFILL window=73 depth=40 active=23733 bytes=250412
+TRACE sec=86.324 stage=@refill reads=9172951040
+TRACE sec=86.325 stage=@prefix-sort reads=9172951040
+SS_OVERLAP_REFILL window=73 depth=52 active=9285 bytes=99990
+TRACE sec=86.355 stage=@refill reads=9172951040
+TRACE sec=86.355 stage=@prefix-sort reads=9172955136
+SS_OVERLAP_REFILL window=73 depth=64 active=4411 bytes=47908
+TRACE sec=86.355 stage=@exact-sort reads=9172955136
+SS_OVERLAP_PHASE emit window=73
+TRACE sec=86.401 stage=@emit reads=9172955136
+CHECKPOINT rows=56000000 digest=6e62be366e1dbb92 reads=9172955136 wall=86.453
+TRACE sec=86.504 stage=@distribute reads=9172955136
+TRACE sec=86.755 stage=distribute reads=9214459904
+SS_OVERLAP_PHASE window_sort window=74 pairs=840802
+TRACE sec=86.949 stage=@prefix-sort reads=9252204544
+TRACE sec=87.016 stage=@refill reads=9252204544
+TRACE sec=87.250 stage=@prefix-sort reads=9296056320
+SS_OVERLAP_REFILL window=74 depth=28 active=173250 bytes=1778056
+TRACE sec=87.295 stage=@refill reads=9296056320
+TRACE sec=87.390 stage=@prefix-sort reads=9307340800
+SS_OVERLAP_REFILL window=74 depth=40 active=26979 bytes=281349
+TRACE sec=87.432 stage=@refill reads=9307340800
+TRACE sec=87.432 stage=@prefix-sort reads=9307357184
+SS_OVERLAP_REFILL window=74 depth=52 active=10045 bytes=108258
+TRACE sec=87.471 stage=@refill reads=9307357184
+TRACE sec=87.471 stage=@prefix-sort reads=9307357184
+SS_OVERLAP_REFILL window=74 depth=64 active=4966 bytes=53455
+TRACE sec=87.471 stage=@exact-sort reads=9307357184
+SS_OVERLAP_PHASE emit window=74
+TRACE sec=87.528 stage=@emit reads=9307357184
+CHECKPOINT rows=57000000 digest=01dbeee715567ce5 reads=9307357184 wall=87.624
+TRACE sec=87.657 stage=@distribute reads=9307357184
+TRACE sec=87.907 stage=distribute reads=9347080192
+SS_OVERLAP_PHASE window_sort window=75 pairs=608651
+TRACE sec=88.100 stage=@prefix-sort reads=9387708416
+TRACE sec=88.148 stage=@refill reads=9387708416
+TRACE sec=88.312 stage=@prefix-sort reads=9419018240
+SS_OVERLAP_REFILL window=75 depth=28 active=120346 bytes=1247660
+TRACE sec=88.344 stage=@refill reads=9419018240
+TRACE sec=88.410 stage=@prefix-sort reads=9428140032
+SS_OVERLAP_REFILL window=75 depth=40 active=21373 bytes=227243
+TRACE sec=88.440 stage=@refill reads=9428140032
+TRACE sec=88.441 stage=@prefix-sort reads=9428164608
+SS_OVERLAP_REFILL window=75 depth=52 active=7849 bytes=84860
+TRACE sec=88.469 stage=@refill reads=9428164608
+TRACE sec=88.470 stage=@prefix-sort reads=9428172800
+SS_OVERLAP_REFILL window=75 depth=64 active=3735 bytes=41350
+TRACE sec=88.470 stage=@exact-sort reads=9428172800
+SS_OVERLAP_PHASE emit window=75
+TRACE sec=88.512 stage=@emit reads=9428172800
+TRACE sec=88.614 stage=@distribute reads=9428176896
+TRACE sec=88.865 stage=distribute reads=9461772288
+TRACE sec=89.116 stage=distribute reads=9503207424
+SS_OVERLAP_PHASE window_sort window=76 pairs=561004
+TRACE sec=89.130 stage=@prefix-sort reads=9504382976
+TRACE sec=89.184 stage=@refill reads=9504382976
+TRACE sec=89.476 stage=restage reads=9557159936
+TRACE sec=89.477 stage=@prefix-sort reads=9557159936
+SS_OVERLAP_REFILL window=76 depth=28 active=145997 bytes=1499508
+TRACE sec=89.507 stage=@refill reads=9557159936
+TRACE sec=89.548 stage=@prefix-sort reads=9564512256
+SS_OVERLAP_REFILL window=76 depth=40 active=18225 bytes=191822
+TRACE sec=89.576 stage=@refill reads=9564512256
+TRACE sec=89.577 stage=@prefix-sort reads=9564524544
+SS_OVERLAP_REFILL window=76 depth=52 active=6075 bytes=65609
+TRACE sec=89.602 stage=@refill reads=9564524544
+TRACE sec=89.602 stage=@prefix-sort reads=9564524544
+SS_OVERLAP_REFILL window=76 depth=64 active=2813 bytes=29883
+TRACE sec=89.602 stage=@exact-sort reads=9564524544
+SS_OVERLAP_PHASE emit window=76
+TRACE sec=89.639 stage=@emit reads=9564524544
+CHECKPOINT rows=58000000 digest=b6d4d095e4b3a67d reads=9564524544 wall=89.656
+TRACE sec=89.720 stage=@distribute reads=9564524544
+TRACE sec=89.971 stage=distribute reads=9603084288
+SS_OVERLAP_PHASE window_sort window=77 pairs=689084
+TRACE sec=90.170 stage=@prefix-sort reads=9648214016
+TRACE sec=90.228 stage=@refill reads=9648214016
+TRACE sec=90.440 stage=@prefix-sort reads=9688551424
+SS_OVERLAP_REFILL window=77 depth=28 active=166737 bytes=1705642
+TRACE sec=90.477 stage=@refill reads=9688551424
+TRACE sec=90.550 stage=@prefix-sort reads=9696428032
+SS_OVERLAP_REFILL window=77 depth=40 active=19460 bytes=206278
+TRACE sec=90.583 stage=@refill reads=9696428032
+TRACE sec=90.584 stage=@prefix-sort reads=9696440320
+SS_OVERLAP_REFILL window=77 depth=52 active=7138 bytes=77886
+TRACE sec=90.615 stage=@refill reads=9696440320
+TRACE sec=90.615 stage=@prefix-sort reads=9696440320
+SS_OVERLAP_REFILL window=77 depth=64 active=3431 bytes=37074
+TRACE sec=90.615 stage=@exact-sort reads=9696440320
+SS_OVERLAP_PHASE emit window=77
+TRACE sec=90.661 stage=@emit reads=9696440320
+CHECKPOINT rows=59000000 digest=8b7ce8fb3e05dfe3 reads=9696440320 wall=90.744
+TRACE sec=90.772 stage=@distribute reads=9696440320
+TRACE sec=91.022 stage=distribute reads=9736445952
+SS_OVERLAP_PHASE window_sort window=78 pairs=623650
+TRACE sec=91.213 stage=@prefix-sort reads=9782775808
+TRACE sec=91.264 stage=@refill reads=9782775808
+TRACE sec=91.367 stage=@prefix-sort reads=9800622080
+SS_OVERLAP_REFILL window=78 depth=28 active=143370 bytes=1475379
+TRACE sec=91.400 stage=@refill reads=9800622080
+TRACE sec=91.457 stage=@prefix-sort reads=9807433728
+SS_OVERLAP_REFILL window=78 depth=40 active=20569 bytes=220101
+TRACE sec=91.486 stage=@refill reads=9807433728
+TRACE sec=91.530 stage=@prefix-sort reads=9810100224
+SS_OVERLAP_REFILL window=78 depth=52 active=7819 bytes=83695
+TRACE sec=91.557 stage=@refill reads=9810100224
+TRACE sec=91.580 stage=@prefix-sort reads=9811492864
+SS_OVERLAP_REFILL window=78 depth=64 active=3693 bytes=41111
+TRACE sec=91.580 stage=@exact-sort reads=9811492864
+SS_OVERLAP_PHASE emit window=78
+TRACE sec=91.640 stage=@emit reads=9812258816
+TRACE sec=91.760 stage=@distribute reads=9813049344
+TRACE sec=92.012 stage=distribute reads=9860255744
+SS_OVERLAP_PHASE window_sort window=79 pairs=522922
+TRACE sec=92.195 stage=@prefix-sort reads=9887875072
+TRACE sec=92.238 stage=@refill reads=9887875072
+TRACE sec=92.484 stage=@prefix-sort reads=9935433728
+SS_OVERLAP_REFILL window=79 depth=28 active=118612 bytes=1220474
+TRACE sec=92.512 stage=@refill reads=9935433728
+TRACE sec=92.576 stage=@prefix-sort reads=9941405696
+SS_OVERLAP_REFILL window=79 depth=40 active=15719 bytes=164771
+TRACE sec=92.600 stage=@refill reads=9941405696
+TRACE sec=92.600 stage=@prefix-sort reads=9941475328
+SS_OVERLAP_REFILL window=79 depth=52 active=5166 bytes=54915
+TRACE sec=92.624 stage=@refill reads=9941475328
+TRACE sec=92.625 stage=@prefix-sort reads=9941479424
+SS_OVERLAP_REFILL window=79 depth=64 active=2279 bytes=24943
+TRACE sec=92.625 stage=@exact-sort reads=9941479424
+SS_OVERLAP_PHASE emit window=79
+TRACE sec=92.659 stage=@emit reads=9941479424
+CHECKPOINT rows=60000000 digest=68464a5efa9a10af reads=9941483520 wall=92.682
+TRACE sec=92.739 stage=@distribute reads=9941483520
+TRACE sec=92.993 stage=distribute reads=9963499520
+SS_OVERLAP_PHASE window_sort window=80 pairs=848088
+TRACE sec=93.183 stage=@prefix-sort reads=10007928832
+TRACE sec=93.251 stage=@refill reads=10007928832
+TRACE sec=93.388 stage=@prefix-sort reads=10031001600
+SS_OVERLAP_REFILL window=80 depth=28 active=166770 bytes=1723849
+TRACE sec=93.442 stage=@refill reads=10031001600
+TRACE sec=93.519 stage=@prefix-sort reads=10042654720
+SS_OVERLAP_REFILL window=80 depth=40 active=26151 bytes=279494
+TRACE sec=93.568 stage=@refill reads=10042654720
+TRACE sec=93.569 stage=@prefix-sort reads=10042662912
+SS_OVERLAP_REFILL window=80 depth=52 active=9957 bytes=109208
+TRACE sec=93.615 stage=@refill reads=10042662912
+TRACE sec=93.616 stage=@prefix-sort reads=10042662912
+SS_OVERLAP_REFILL window=80 depth=64 active=5084 bytes=55798
+TRACE sec=93.616 stage=@exact-sort reads=10042662912
+SS_OVERLAP_PHASE emit window=80
+TRACE sec=93.686 stage=@emit reads=10042662912
+CHECKPOINT rows=61000000 digest=5a229842f1352637 reads=10042667008 wall=93.782
+TRACE sec=93.823 stage=@distribute reads=10042667008
+TRACE sec=94.074 stage=distribute reads=10068230144
+SS_OVERLAP_PHASE window_sort window=81 pairs=872027
+TRACE sec=94.314 stage=@prefix-sort reads=10113773568
+TRACE sec=94.386 stage=@refill reads=10113773568
+TRACE sec=94.661 stage=restage reads=10167255040
+TRACE sec=94.666 stage=@prefix-sort reads=10167504896
+SS_OVERLAP_REFILL window=81 depth=28 active=132983 bytes=1376446
+TRACE sec=94.711 stage=@refill reads=10167504896
+TRACE sec=94.782 stage=@prefix-sort reads=10175700992
+SS_OVERLAP_REFILL window=81 depth=40 active=22035 bytes=236426
+TRACE sec=94.823 stage=@refill reads=10175700992
+TRACE sec=94.824 stage=@prefix-sort reads=10175766528
+SS_OVERLAP_REFILL window=81 depth=52 active=9714 bytes=106368
+TRACE sec=94.863 stage=@refill reads=10175766528
+TRACE sec=94.863 stage=@prefix-sort reads=10175766528
+SS_OVERLAP_REFILL window=81 depth=64 active=5338 bytes=58913
+TRACE sec=94.864 stage=@exact-sort reads=10175766528
+SS_OVERLAP_PHASE emit window=81
+TRACE sec=94.923 stage=@emit reads=10175766528
+CHECKPOINT rows=62000000 digest=fe6104dcd50efaae reads=10175766528 wall=95.030
+TRACE sec=95.061 stage=@distribute reads=10175766528
+TRACE sec=95.314 stage=distribute reads=10219372544
+SS_OVERLAP_PHASE window_sort window=82 pairs=472897
+TRACE sec=95.509 stage=@prefix-sort reads=10263801856
+TRACE sec=95.545 stage=@refill reads=10263801856
+TRACE sec=95.779 stage=@prefix-sort reads=10307719168
+SS_OVERLAP_REFILL window=82 depth=28 active=89211 bytes=919968
+TRACE sec=95.804 stage=@refill reads=10307719168
+TRACE sec=95.856 stage=@prefix-sort reads=10312937472
+SS_OVERLAP_REFILL window=82 depth=40 active=16489 bytes=177709
+TRACE sec=95.877 stage=@refill reads=10312937472
+TRACE sec=95.877 stage=@prefix-sort reads=10312937472
+SS_OVERLAP_REFILL window=82 depth=52 active=6735 bytes=73167
+TRACE sec=95.897 stage=@refill reads=10312937472
+TRACE sec=95.898 stage=@prefix-sort reads=10312949760
+SS_OVERLAP_REFILL window=82 depth=64 active=3326 bytes=36712
+TRACE sec=95.898 stage=@exact-sort reads=10312949760
+SS_OVERLAP_PHASE emit window=82
+TRACE sec=95.928 stage=@emit reads=10312953856
+TRACE sec=95.997 stage=@distribute reads=10312953856
+TRACE sec=96.251 stage=distribute reads=10348249088
+SS_OVERLAP_PHASE window_sort window=83 pairs=836678
+TRACE sec=96.445 stage=@prefix-sort reads=10390319104
+TRACE sec=96.510 stage=@refill reads=10390319104
+TRACE sec=96.713 stage=@prefix-sort reads=10429014016
+SS_OVERLAP_REFILL window=83 depth=28 active=155110 bytes=1603645
+TRACE sec=96.760 stage=@refill reads=10429014016
+TRACE sec=96.824 stage=@prefix-sort reads=10440695808
+SS_OVERLAP_REFILL window=83 depth=40 active=27949 bytes=295884
+TRACE sec=96.865 stage=@refill reads=10440695808
+TRACE sec=96.866 stage=@prefix-sort reads=10440699904
+SS_OVERLAP_REFILL window=83 depth=52 active=11215 bytes=121881
+TRACE sec=96.904 stage=@refill reads=10440699904
+TRACE sec=96.904 stage=@prefix-sort reads=10440699904
+SS_OVERLAP_REFILL window=83 depth=64 active=5812 bytes=64054
+TRACE sec=96.904 stage=@exact-sort reads=10440699904
+SS_OVERLAP_PHASE emit window=83
+TRACE sec=96.962 stage=@emit reads=10440708096
+CHECKPOINT rows=63000000 digest=61366d9b9f24550c reads=10440708096 wall=97.014
+TRACE sec=97.088 stage=@distribute reads=10440708096
+TRACE sec=97.341 stage=distribute reads=10482454528
+SS_OVERLAP_PHASE window_sort window=84 pairs=833265
+TRACE sec=97.540 stage=@prefix-sort reads=10529128448
+TRACE sec=97.605 stage=@refill reads=10529128448
+TRACE sec=97.861 stage=restage reads=10578673664
+TRACE sec=97.863 stage=@prefix-sort reads=10578673664
+SS_OVERLAP_REFILL window=84 depth=28 active=150980 bytes=1564994
+TRACE sec=97.907 stage=@refill reads=10578673664
+TRACE sec=97.961 stage=@prefix-sort reads=10588250112
+SS_OVERLAP_REFILL window=84 depth=40 active=23341 bytes=248477
+TRACE sec=98.002 stage=@refill reads=10588250112
+TRACE sec=98.002 stage=@prefix-sort reads=10588266496
+SS_OVERLAP_REFILL window=84 depth=52 active=9176 bytes=99509
+TRACE sec=98.041 stage=@refill reads=10588266496
+TRACE sec=98.041 stage=@prefix-sort reads=10588270592
+SS_OVERLAP_REFILL window=84 depth=64 active=4491 bytes=49192
+TRACE sec=98.041 stage=@exact-sort reads=10588270592
+SS_OVERLAP_PHASE emit window=84
+TRACE sec=98.098 stage=@emit reads=10588274688
+CHECKPOINT rows=64000000 digest=b2343ecb68125d32 reads=10588274688 wall=98.161
+TRACE sec=98.217 stage=@distribute reads=10588274688
+TRACE sec=98.468 stage=distribute reads=10630647808
+SS_OVERLAP_PHASE window_sort window=85 pairs=831406
+TRACE sec=98.705 stage=@prefix-sort reads=10676158464
+TRACE sec=98.781 stage=@refill reads=10676158464
+TRACE sec=99.076 stage=restage reads=10728280064
+TRACE sec=99.083 stage=@prefix-sort reads=10728882176
+SS_OVERLAP_REFILL window=85 depth=28 active=156626 bytes=1619343
+TRACE sec=99.134 stage=@refill reads=10728882176
+TRACE sec=99.204 stage=@prefix-sort reads=10739630080
+SS_OVERLAP_REFILL window=85 depth=40 active=26528 bytes=281231
+TRACE sec=99.251 stage=@refill reads=10739630080
+TRACE sec=99.252 stage=@prefix-sort reads=10739642368
+SS_OVERLAP_REFILL window=85 depth=52 active=9990 bytes=107753
+TRACE sec=99.301 stage=@refill reads=10739642368
+TRACE sec=99.302 stage=@prefix-sort reads=10739646464
+SS_OVERLAP_REFILL window=85 depth=64 active=4739 bytes=51526
+TRACE sec=99.302 stage=@exact-sort reads=10739646464
+SS_OVERLAP_PHASE emit window=85
+TRACE sec=99.367 stage=@emit reads=10739646464
+CHECKPOINT rows=65000000 digest=ee6a5b69679cea02 reads=10739646464 wall=99.454
+TRACE sec=99.497 stage=@distribute reads=10739646464
+TRACE sec=99.752 stage=distribute reads=10780921856
+SS_OVERLAP_PHASE window_sort window=86 pairs=808413
+TRACE sec=99.954 stage=@prefix-sort reads=10819026944
+TRACE sec=100.018 stage=@refill reads=10819026944
+TRACE sec=100.253 stage=@prefix-sort reads=10864095232
+SS_OVERLAP_REFILL window=86 depth=28 active=171087 bytes=1760420
+TRACE sec=100.296 stage=@refill reads=10864095232
+TRACE sec=100.362 stage=@prefix-sort reads=10874966016
+SS_OVERLAP_REFILL window=86 depth=40 active=25787 bytes=273408
+TRACE sec=100.401 stage=@refill reads=10874966016
+TRACE sec=100.402 stage=@prefix-sort reads=10874970112
+SS_OVERLAP_REFILL window=86 depth=52 active=9924 bytes=105962
+TRACE sec=100.439 stage=@refill reads=10874970112
+TRACE sec=100.439 stage=@prefix-sort reads=10874970112
+SS_OVERLAP_REFILL window=86 depth=64 active=4739 bytes=51845
+TRACE sec=100.439 stage=@exact-sort reads=10874970112
+SS_OVERLAP_PHASE emit window=86
+TRACE sec=100.494 stage=@emit reads=10874978304
+CHECKPOINT rows=66000000 digest=8b3957cba218d7f1 reads=10874994688 wall=100.593
+TRACE sec=100.616 stage=@distribute reads=10874994688
+TRACE sec=100.869 stage=distribute reads=10916814848
+SS_OVERLAP_PHASE window_sort window=87 pairs=861854
+TRACE sec=101.070 stage=@prefix-sort reads=10963537920
+TRACE sec=101.138 stage=@refill reads=10963537920
+TRACE sec=101.381 stage=@prefix-sort reads=11008888832
+SS_OVERLAP_REFILL window=87 depth=28 active=173602 bytes=1788379
+TRACE sec=101.427 stage=@refill reads=11008888832
+TRACE sec=101.510 stage=@prefix-sort reads=11019833344
+SS_OVERLAP_REFILL window=87 depth=40 active=25446 bytes=271686
+TRACE sec=101.551 stage=@refill reads=11019833344
+TRACE sec=101.552 stage=@prefix-sort reads=11019849728
+SS_OVERLAP_REFILL window=87 depth=52 active=9988 bytes=109054
+TRACE sec=101.592 stage=@refill reads=11019849728
+TRACE sec=101.592 stage=@prefix-sort reads=11019862016
+SS_OVERLAP_REFILL window=87 depth=64 active=5348 bytes=59007
+TRACE sec=101.593 stage=@exact-sort reads=11019862016
+SS_OVERLAP_PHASE emit window=87
+TRACE sec=101.652 stage=@emit reads=11019862016
+CHECKPOINT rows=67000000 digest=1501b38f099dba84 reads=11019862016 wall=101.780
+TRACE sec=101.791 stage=@distribute reads=11019862016
+TRACE sec=102.044 stage=distribute reads=11055374336
+SS_OVERLAP_PHASE window_sort window=88 pairs=833177
+TRACE sec=102.237 stage=@prefix-sort reads=11096788992
+TRACE sec=102.305 stage=@refill reads=11096788992
+TRACE sec=102.544 stage=@prefix-sort reads=11142344704
+SS_OVERLAP_REFILL window=88 depth=28 active=192798 bytes=1985797
+TRACE sec=102.589 stage=@refill reads=11142344704
+TRACE sec=102.687 stage=@prefix-sort reads=11155062784
+SS_OVERLAP_REFILL window=88 depth=40 active=26434 bytes=282509
+TRACE sec=102.728 stage=@refill reads=11155062784
+TRACE sec=102.728 stage=@prefix-sort reads=11155062784
+SS_OVERLAP_REFILL window=88 depth=52 active=10103 bytes=108845
+TRACE sec=102.767 stage=@refill reads=11155062784
+TRACE sec=102.767 stage=@prefix-sort reads=11155062784
+SS_OVERLAP_REFILL window=88 depth=64 active=4675 bytes=50770
+TRACE sec=102.767 stage=@exact-sort reads=11155062784
+SS_OVERLAP_PHASE emit window=88
+TRACE sec=102.825 stage=@emit reads=11155066880
+TRACE sec=102.946 stage=@distribute reads=11155066880
+TRACE sec=103.196 stage=distribute reads=11195375616
+SS_OVERLAP_PHASE window_sort window=89 pairs=841722
+TRACE sec=103.392 stage=@prefix-sort reads=11242098688
+TRACE sec=103.462 stage=@refill reads=11242098688
+TRACE sec=103.793 stage=restage reads=11301253120
+TRACE sec=103.797 stage=@prefix-sort reads=11301441536
+SS_OVERLAP_REFILL window=89 depth=28 active=172941 bytes=1776149
+TRACE sec=103.850 stage=@refill reads=11301441536
+TRACE sec=103.931 stage=@prefix-sort reads=11310747648
+SS_OVERLAP_REFILL window=89 depth=40 active=22508 bytes=239151
+TRACE sec=103.979 stage=@refill reads=11310747648
+TRACE sec=103.979 stage=@prefix-sort reads=11310751744
+SS_OVERLAP_REFILL window=89 depth=52 active=8433 bytes=91887
+TRACE sec=104.025 stage=@refill reads=11310751744
+TRACE sec=104.025 stage=@prefix-sort reads=11310751744
+SS_OVERLAP_REFILL window=89 depth=64 active=4522 bytes=49508
+TRACE sec=104.025 stage=@exact-sort reads=11310751744
+SS_OVERLAP_PHASE emit window=89
+TRACE sec=104.091 stage=@emit reads=11310755840
+CHECKPOINT rows=68000000 digest=7373845ae4d3c5df reads=11310755840 wall=104.104
+TRACE sec=104.233 stage=@distribute reads=11310755840
+TRACE sec=104.487 stage=distribute reads=11348303872
+SS_OVERLAP_PHASE window_sort window=90 pairs=401471
+TRACE sec=104.707 stage=@prefix-sort reads=11399892992
+TRACE sec=104.739 stage=@refill reads=11399892992
+TRACE sec=104.950 stage=@prefix-sort reads=11440414720
+SS_OVERLAP_REFILL window=90 depth=28 active=80227 bytes=828836
+TRACE sec=104.970 stage=@refill reads=11440414720
+TRACE sec=105.044 stage=@prefix-sort reads=11444244480
+SS_OVERLAP_REFILL window=90 depth=40 active=12135 bytes=128856
+TRACE sec=105.062 stage=@refill reads=11444244480
+TRACE sec=105.063 stage=@prefix-sort reads=11444297728
+SS_OVERLAP_REFILL window=90 depth=52 active=4896 bytes=52877
+TRACE sec=105.080 stage=@refill reads=11444297728
+TRACE sec=105.080 stage=@prefix-sort reads=11444297728
+SS_OVERLAP_REFILL window=90 depth=64 active=2364 bytes=25636
+TRACE sec=105.080 stage=@exact-sort reads=11444297728
+SS_OVERLAP_PHASE emit window=90
+TRACE sec=105.106 stage=@emit reads=11444297728
+CHECKPOINT rows=69000000 digest=0b8dffc796cec874 reads=11444297728 wall=105.138
+TRACE sec=105.174 stage=@distribute reads=11444297728
+TRACE sec=105.425 stage=distribute reads=11478122496
+SS_OVERLAP_PHASE window_sort window=91 pairs=839021
+TRACE sec=105.623 stage=@prefix-sort reads=11524780032
+TRACE sec=105.689 stage=@refill reads=11524780032
+TRACE sec=105.907 stage=@prefix-sort reads=11566645248
+SS_OVERLAP_REFILL window=91 depth=28 active=154469 bytes=1591067
+TRACE sec=105.952 stage=@refill reads=11566645248
+TRACE sec=106.024 stage=@prefix-sort reads=11574714368
+SS_OVERLAP_REFILL window=91 depth=40 active=20748 bytes=218926
+TRACE sec=106.064 stage=@refill reads=11574714368
+TRACE sec=106.068 stage=@prefix-sort reads=11574845440
+SS_OVERLAP_REFILL window=91 depth=52 active=7874 bytes=85913
+TRACE sec=106.106 stage=@refill reads=11574845440
+TRACE sec=106.106 stage=@prefix-sort reads=11574845440
+SS_OVERLAP_REFILL window=91 depth=64 active=3733 bytes=41001
+TRACE sec=106.106 stage=@exact-sort reads=11574845440
+SS_OVERLAP_PHASE emit window=91
+TRACE sec=106.163 stage=@emit reads=11574845440
+CHECKPOINT rows=70000000 digest=5e18c3718922571c reads=11574849536 wall=106.282
+TRACE sec=106.297 stage=@distribute reads=11574849536
+TRACE sec=106.549 stage=distribute reads=11615428608
+SS_OVERLAP_PHASE window_sort window=92 pairs=472827
+TRACE sec=106.748 stage=@prefix-sort reads=11660218368
+TRACE sec=106.786 stage=@refill reads=11660218368
+TRACE sec=107.064 stage=restage reads=11713052672
+TRACE sec=107.065 stage=@prefix-sort reads=11713052672
+SS_OVERLAP_REFILL window=92 depth=28 active=101014 bytes=1042107
+TRACE sec=107.091 stage=@refill reads=11713052672
+TRACE sec=107.138 stage=@prefix-sort reads=11718172672
+SS_OVERLAP_REFILL window=92 depth=40 active=15697 bytes=166051
+TRACE sec=107.160 stage=@refill reads=11718172672
+TRACE sec=107.161 stage=@prefix-sort reads=11718180864
+SS_OVERLAP_REFILL window=92 depth=52 active=6044 bytes=64625
+TRACE sec=107.182 stage=@refill reads=11718180864
+TRACE sec=107.182 stage=@prefix-sort reads=11718180864
+SS_OVERLAP_REFILL window=92 depth=64 active=2991 bytes=32970
+TRACE sec=107.182 stage=@exact-sort reads=11718180864
+SS_OVERLAP_PHASE emit window=92
+TRACE sec=107.214 stage=@emit reads=11718180864
+TRACE sec=107.289 stage=@distribute reads=11718180864
+TRACE sec=107.541 stage=distribute reads=11764502528
+SS_OVERLAP_PHASE window_sort window=93 pairs=722202
+TRACE sec=107.744 stage=@prefix-sort reads=11809419264
+TRACE sec=107.801 stage=@refill reads=11809419264
+TRACE sec=107.959 stage=@prefix-sort reads=11838492672
+SS_OVERLAP_REFILL window=93 depth=28 active=156078 bytes=1613977
+TRACE sec=107.998 stage=@refill reads=11838492672
+TRACE sec=108.078 stage=@prefix-sort reads=11849641984
+SS_OVERLAP_REFILL window=93 depth=40 active=25847 bytes=274480
+TRACE sec=108.113 stage=@refill reads=11849641984
+TRACE sec=108.113 stage=@prefix-sort reads=11849641984
+SS_OVERLAP_REFILL window=93 depth=52 active=9343 bytes=101986
+TRACE sec=108.146 stage=@refill reads=11849641984
+TRACE sec=108.146 stage=@prefix-sort reads=11849641984
+SS_OVERLAP_REFILL window=93 depth=64 active=4570 bytes=49846
+TRACE sec=108.146 stage=@exact-sort reads=11849641984
+SS_OVERLAP_PHASE emit window=93
+TRACE sec=108.195 stage=@emit reads=11849646080
+CHECKPOINT rows=71000000 digest=c0023e915d18104e reads=11849646080 wall=108.251
+TRACE sec=108.299 stage=@distribute reads=11849646080
+TRACE sec=108.553 stage=distribute reads=11877363712
+SS_OVERLAP_PHASE window_sort window=94 pairs=758972
+TRACE sec=108.798 stage=@prefix-sort reads=11926740992
+TRACE sec=108.860 stage=@refill reads=11926740992
+TRACE sec=108.977 stage=@prefix-sort reads=11946491904
+SS_OVERLAP_REFILL window=94 depth=28 active=140253 bytes=1436745
+TRACE sec=109.023 stage=@refill reads=11946491904
+TRACE sec=109.107 stage=@prefix-sort reads=11952943104
+SS_OVERLAP_REFILL window=94 depth=40 active=17535 bytes=184109
+TRACE sec=109.149 stage=@refill reads=11952943104
+TRACE sec=109.193 stage=@prefix-sort reads=11955380224
+SS_OVERLAP_REFILL window=94 depth=52 active=6260 bytes=67727
+TRACE sec=109.231 stage=@refill reads=11955380224
+TRACE sec=109.242 stage=@prefix-sort reads=11955814400
+SS_OVERLAP_REFILL window=94 depth=64 active=3084 bytes=33520
+TRACE sec=109.242 stage=@exact-sort reads=11955814400
+SS_OVERLAP_PHASE emit window=94
+TRACE sec=109.301 stage=@emit reads=11955912704
+CHECKPOINT rows=72000000 digest=d95062105d0f0826 reads=11955912704 wall=109.405
+TRACE sec=109.428 stage=@distribute reads=11955912704
+TRACE sec=109.680 stage=distribute reads=11999330304
+SS_OVERLAP_PHASE window_sort window=95 pairs=724215
+TRACE sec=109.859 stage=@prefix-sort reads=12028948480
+TRACE sec=109.918 stage=@refill reads=12028948480
+TRACE sec=110.112 stage=@prefix-sort reads=12065652736
+SS_OVERLAP_REFILL window=95 depth=28 active=161220 bytes=1653149
+TRACE sec=110.150 stage=@refill reads=12065652736
+TRACE sec=110.233 stage=@prefix-sort reads=12075507712
+SS_OVERLAP_REFILL window=95 depth=40 active=21130 bytes=222206
+TRACE sec=110.268 stage=@refill reads=12075507712
+TRACE sec=110.268 stage=@prefix-sort reads=12075511808
+SS_OVERLAP_REFILL window=95 depth=52 active=7065 bytes=76162
+TRACE sec=110.301 stage=@refill reads=12075511808
+TRACE sec=110.301 stage=@prefix-sort reads=12075515904
+SS_OVERLAP_REFILL window=95 depth=64 active=3377 bytes=36763
+TRACE sec=110.301 stage=@exact-sort reads=12075515904
+SS_OVERLAP_PHASE emit window=95
+TRACE sec=110.350 stage=@emit reads=12075515904
+TRACE sec=110.454 stage=@distribute reads=12075515904
+TRACE sec=110.706 stage=distribute reads=12114694144
+SS_OVERLAP_PHASE window_sort window=96 pairs=862488
+TRACE sec=110.900 stage=@prefix-sort reads=12154798080
+TRACE sec=110.970 stage=@refill reads=12154798080
+TRACE sec=111.228 stage=restage reads=12203581440
+TRACE sec=111.229 stage=@prefix-sort reads=12203581440
+SS_OVERLAP_REFILL window=96 depth=28 active=188490 bytes=1945212
+TRACE sec=111.275 stage=@refill reads=12203581440
+TRACE sec=111.357 stage=@prefix-sort reads=12215005184
+SS_OVERLAP_REFILL window=96 depth=40 active=26183 bytes=278390
+TRACE sec=111.399 stage=@refill reads=12215005184
+TRACE sec=111.400 stage=@prefix-sort reads=12215009280
+SS_OVERLAP_REFILL window=96 depth=52 active=9774 bytes=105640
+TRACE sec=111.440 stage=@refill reads=12215009280
+TRACE sec=111.440 stage=@prefix-sort reads=12215009280
+SS_OVERLAP_REFILL window=96 depth=64 active=4800 bytes=52773
+TRACE sec=111.440 stage=@exact-sort reads=12215009280
+SS_OVERLAP_PHASE emit window=96
+TRACE sec=111.500 stage=@emit reads=12215009280
+CHECKPOINT rows=73000000 digest=720db871e80e35bf reads=12215009280 wall=111.516
+TRACE sec=111.641 stage=@distribute reads=12215009280
+TRACE sec=111.892 stage=distribute reads=12254281728
+SS_OVERLAP_PHASE window_sort window=97 pairs=767194
+TRACE sec=112.095 stage=@prefix-sort reads=12297400320
+TRACE sec=112.157 stage=@refill reads=12297400320
+TRACE sec=112.415 stage=restage reads=12346576896
+TRACE sec=112.416 stage=@prefix-sort reads=12346576896
+SS_OVERLAP_REFILL window=97 depth=28 active=166003 bytes=1710675
+TRACE sec=112.457 stage=@refill reads=12346576896
+TRACE sec=112.544 stage=@prefix-sort reads=12357103616
+SS_OVERLAP_REFILL window=97 depth=40 active=25707 bytes=273398
+TRACE sec=112.581 stage=@refill reads=12357103616
+TRACE sec=112.582 stage=@prefix-sort reads=12357111808
+SS_OVERLAP_REFILL window=97 depth=52 active=9735 bytes=104363
+TRACE sec=112.617 stage=@refill reads=12357111808
+TRACE sec=112.617 stage=@prefix-sort reads=12357111808
+SS_OVERLAP_REFILL window=97 depth=64 active=4708 bytes=51443
+TRACE sec=112.617 stage=@exact-sort reads=12357111808
+SS_OVERLAP_PHASE emit window=97
+TRACE sec=112.670 stage=@emit reads=12357120000
+CHECKPOINT rows=74000000 digest=afd839cdc83561ed reads=12357120000 wall=112.699
+TRACE sec=112.785 stage=@distribute reads=12357120000
+TRACE sec=113.037 stage=distribute reads=12398419968
+SS_OVERLAP_PHASE window_sort window=98 pairs=821388
+TRACE sec=113.246 stage=@prefix-sort reads=12445294592
+TRACE sec=113.311 stage=@refill reads=12445294592
+TRACE sec=113.584 stage=restage reads=12495884288
+TRACE sec=113.585 stage=@prefix-sort reads=12495884288
+SS_OVERLAP_REFILL window=98 depth=28 active=166275 bytes=1710851
+TRACE sec=113.637 stage=@refill reads=12495884288
+TRACE sec=113.699 stage=@prefix-sort reads=12506292224
+SS_OVERLAP_REFILL window=98 depth=40 active=25733 bytes=272191
+TRACE sec=113.747 stage=@refill reads=12506292224
+TRACE sec=113.748 stage=@prefix-sort reads=12506300416
+SS_OVERLAP_REFILL window=98 depth=52 active=10506 bytes=113077
+TRACE sec=113.790 stage=@refill reads=12506300416
+TRACE sec=113.790 stage=@prefix-sort reads=12506300416
+SS_OVERLAP_REFILL window=98 depth=64 active=5258 bytes=55970
+TRACE sec=113.790 stage=@exact-sort reads=12506300416
+SS_OVERLAP_PHASE emit window=98
+TRACE sec=113.849 stage=@emit reads=12506304512
+CHECKPOINT rows=75000000 digest=869aa4b720f21b78 reads=12506304512 wall=113.918
+TRACE sec=113.990 stage=@distribute reads=12506304512
+TRACE sec=114.241 stage=distribute reads=12540731392
+SS_OVERLAP_PHASE window_sort window=99 pairs=766269
+TRACE sec=114.481 stage=@prefix-sort reads=12592103424
+TRACE sec=114.542 stage=@refill reads=12592103424
+TRACE sec=114.709 stage=@prefix-sort reads=12623929344
+SS_OVERLAP_REFILL window=99 depth=28 active=153754 bytes=1578703
+TRACE sec=114.750 stage=@refill reads=12623929344
+TRACE sec=114.817 stage=@prefix-sort reads=12634361856
+SS_OVERLAP_REFILL window=99 depth=40 active=18759 bytes=197868
+TRACE sec=114.853 stage=@refill reads=12634361856
+TRACE sec=114.853 stage=@prefix-sort reads=12634361856
+SS_OVERLAP_REFILL window=99 depth=52 active=7254 bytes=78385
+TRACE sec=114.888 stage=@refill reads=12634361856
+TRACE sec=114.888 stage=@prefix-sort reads=12634361856
+SS_OVERLAP_REFILL window=99 depth=64 active=3709 bytes=41112
+TRACE sec=114.888 stage=@exact-sort reads=12634361856
+SS_OVERLAP_PHASE emit window=99
+TRACE sec=114.940 stage=@emit reads=12634361856
+CHECKPOINT rows=76000000 digest=49d0c10fa4253f74 reads=12634361856 wall=115.018
+TRACE sec=115.057 stage=@distribute reads=12634361856
+TRACE sec=115.308 stage=distribute reads=12673241088
+SS_OVERLAP_PHASE window_sort window=100 pairs=829325
+TRACE sec=115.506 stage=@prefix-sort reads=12719931392
+TRACE sec=115.572 stage=@refill reads=12719931392
+TRACE sec=115.832 stage=restage reads=12771053568
+TRACE sec=115.882 stage=@prefix-sort reads=12780191744
+SS_OVERLAP_REFILL window=100 depth=28 active=173093 bytes=1785879
+TRACE sec=115.927 stage=@refill reads=12780191744
+TRACE sec=115.989 stage=@prefix-sort reads=12790960128
+SS_OVERLAP_REFILL window=100 depth=40 active=33167 bytes=351668
+TRACE sec=116.030 stage=@refill reads=12790960128
+TRACE sec=116.031 stage=@prefix-sort reads=12791037952
+SS_OVERLAP_REFILL window=100 depth=52 active=13141 bytes=140922
+TRACE sec=116.069 stage=@refill reads=12791037952
+TRACE sec=116.069 stage=@prefix-sort reads=12791037952
+SS_OVERLAP_REFILL window=100 depth=64 active=6214 bytes=67518
+TRACE sec=116.069 stage=@exact-sort reads=12791037952
+SS_OVERLAP_PHASE emit window=100
+TRACE sec=116.126 stage=@emit reads=12791037952
+CHECKPOINT rows=77000000 digest=19d5b127ba38ddc4 reads=12791042048 wall=116.238
+TRACE sec=116.258 stage=@distribute reads=12791042048
+TRACE sec=116.511 stage=distribute reads=12832645120
+SS_OVERLAP_PHASE window_sort window=101 pairs=864875
+TRACE sec=116.713 stage=@prefix-sort reads=12880424960
+TRACE sec=116.785 stage=@refill reads=12880424960
+TRACE sec=117.041 stage=restage reads=12929331200
+TRACE sec=117.042 stage=@prefix-sort reads=12929331200
+SS_OVERLAP_REFILL window=101 depth=28 active=208050 bytes=2132525
+TRACE sec=117.089 stage=@refill reads=12929331200
+TRACE sec=117.165 stage=@prefix-sort reads=12942225408
+SS_OVERLAP_REFILL window=101 depth=40 active=32769 bytes=345882
+TRACE sec=117.207 stage=@refill reads=12942225408
+TRACE sec=117.207 stage=@prefix-sort reads=12942229504
+SS_OVERLAP_REFILL window=101 depth=52 active=11754 bytes=126220
+TRACE sec=117.249 stage=@refill reads=12942229504
+TRACE sec=117.249 stage=@prefix-sort reads=12942233600
+SS_OVERLAP_REFILL window=101 depth=64 active=5556 bytes=60738
+TRACE sec=117.249 stage=@exact-sort reads=12942233600
+SS_OVERLAP_PHASE emit window=101
+TRACE sec=117.310 stage=@emit reads=12942233600
+CHECKPOINT rows=78000000 digest=edf0dfadf24c7578 reads=12942233600 wall=117.437
+TRACE sec=117.445 stage=@distribute reads=12942233600
+TRACE sec=117.700 stage=distribute reads=12980441088
+SS_OVERLAP_PHASE window_sort window=102 pairs=871736
+TRACE sec=117.900 stage=@prefix-sort reads=13019643904
+TRACE sec=117.970 stage=@refill reads=13019643904
+TRACE sec=118.187 stage=@prefix-sort reads=13061132288
+SS_OVERLAP_REFILL window=102 depth=28 active=153642 bytes=1586006
+TRACE sec=118.234 stage=@refill reads=13061132288
+TRACE sec=118.305 stage=@prefix-sort reads=13069930496
+SS_OVERLAP_REFILL window=102 depth=40 active=22512 bytes=236824
+TRACE sec=118.353 stage=@refill reads=13069930496
+TRACE sec=118.354 stage=@prefix-sort reads=13069983744
+SS_OVERLAP_REFILL window=102 depth=52 active=8666 bytes=93419
+TRACE sec=118.402 stage=@refill reads=13069983744
+TRACE sec=118.403 stage=@prefix-sort reads=13069987840
+SS_OVERLAP_REFILL window=102 depth=64 active=4354 bytes=47078
+TRACE sec=118.403 stage=@exact-sort reads=13069987840
+SS_OVERLAP_PHASE emit window=102
+TRACE sec=118.467 stage=@emit reads=13069987840
+TRACE sec=118.607 stage=@distribute reads=13069991936
+TRACE sec=118.862 stage=distribute reads=13104189440
+TRACE sec=119.114 stage=distribute reads=13152030720
+SS_OVERLAP_PHASE window_sort window=103 pairs=868220
+TRACE sec=119.153 stage=@prefix-sort reads=13159198720
+TRACE sec=119.235 stage=@refill reads=13159198720
+TRACE sec=119.479 stage=@prefix-sort reads=13201641472
+SS_OVERLAP_REFILL window=103 depth=28 active=178462 bytes=1842090
+TRACE sec=119.526 stage=@refill reads=13201641472
+TRACE sec=119.607 stage=@prefix-sort reads=13213876224
+SS_OVERLAP_REFILL window=103 depth=40 active=29276 bytes=313058
+TRACE sec=119.649 stage=@refill reads=13213876224
+TRACE sec=119.650 stage=@prefix-sort reads=13213876224
+SS_OVERLAP_REFILL window=103 depth=52 active=11898 bytes=129585
+TRACE sec=119.690 stage=@refill reads=13213876224
+TRACE sec=119.690 stage=@prefix-sort reads=13213876224
+SS_OVERLAP_REFILL window=103 depth=64 active=6150 bytes=66874
+TRACE sec=119.690 stage=@exact-sort reads=13213876224
+SS_OVERLAP_PHASE emit window=103
+TRACE sec=119.750 stage=@emit reads=13213884416
+CHECKPOINT rows=79000000 digest=844f2e5507391697 reads=13213884416 wall=119.757
+TRACE sec=119.885 stage=@distribute reads=13213884416
+TRACE sec=120.140 stage=distribute reads=13251686400
+SS_OVERLAP_PHASE window_sort window=104 pairs=786015
+TRACE sec=120.338 stage=@prefix-sort reads=13295722496
+TRACE sec=120.403 stage=@refill reads=13295722496
+TRACE sec=120.621 stage=@prefix-sort reads=13337579520
+SS_OVERLAP_REFILL window=104 depth=28 active=194982 bytes=1992995
+TRACE sec=120.664 stage=@refill reads=13337579520
+TRACE sec=120.755 stage=@prefix-sort reads=13350338560
+SS_OVERLAP_REFILL window=104 depth=40 active=29892 bytes=316272
+TRACE sec=120.794 stage=@refill reads=13350338560
+TRACE sec=120.794 stage=@prefix-sort reads=13350346752
+SS_OVERLAP_REFILL window=104 depth=52 active=11301 bytes=121964
+TRACE sec=120.830 stage=@refill reads=13350346752
+TRACE sec=120.831 stage=@prefix-sort reads=13350346752
+SS_OVERLAP_REFILL window=104 depth=64 active=5426 bytes=59018
+TRACE sec=120.831 stage=@exact-sort reads=13350346752
+SS_OVERLAP_PHASE emit window=104
+TRACE sec=120.885 stage=@emit reads=13350350848
+CHECKPOINT rows=80000000 digest=c62d28769c88cd43 reads=13350350848 wall=120.909
+TRACE sec=121.009 stage=@distribute reads=13350350848
+TRACE sec=121.262 stage=distribute reads=13390311424
+SS_OVERLAP_PHASE window_sort window=105 pairs=634149
+TRACE sec=121.457 stage=@prefix-sort reads=13429510144
+TRACE sec=121.506 stage=@refill reads=13429510144
+TRACE sec=121.780 stage=restage reads=13482131456
+TRACE sec=121.780 stage=@prefix-sort reads=13482131456
+SS_OVERLAP_REFILL window=105 depth=28 active=117234 bytes=1213956
+TRACE sec=121.813 stage=@refill reads=13482131456
+TRACE sec=121.872 stage=@prefix-sort reads=13490409472
+SS_OVERLAP_REFILL window=105 depth=40 active=21953 bytes=231825
+TRACE sec=121.902 stage=@refill reads=13490409472
+TRACE sec=121.902 stage=@prefix-sort reads=13490421760
+SS_OVERLAP_REFILL window=105 depth=52 active=8821 bytes=95405
+TRACE sec=121.931 stage=@refill reads=13490421760
+TRACE sec=121.931 stage=@prefix-sort reads=13490425856
+SS_OVERLAP_REFILL window=105 depth=64 active=4418 bytes=47980
+TRACE sec=121.931 stage=@exact-sort reads=13490425856
+SS_OVERLAP_PHASE emit window=105
+TRACE sec=121.973 stage=@emit reads=13490425856
+CHECKPOINT rows=81000000 digest=64d26a0e8aab0be5 reads=13490425856 wall=122.019
+TRACE sec=122.066 stage=@distribute reads=13490425856
+TRACE sec=122.321 stage=distribute reads=13533675520
+SS_OVERLAP_PHASE window_sort window=106 pairs=687907
+TRACE sec=122.525 stage=@prefix-sort reads=13579464704
+TRACE sec=122.582 stage=@refill reads=13579464704
+TRACE sec=122.820 stage=@prefix-sort reads=13624983552
+SS_OVERLAP_REFILL window=106 depth=28 active=137657 bytes=1417234
+TRACE sec=122.857 stage=@refill reads=13624983552
+TRACE sec=122.931 stage=@prefix-sort reads=13633671168
+SS_OVERLAP_REFILL window=106 depth=40 active=21973 bytes=232056
+TRACE sec=122.963 stage=@refill reads=13633671168
+TRACE sec=122.964 stage=@prefix-sort reads=13633675264
+SS_OVERLAP_REFILL window=106 depth=52 active=8233 bytes=88415
+TRACE sec=122.994 stage=@refill reads=13633675264
+TRACE sec=122.995 stage=@prefix-sort reads=13633679360
+SS_OVERLAP_REFILL window=106 depth=64 active=3955 bytes=42794
+TRACE sec=122.995 stage=@exact-sort reads=13633679360
+SS_OVERLAP_PHASE emit window=106
+TRACE sec=123.040 stage=@emit reads=13633683456
+CHECKPOINT rows=82000000 digest=d047ac278b6fb45a reads=13633683456 wall=123.130
+TRACE sec=123.142 stage=@distribute reads=13633683456
+TRACE sec=123.394 stage=distribute reads=13673713664
+SS_OVERLAP_PHASE window_sort window=107 pairs=846217
+TRACE sec=123.621 stage=@prefix-sort reads=13720371200
+TRACE sec=123.700 stage=@refill reads=13720371200
+TRACE sec=123.977 stage=restage reads=13769072640
+TRACE sec=123.978 stage=@prefix-sort reads=13769072640
+SS_OVERLAP_REFILL window=107 depth=28 active=168679 bytes=1736984
+TRACE sec=124.032 stage=@refill reads=13769072640
+TRACE sec=124.113 stage=@prefix-sort reads=13781745664
+SS_OVERLAP_REFILL window=107 depth=40 active=25507 bytes=271012
+TRACE sec=124.161 stage=@refill reads=13781745664
+TRACE sec=124.162 stage=@prefix-sort reads=13781749760
+SS_OVERLAP_REFILL window=107 depth=52 active=10340 bytes=111689
+TRACE sec=124.208 stage=@refill reads=13781749760
+TRACE sec=124.208 stage=@prefix-sort reads=13781749760
+SS_OVERLAP_REFILL window=107 depth=64 active=5321 bytes=57980
+TRACE sec=124.208 stage=@exact-sort reads=13781749760
+SS_OVERLAP_PHASE emit window=107
+TRACE sec=124.277 stage=@emit reads=13781753856
+TRACE sec=124.421 stage=@distribute reads=13781753856
+TRACE sec=124.674 stage=distribute reads=13818376192
+SS_OVERLAP_PHASE window_sort window=108 pairs=714821
+TRACE sec=124.871 stage=@prefix-sort reads=13859500032
+TRACE sec=124.933 stage=@refill reads=13859500032
+TRACE sec=125.193 stage=restage reads=13910323200
+TRACE sec=125.217 stage=@prefix-sort reads=13914464256
+SS_OVERLAP_REFILL window=108 depth=28 active=180554 bytes=1842529
+TRACE sec=125.255 stage=@refill reads=13914464256
+TRACE sec=125.324 stage=@prefix-sort reads=13922095104
+SS_OVERLAP_REFILL window=108 depth=40 active=14582 bytes=152133
+TRACE sec=125.357 stage=@refill reads=13922095104
+TRACE sec=125.357 stage=@prefix-sort reads=13922099200
+SS_OVERLAP_REFILL window=108 depth=52 active=4356 bytes=46327
+TRACE sec=125.389 stage=@refill reads=13922099200
+TRACE sec=125.389 stage=@prefix-sort reads=13922099200
+SS_OVERLAP_REFILL window=108 depth=64 active=2034 bytes=21986
+TRACE sec=125.389 stage=@exact-sort reads=13922099200
+SS_OVERLAP_PHASE emit window=108
+TRACE sec=125.439 stage=@emit reads=13922103296
+CHECKPOINT rows=83000000 digest=24a2429c66fab7ad reads=13922103296 wall=125.445
+TRACE sec=125.560 stage=@distribute reads=13922103296
+TRACE sec=125.812 stage=distribute reads=13962551296
+SS_OVERLAP_PHASE window_sort window=109 pairs=841036
+TRACE sec=126.013 stage=@prefix-sort reads=14007455744
+TRACE sec=126.082 stage=@refill reads=14007455744
+TRACE sec=126.263 stage=@prefix-sort reads=14040326144
+SS_OVERLAP_REFILL window=109 depth=28 active=184606 bytes=1902015
+TRACE sec=126.308 stage=@refill reads=14040326144
+TRACE sec=126.372 stage=@prefix-sort reads=14052024320
+SS_OVERLAP_REFILL window=109 depth=40 active=27075 bytes=287700
+TRACE sec=126.413 stage=@refill reads=14052024320
+TRACE sec=126.414 stage=@prefix-sort reads=14052077568
+SS_OVERLAP_REFILL window=109 depth=52 active=10619 bytes=114666
+TRACE sec=126.453 stage=@refill reads=14052077568
+TRACE sec=126.454 stage=@prefix-sort reads=14052081664
+SS_OVERLAP_REFILL window=109 depth=64 active=5096 bytes=56815
+TRACE sec=126.454 stage=@exact-sort reads=14052081664
+SS_OVERLAP_PHASE emit window=109
+TRACE sec=126.512 stage=@emit reads=14052081664
+CHECKPOINT rows=84000000 digest=25233ac69a3c5605 reads=14052081664 wall=126.563
+TRACE sec=126.647 stage=@distribute reads=14052081664
+TRACE sec=126.900 stage=distribute reads=14085074944
+SS_OVERLAP_PHASE window_sort window=110 pairs=627767
+TRACE sec=127.092 stage=@prefix-sort reads=14128586752
+TRACE sec=127.142 stage=@refill reads=14128586752
+TRACE sec=127.448 stage=restage reads=14188556288
+TRACE sec=127.454 stage=@prefix-sort reads=14189555712
+SS_OVERLAP_REFILL window=110 depth=28 active=122941 bytes=1269317
+TRACE sec=127.487 stage=@refill reads=14189555712
+TRACE sec=127.528 stage=@prefix-sort reads=14197190656
+SS_OVERLAP_REFILL window=110 depth=40 active=19825 bytes=209807
+TRACE sec=127.557 stage=@refill reads=14197190656
+TRACE sec=127.557 stage=@prefix-sort reads=14197194752
+SS_OVERLAP_REFILL window=110 depth=52 active=7471 bytes=79792
+TRACE sec=127.585 stage=@refill reads=14197194752
+TRACE sec=127.585 stage=@prefix-sort reads=14197194752
+SS_OVERLAP_REFILL window=110 depth=64 active=3572 bytes=39447
+TRACE sec=127.585 stage=@exact-sort reads=14197194752
+SS_OVERLAP_PHASE emit window=110
+TRACE sec=127.627 stage=@emit reads=14197194752
+CHECKPOINT rows=85000000 digest=35fc4e89dd714d50 reads=14197198848 wall=127.688
+TRACE sec=127.720 stage=@distribute reads=14197198848
+TRACE sec=127.972 stage=distribute reads=14242770944
+SS_OVERLAP_PHASE window_sort window=111 pairs=685084
+TRACE sec=128.173 stage=@prefix-sort reads=14289444864
+TRACE sec=128.228 stage=@refill reads=14289444864
+TRACE sec=128.456 stage=@prefix-sort reads=14334119936
+SS_OVERLAP_REFILL window=111 depth=28 active=144634 bytes=1486178
+TRACE sec=128.493 stage=@refill reads=14334119936
+TRACE sec=128.571 stage=@prefix-sort reads=14343176192
+SS_OVERLAP_REFILL window=111 depth=40 active=21927 bytes=233082
+TRACE sec=128.610 stage=@refill reads=14343176192
+TRACE sec=128.610 stage=@prefix-sort reads=14343180288
+SS_OVERLAP_REFILL window=111 depth=52 active=8195 bytes=89162
+TRACE sec=128.646 stage=@refill reads=14343180288
+TRACE sec=128.647 stage=@prefix-sort reads=14343184384
+SS_OVERLAP_REFILL window=111 depth=64 active=3965 bytes=44405
+TRACE sec=128.647 stage=@exact-sort reads=14343184384
+SS_OVERLAP_PHASE emit window=111
+TRACE sec=128.700 stage=@emit reads=14343188480
+TRACE sec=128.806 stage=@distribute reads=14343188480
+TRACE sec=129.058 stage=distribute reads=14377373696
+SS_OVERLAP_PHASE window_sort window=112 pairs=747026
+TRACE sec=129.297 stage=@prefix-sort reads=14426652672
+TRACE sec=129.365 stage=@refill reads=14426652672
+TRACE sec=129.553 stage=@prefix-sort reads=14462517248
+SS_OVERLAP_REFILL window=112 depth=28 active=154179 bytes=1592824
+TRACE sec=129.592 stage=@refill reads=14462517248
+TRACE sec=129.648 stage=@prefix-sort reads=14472790016
+SS_OVERLAP_REFILL window=112 depth=40 active=26562 bytes=282389
+TRACE sec=129.684 stage=@refill reads=14472790016
+TRACE sec=129.685 stage=@prefix-sort reads=14472802304
+SS_OVERLAP_REFILL window=112 depth=52 active=10758 bytes=116120
+TRACE sec=129.719 stage=@refill reads=14472802304
+TRACE sec=129.719 stage=@prefix-sort reads=14472802304
+SS_OVERLAP_REFILL window=112 depth=64 active=5383 bytes=59578
+TRACE sec=129.719 stage=@exact-sort reads=14472802304
+SS_OVERLAP_PHASE emit window=112
+TRACE sec=129.770 stage=@emit reads=14472802304
+CHECKPOINT rows=86000000 digest=61132f9456636ee0 reads=14472802304 wall=129.777
+TRACE sec=129.887 stage=@distribute reads=14472802304
+TRACE sec=130.137 stage=distribute reads=14501769216
+SS_OVERLAP_PHASE window_sort window=113 pairs=821128
+TRACE sec=130.331 stage=@prefix-sort reads=14548426752
+TRACE sec=130.397 stage=@refill reads=14548426752
+TRACE sec=130.505 stage=@prefix-sort reads=14568284160
+SS_OVERLAP_REFILL window=113 depth=28 active=172751 bytes=1777743
+TRACE sec=130.548 stage=@refill reads=14568284160
+TRACE sec=130.613 stage=@prefix-sort reads=14575857664
+SS_OVERLAP_REFILL window=113 depth=40 active=22542 bytes=236685
+TRACE sec=130.652 stage=@refill reads=14575857664
+TRACE sec=130.682 stage=@prefix-sort reads=14579154944
+SS_OVERLAP_REFILL window=113 depth=52 active=7875 bytes=85236
+TRACE sec=130.719 stage=@refill reads=14579154944
+TRACE sec=130.754 stage=@prefix-sort reads=14580842496
+SS_OVERLAP_REFILL window=113 depth=64 active=3744 bytes=40684
+TRACE sec=130.754 stage=@exact-sort reads=14580842496
+SS_OVERLAP_PHASE emit window=113
+TRACE sec=130.820 stage=@emit reads=14581211136
+CHECKPOINT rows=87000000 digest=0bb02f93ebfb13d3 reads=14581309440 wall=130.867
+TRACE sec=130.957 stage=@distribute reads=14581387264
+TRACE sec=131.209 stage=distribute reads=14622609408
+SS_OVERLAP_PHASE window_sort window=114 pairs=722774
+TRACE sec=131.384 stage=@prefix-sort reads=14664286208
+TRACE sec=131.443 stage=@refill reads=14664286208
+TRACE sec=131.674 stage=@prefix-sort reads=14709485568
+SS_OVERLAP_REFILL window=114 depth=28 active=158709 bytes=1635858
+TRACE sec=131.712 stage=@refill reads=14709485568
+TRACE sec=131.769 stage=@prefix-sort reads=14718103552
+SS_OVERLAP_REFILL window=114 depth=40 active=25457 bytes=271351
+TRACE sec=131.804 stage=@refill reads=14718103552
+TRACE sec=131.804 stage=@prefix-sort reads=14718107648
+SS_OVERLAP_REFILL window=114 depth=52 active=10874 bytes=118671
+TRACE sec=131.837 stage=@refill reads=14718107648
+TRACE sec=131.837 stage=@prefix-sort reads=14718111744
+SS_OVERLAP_REFILL window=114 depth=64 active=5598 bytes=60983
+TRACE sec=131.837 stage=@exact-sort reads=14718111744
+SS_OVERLAP_PHASE emit window=114
+TRACE sec=131.886 stage=@emit reads=14718111744
+CHECKPOINT rows=88000000 digest=3a7169c33bd97fb3 reads=14718111744 wall=131.956
+TRACE sec=132.000 stage=@distribute reads=14718111744
+TRACE sec=132.251 stage=distribute reads=14759374848
+SS_OVERLAP_PHASE window_sort window=115 pairs=343826
+TRACE sec=132.439 stage=@prefix-sort reads=14792167424
+TRACE sec=132.465 stage=@refill reads=14792167424
+TRACE sec=132.658 stage=@prefix-sort reads=14828474368
+SS_OVERLAP_REFILL window=115 depth=28 active=67259 bytes=699994
+TRACE sec=132.675 stage=@refill reads=14828474368
+TRACE sec=132.705 stage=@prefix-sort reads=14831390720
+SS_OVERLAP_REFILL window=115 depth=40 active=12579 bytes=134646
+TRACE sec=132.720 stage=@refill reads=14831390720
+TRACE sec=132.720 stage=@prefix-sort reads=14831390720
+SS_OVERLAP_REFILL window=115 depth=52 active=5087 bytes=55465
+TRACE sec=132.735 stage=@refill reads=14831390720
+TRACE sec=132.735 stage=@prefix-sort reads=14831390720
+SS_OVERLAP_REFILL window=115 depth=64 active=2544 bytes=27747
+TRACE sec=132.735 stage=@exact-sort reads=14831390720
+SS_OVERLAP_PHASE emit window=115
+TRACE sec=132.756 stage=@emit reads=14831390720
+TRACE sec=132.808 stage=@distribute reads=14831390720
+TRACE sec=133.060 stage=distribute reads=14871191552
+SS_OVERLAP_PHASE window_sort window=116 pairs=844356
+TRACE sec=133.257 stage=@prefix-sort reads=14909304832
+TRACE sec=133.325 stage=@refill reads=14909304832
+TRACE sec=133.510 stage=@prefix-sort reads=14942490624
+SS_OVERLAP_REFILL window=116 depth=28 active=174549 bytes=1798062
+TRACE sec=133.560 stage=@refill reads=14942490624
+TRACE sec=133.662 stage=@prefix-sort reads=14954160128
+SS_OVERLAP_REFILL window=116 depth=40 active=29262 bytes=308252
+TRACE sec=133.711 stage=@refill reads=14954160128
+TRACE sec=133.712 stage=@prefix-sort reads=14954164224
+SS_OVERLAP_REFILL window=116 depth=52 active=11079 bytes=119394
+TRACE sec=133.758 stage=@refill reads=14954164224
+TRACE sec=133.758 stage=@prefix-sort reads=14954168320
+SS_OVERLAP_REFILL window=116 depth=64 active=5265 bytes=57302
+TRACE sec=133.758 stage=@exact-sort reads=14954168320
+SS_OVERLAP_PHASE emit window=116
+TRACE sec=133.827 stage=@emit reads=14954168320
+CHECKPOINT rows=89000000 digest=f441b6413cfa44bb reads=14954168320 wall=133.877
+TRACE sec=133.968 stage=@distribute reads=14954168320
+TRACE sec=134.223 stage=distribute reads=14988550144
+SS_OVERLAP_PHASE window_sort window=117 pairs=166983
+TRACE sec=134.465 stage=@prefix-sort reads=15038648320
+STOP read guard
