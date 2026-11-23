@@ -375,6 +375,7 @@ fn run_prefixed<const P: usize>(
                 }
             }
         };
+    let restage = P == 16 && std::env::var("XSA_OVERLAP_RESTAGE").as_deref() == Ok("1");
     let mut lo = 0;
     while lo < hist.len() {
         let mut mass = 0;
@@ -411,6 +412,36 @@ fn run_prefixed<const P: usize>(
             assert_eq!(pairs.len(), mass);
             windows += 1;
             eprintln!("SS_OVERLAP_PHASE window_sort window={windows} pairs={mass}");
+            if restage {
+                // Recycle the same 16 bytes: monotone class ID + twelve further
+                // key bytes. Encode the adjacent-class LCP in five low bits.
+                assert!(mass < 1 << 27);
+                pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+                let mut last = None;
+                let mut class = 0u32;
+                let mut code = 0u32;
+                for (key, _) in &mut pairs {
+                    if last != Some(*key) {
+                        let h = last.map_or(0, |k: [u8; P]| lcp(&k, key));
+                        code = (class << 5) | h as u32;
+                        class += 1;
+                        last = Some(*key);
+                    }
+                    key.fill(0);
+                    key[..4].copy_from_slice(&code.to_be_bytes());
+                }
+                pairs.sort_unstable_by_key(|(_, id)| (id.0 & mask, id.1));
+                for (i, (key, id)) in pairs.iter_mut().enumerate() {
+                    if i % 32768 == 0 {
+                        check("restage");
+                    }
+                    let (a, _) = tail(bytes, &words, (id.0 & mask, id.1));
+                    if a.len() > 16 {
+                        let used = 12.min(a.len() - 16);
+                        key[4..4 + used].copy_from_slice(&a[16..16 + used]);
+                    }
+                }
+            }
             pairs.sort_unstable_by(|(ka, a), (kb, b)| {
                 checks = checks.wrapping_add(1);
                 if checks % 65536 == 0 {
@@ -425,15 +456,25 @@ fn run_prefixed<const P: usize>(
                 })
             });
             eprintln!("SS_OVERLAP_PHASE emit window={windows}");
-            for (key, tagged) in pairs {
+            for (index, (key, tagged)) in pairs.into_iter().enumerate() {
                 let pred = (tagged.0 >> 24) as u8;
                 let id = (tagged.0 & mask, tagged.1);
                 let (raw, eof) = tail(bytes, &words, id);
                 let old = prev.map(|(k, p)| (k, tail(bytes, &words, p)));
-                if !old.is_some_and(|(k, t)| k == key && t == (raw, eof)) {
+                if (restage && index == 0) || !old.is_some_and(|(k, t)| k == key && t == (raw, eof))
+                {
                     flush(&mut heap, len, head);
                     head = old.map_or(0, |(k, (a, e))| {
-                        let h = if k != key {
+                        let h = if restage && index == 0 {
+                            lcp(a, raw)
+                        } else if restage && k != key {
+                            let h = if k[..4] != key[..4] {
+                                (key[3] & 31) as usize
+                            } else {
+                                16 + lcp(&k[4..], &key[4..])
+                            };
+                            h.min(a.len()).min(raw.len())
+                        } else if k != key {
                             lcp(&k, &key).min(a.len()).min(raw.len())
                         } else {
                             lcp(a, raw)
