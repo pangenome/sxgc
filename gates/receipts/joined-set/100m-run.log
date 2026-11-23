@@ -1,0 +1,5 @@
+WINDOW index=0 cumulative_rows=281541 reads=31027200
+WINDOW index=1 cumulative_rows=505643 reads=47353856
+WINDOW index=2 cumulative_rows=802803 reads=67969024
+WINDOW index=3 cumulative_rows=1097083 reads=88203264
+WINDOW index=4 cumulative_rows=1274663 reads=103292928
