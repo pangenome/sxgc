@@ -100,6 +100,19 @@ fn tail<'a>(bytes: &'a [u8], words: &[Word], (v, o): Pair) -> (&'a [u8], bool) {
 fn lcp(a: &[u8], b: &[u8]) -> usize {
     a.iter().zip(b).take_while(|(x, y)| x == y).count()
 }
+fn refined_cell(levels: &[Vec<u32>], raw: &[u8], eof: bool, o: usize) -> usize {
+    let mut c = cell(raw, eof, o);
+    for (level, base) in levels.iter().enumerate() {
+        c = base[c] as usize
+            + if base[c + 1] - base[c] > 1 {
+                raw.get(o + 2 + level)
+                    .map_or(eof as usize, |&b| 2 + b as usize)
+            } else {
+                0
+            };
+    }
+    c
+}
 fn cell(raw: &[u8], eof: bool, o: usize) -> usize {
     let a = 2 + raw[o] as usize;
     let b = raw
@@ -232,7 +245,54 @@ fn run_prefixed<const P: usize>(
         std::env::var("XSA_OVERLAP_SORT_PAIRS").map_or(1048576, |s| s.parse::<usize>().unwrap());
     assert!(cap > 0);
     let largest = hist.iter().copied().max().unwrap();
-    assert!(largest<=cap,"overlap two-byte cell {largest} exceeds hard descriptor cap {cap}; deeper partition required");
+    // Refine only oversized parent cells; avoid a dense 258^3 histogram.
+    let mut levels = Vec::new();
+    let mut table_bytes = 0usize;
+    while hist.iter().copied().max().unwrap() > cap {
+        assert!(
+            levels.len() < 32,
+            "oversize cell requires more than 32 refinements"
+        );
+        table_bytes += (hist.len() + 1) * 4;
+        assert!(
+            table_bytes <= 8 * 1024 * 1024,
+            "refinement maps exceed 8 MiB"
+        );
+        let mut base = Vec::with_capacity(hist.len() + 1);
+        let parent = hist;
+        let mut size = 0;
+        for &count in &parent {
+            base.push(u32::try_from(size).unwrap());
+            size += if count > cap { ALPH } else { 1 };
+        }
+        base.push(u32::try_from(size).unwrap());
+        assert!(size <= 1048576, "refined histogram exceeds slot guard");
+        hist = vec![0; size];
+        for c in 0..parent.len() {
+            if parent[c] <= cap {
+                hist[base[c] as usize] = parent[c];
+            }
+        }
+        for &v in &phys {
+            let p = words[v as usize];
+            if v % 32768 == 0 {
+                check("refine-census");
+            }
+            let raw = p.raw(bytes);
+            for o in 0..p.width(w) {
+                let c = refined_cell(&levels, raw, p.eof(), o);
+                if parent[c] > cap {
+                    hist[base[c] as usize
+                        + raw
+                            .get(o + 2 + levels.len())
+                            .map_or(p.eof() as usize, |&b| 2 + b as usize)] += 1;
+                }
+            }
+        }
+        let refined = *hist.iter().max().unwrap();
+        eprintln!("SS_OVERLAP_REFINE parent_max={largest} child_max={refined} slots={size}");
+        levels.push(base);
+    }
 
     let mut heap = BinaryHeap::new();
     let mut rows = 0;
@@ -277,7 +337,8 @@ fn run_prefixed<const P: usize>(
                     check("distribute");
                 }
                 for o in 0..p.width(w) {
-                    let c = cell(p.raw(bytes), p.eof(), o);
+                    let raw = p.raw(bytes);
+                    let c = refined_cell(&levels, raw, p.eof(), o);
                     if (lo..hi).contains(&c) {
                         let raw = &p.raw(bytes)[o..];
                         let mut key = [0u8; P];
