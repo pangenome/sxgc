@@ -124,10 +124,18 @@ fn main() {
     };
     let t: &[u8] = &mmap[..];
 
-    let triples=laws::env_u64("XSA_TEST_EXTERNAL_TRIPLES",0)==1;
-    if triples || laws::env_u64("XSA_TEST_OVERLAP_STREAM",0)==1 {
-        // Experimental in-memory dictionary kernel. Do not scale it by accident.
-        if file_n > 101_000_000 || std::env::var_os("TRIE_TAP").is_some(){die("overlap fixture path: <=101 MB, product sink only");}
+    // Separate opt-in for the checked 32-bit rung1 *sink*. This does not
+    // promote either sandbox constructor (or the external window planner).
+    let resident_sink = laws::env_u64("XSA_TEST_RESIDENT_TRIPLES",0)==1;
+    let external = laws::env_u64("XSA_TEST_EXTERNAL_TRIPLES",0)==1;
+    let fixture = laws::env_u64("XSA_TEST_OVERLAP_STREAM",0)==1;
+    let triples = resident_sink || external;
+    if triples || fixture {
+        if resident_sink {
+            if external || fixture || !matches!(file_n, 100_000_503 | 1_000_000_665) || std::env::var_os("TRIE_TAP").is_some() {
+                die("resident triples: sandbox or rung1 product sink only");
+            }
+        } else if file_n > 101_000_000 || std::env::var_os("TRIE_TAP").is_some(){die("overlap fixture path: <=101 MB, product sink only");}
         let mut cutter=unit::PieceCutter::new(&out_prefix,file_n+1,laws::env_u64("CROSS_V2_PIECE_WINDOW",1100));
         let mut lcp=Vec::with_capacity(262144);let mut live=std::collections::VecDeque::new();
         let (mut base,mut u,mut ends)=(0,0,0);

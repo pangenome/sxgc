@@ -178,6 +178,10 @@ impl PieceCutter {
                 consumed as u64 + self.window
             };
             if band_no <= limit { return; }
+            if std::path::Path::new(&self.prefix).with_file_name("modeb/stop.requested").exists() {
+                eprintln!("STOP_OBSERVED where=piece-window exit=75");
+                std::process::exit(75);
+            }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
     }
