@@ -1061,6 +1061,10 @@ The pre-change 3 GB arm `climb/rung2/rust_recursive_1795385758229949849` was sto
 
 First physical-order pipeline arm `sandbox/private-pipeline-physical-1795407856085761210`: producer completed 378.23 s, monitor lost access to `/proc/<pid>/io` during exit and the service was torn down before container finalization. No identity verdict. Last producer sample 97.526 GB attributed reads; ~96.4 GB accrued while the last printed marker was SS_PAIR_DISTRIBUTE, which is printed **after** distribute returns from its pass logic, before processing that bin. Do not infer those bytes were spent on the sequential scan. New monitor tolerates exit-time EACCES and retains the last observed counters.
 
+### Cold-start full pipeline A/B, private 512 MiB hard shared cgroup
+
+`private-pipeline-physical-1795408253444069125` and `private-pipeline-dictionary-1795408675921671143` in sandbox. Both producer + finish completed and emitted the certified 100 MB SHA. Source-order: 422.27 s, 131.62 GB sampled producer-attributed reads, 543.11 MB sampled peak allocated disk (includes private corpus). Dictionary-order: 413.14 s, 109.01 GB producer reads, 558.03 MB sampled peak disk. Both reached 536870912 B cgroup peak with swap disabled, zero OOM events. One paired run: despite the isolated scan win there is **no observed whole-build win**. In each run over 98% of producer reads were sampled in intervals following a window-distribution completion marker; this is *not* a measurement of distribution's own reads. Follow up with explicit cumulative-counter boundaries inside each bin and bound the live emit row window in a separate experimental arm.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX

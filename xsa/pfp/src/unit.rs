@@ -696,6 +696,15 @@ fn append_arrivals(path: &str, arrivals: &[(u64, u32, u32, u32)]) {
 pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
     let t_all = std::time::Instant::now();
     let stride = ctx.stride;
+    let trace_io = crate::laws::env_u64("XSA_TRACE_BIN_IO", 0) != 0;
+    // Marks start (not end) of an interval. Deltas include all Rayon workers.
+    let mark = |bin: u32, stage: &str| {
+        if trace_io {
+            let io = fs::read_to_string("/proc/self/io").expect("Linux process IO counters");
+            let rb: u64 = io.lines().find_map(|s| s.strip_prefix("read_bytes: ")).unwrap().parse().unwrap();
+            eprintln!("SS_BIN_IO level_stride={} bin={} stage={} rb={} sec={:.6}", stride, bin, stage, rb, t_all.elapsed().as_secs_f64());
+        }
+    };
     let laws = ctx.laws;
     laws.stop_check("unit-enter");
     // ---- (a) THE CENSUS: the cells' exact pair masses
@@ -865,8 +874,10 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
             e as u32
         };
         if win_start_of[bin_idx as usize] == bin_idx {
+            mark(bin_idx,"distribute");
             distribute_window(ctx, bin_idx, w_end, &cell_bin);
         }
+        mark(bin_idx,"expand");
         // read + expand the bucket
         let bp = format!("{}/pbin_{}.bin", ctx.modeb_dir, bin_idx);
         let n_ent = match fs::metadata(&bp) {
@@ -900,6 +911,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
         {
             let t = ctx.t;
             use rayon::prelude::*;
+            mark(bin_idx,"sort");
             ent.par_sort_unstable_by(|a, b| {
                 let ra = a.end - a.pos;
                 let rb = b.end - b.pos;
@@ -911,6 +923,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
             });
         }
         // THE RUN SEGMENT (the equal-slice groups) + the seam belt
+        mark(bin_idx,"group");
         let mut runs: Vec<u64> = Vec::new();
         {
             let mut prev: Option<&PEnt> = None;
@@ -938,7 +951,8 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
         stats.rows_sorted += n_ent;
         stats.runs += runs.len() as u64;
         // ---- THE WINDOWS within the bin (the mass pass)
-        let win_rows_target = (laws.dial_bytes / 2 / 128).max(4096);
+        let win_rows_target = (laws.dial_bytes / 2 / 128).max(4096)
+            .min(crate::laws::env_u64("XSA_TEST_EMIT_ROWS", u64::MAX).max(4096));
         let mut win_g: Vec<u64> = vec![0];
         {
             let mut cum = 0u64;
@@ -959,6 +973,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
         }
         // the bin pre-pass (B3): re-park the previous bins' rows
         // that landed beyond their bin ends
+        mark(bin_idx,"inbound");
         let mut bin_inb: Vec<Vec<(u64, u32, u32, u32)>> =
             vec![Vec::new(); win_g.len() - 1];
         let owner_path = format!("{}/arr_owner{}.bin", ctx.modeb_dir, bin_idx);
@@ -1059,6 +1074,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
         }
         // ---- per window: L1 + L2 + L3 + the assembly
         for w_idx in 0..win_g.len() - 1 {
+            mark(bin_idx,"landing");
             laws.stop_check("window");
             let g0 = win_g[w_idx];
             let g1 = win_g[w_idx + 1];
@@ -1181,6 +1197,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
             }
             // ---- L2: the CSR (the local cross + the staged
             //      bin arrivals + the window's inbound file)
+            mark(bin_idx,"csr");
             let mut inbound: Vec<(u64, u32, u32, u32)> = Vec::new();
             {
                 let ip = format!("{}/arr_w{}_{}.bin",
@@ -1240,6 +1257,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
             }
             // ---- L3: the per-group resolved merge (the own rows
             //      rank-ordered; every arrival inserted by value)
+            mark(bin_idx,"local_merge");
             let mut final_pos: Vec<u64> = Vec::new();
             let mut final_facts: Vec<FactRow> = Vec::new();
             {
@@ -1295,6 +1313,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
             }
             // ---- THE ASSEMBLY: the rows in order -> the sink
             {
+                mark(bin_idx,"lcp_emit");
                 let span_rows = final_pos.len();
                 if span_rows > 0 {
                     let mut pout: Vec<u64> = Vec::with_capacity(span_rows);
@@ -1431,6 +1450,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
             }
         }
         // B2's DELETION LAW: the bin's inputs are gone
+        mark(bin_idx,"bin_done");
         laws.scratch_gate("bin_done");
     }
     // ---- the coverage laws + the receipts
