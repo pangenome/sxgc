@@ -1,6 +1,8 @@
 # XSA session context: causal branch reader (prototype)
 
-`xsa session DEPTH` owns one in-memory session. It reads one line and flushes one JSON reply per successful command. Bytes are hex so newline, NUL, 0x1e and 0xff are all data. `DEPTH` is the maximum query length in bytes (1..64). Malformed requests fail closed. This is a branch-only slice, not an implementation of locate, arbitrary intervals, archive lookup, eviction or durable recovery.
+`xsa session DEPTH` owns one in-memory session. It reads one line and flushes one JSON reply per successful command. Bytes are hex so newline, NUL, 0x1e and 0xff are all data. `DEPTH` is the maximum query length in bytes (1..64). Malformed requests fail closed. Supported reads are branch counts, bounded exact locate, and visible-byte dereference. This does not expose arbitrary suffix-tree navigation, MEMs, archive lookup, eviction or durable recovery.
+
+`locate HEX LO HI CAP` returns ascending `positions` for overlapping, non-crossing matches wholly in `[LO,HI)`; `0 <= LO <= HI <= visible`. It counts matches even at open EOF, unlike continuation counts. Overflow of CAP (maximum 65536) refuses the request rather than silently truncating. `byte OFFSET` reads one visible byte by logical session offset, refusing EOF. These are generic reads, not record parsing or positional joins. Sealed locate binary-searches the bounded-prefix suffix order already sorted to build m20 (now retained, one additional usize per suffix per sealed generation); it enumerates the matching interval then filters by position and document boundary. Wide intervals are not cheap even if the requested position range is narrow. The tail scans candidate starts including starts spanning the seal; work counters `sealed_rows` and `tail_starts` distinguish this work from returned matches. Counters are not latencies. `cargo test session::tests` covers ranges, overlap, caps, document boundaries, sealing and branch parity.
 
 ```
 append 6162
