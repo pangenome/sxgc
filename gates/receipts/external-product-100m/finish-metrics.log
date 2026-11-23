@@ -1,0 +1,3 @@
+SS_SCRATCH_PEAK peak_live_bytes=74913627 budget_bytes=80000000 pairs_live=0 pieces=74332299 bands=130520 columns_legal_sublinear=0 rule=amendment_b4_the_scratch_law;operator_clause_2xN;the_fat_is_named
+SS_DONE_R overlap_stream rows=100000504 total_s=510.23
+CONTAINER_FINAL bytes=107519008 sha256=6325c843c0d9aa9be00d69260aafdd794936e2e79f16174efb00c43db831f341 members=9
