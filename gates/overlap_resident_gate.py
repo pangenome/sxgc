@@ -33,11 +33,15 @@ def members(p):
     assert set(tab)=={1,4,5,7,10,11,12,13,14}; return tab
 
 def cg_info():
-    return {x:(CG/x).read_text().strip() for x in ('memory.max','memory.swap.max','memory.peak','memory.events','io.stat','cpu.stat','cpu.max')}
+    data={x:(CG/x).read_text().strip() for x in ('memory.max','memory.swap.max','memory.peak','memory.events','cpu.stat','cpu.max')}
+    data['io.stat']=(CG/'io.stat').read_text().strip() if (CG/'io.stat').exists() else None
+    return data
 
-def proc_info(pid):
+def proc_info(pid,iofile):
     p=Path('/proc')/str(pid); status=(p/'status').read_text()
-    data={k:int(v) for k,v in (l.split(': ') for l in (p/'io').read_text().splitlines())}
+    # Reopening /proc/<zombie>/io may be denied; an FD opened while live
+    # still yields final counters before wait(). Never substitute zeros.
+    iofile.seek(0); data={k:int(v) for k,v in (l.split(': ') for l in iofile.read().splitlines())}
     for k in ('VmHWM','VmRSS','RssAnon'):
         m=re.search(r'^'+k+r':\s+(\d+) kB',status,re.M); data[k]=int(m[1])*1024 if m else 0
     # comm can contain spaces. Fields 14/15 are user/system clock ticks.
@@ -72,8 +76,9 @@ def oracle(d,tools):
     start=time.monotonic(); peak=0
     with (d/'oracle.log').open('xb') as f:
         p=sp.Popen([tools/'oracle',d/'oracle-corpus'],stdout=f,stderr=f)
-        while not finished(p): peak=max(peak,proc_info(p.pid)['VmHWM']); time.sleep(.5)
-        stats=proc_info(p.pid); rc=p.wait()
+        with open(f'/proc/{p.pid}/io') as io:
+            while not finished(p): peak=max(peak,proc_info(p.pid,io)['VmHWM']); time.sleep(.5)
+            stats=proc_info(p.pid,io); rc=p.wait()
     save(d/'oracle.json',dict(rc=rc,process=stats,sampled_peak_rss=peak,cgroup=cg_info(),wall_including_wait_s=time.monotonic()-start))
     assert rc==0 and f'ORACLE rows={N+1} independent_final_rank={N+1} all_adjacent_sa_lcp_bwt_verified=1' in (d/'oracle.log').read_text()
 
@@ -94,10 +99,11 @@ def build(d,tools):
     cg0=cg_info(); env={k:v for k,v in os.environ.items() if not k.startswith(('XSA_','SS_','CROSS_','PFCK_','TRIE_','LD_PRELOAD'))}
     env.update(SS_LCP_SLICE_WINDOW='64',CROSS_V2_PIECES='1',CROSS_V2_PIECE_WINDOW='32',PFCK_SPACING='22')
     common=['--corpus',corpus,'--remap',src/'remap','--threads','2']; pref=d/'merged/frag'
-    w={}; proc={}; exitcode={}; times={}; peaks={}; logs={}; started={}; tail=None
+    w={}; proc={}; iofiles={}; exitcode={}; times={}; peaks={}; logs={}; started={}; tail=None
     def launch(name,cmd,**kwargs):
         logs[name]=(d/(name+'.log')).open('xb'); started[name]=time.monotonic()
         kwargs.setdefault('stdout',logs[name]); w[name]=sp.Popen(cmd,stderr=logs[name],**kwargs); peaks[name]=0
+        iofiles[name]=open(f'/proc/{w[name].pid}/io')
     def request(reason):
         if not flag.exists():say('STOP_REQUEST',reason); flag.write_text(reason+'\n')
         md=d/'merged/modeb';
@@ -119,7 +125,7 @@ def build(d,tools):
                        env=dict(env,LD_PRELOAD=str(tools/'monitor.so'),XSA_GATE_PRIVATE_STOP=str(flag)))
             for name,p in w.items():
                 if name in exitcode: continue
-                done=finished(p); info=proc_info(p.pid);proc[name]=info;peaks[name]=max(peaks[name],info['VmHWM'])
+                done=finished(p); info=proc_info(p.pid,iofiles[name]);proc[name]=info;peaks[name]=max(peaks[name],info['VmHWM'])
                 if done:
                     exitcode[name]=p.wait();times[name]=time.monotonic()-started[name];say('EXIT',name,exitcode[name],round(times[name],3))
                     if exitcode[name]: request(f'{name} rc={exitcode[name]}')
@@ -134,7 +140,7 @@ def build(d,tools):
             if sum(x['read_bytes'] for x in proc.values())>20*N or time.monotonic()-start>3600:request('runaway read/time guard')
             if len(exitcode)==len(w):break
             time.sleep(.2)
-    for f in logs.values():f.close()
+    for f in (*logs.values(),*iofiles.values()):f.close()
     rc=dict(rc=exitcode,sampled_wall_s=times,phase_sampled_shared=samples,process=proc,sampled_peak_rss=peaks,
             counted_sampled_peak=counted_peak,counted_at_peak=at_peak,individual_sampled_peaks=each,whole_dir_sampled_allocated=disk_peak,
             wall_s=time.monotonic()-start,shared_before=cg0,shared_after=cg_info(),stop=flag.exists())

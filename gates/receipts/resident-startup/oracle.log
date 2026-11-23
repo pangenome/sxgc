@@ -1,0 +1,1 @@
+oracle: gates/overlap_prefix_oracle.cpp:12: int main(int, char**): Assertion `feof(stdin)&&!ferror(stdin)&&rows' failed.
