@@ -1,0 +1,49 @@
+{
+  "order": "physical",
+  "overlap_binned": "1",
+  "overlap_pair_cap": "1398101",
+  "overlap_stream": "1",
+  "cgroup_mib": 288,
+  "position_bounds": "0",
+  "position_merge": "0",
+  "integer_landing": "0",
+  "read_guard": 15000000000,
+  "over_reads": false,
+  "emit_rows": "dial_default",
+  "wall_s": 114.2,
+  "rc": [
+    0,
+    0
+  ],
+  "peak_disk": 293494784,
+  "disk_guard": 838860800,
+  "peak_memory": 301989888,
+  "events": {
+    "low": 0,
+    "high": 0,
+    "max": 34208,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0
+  },
+  "proc_attributed_rw": {
+    "producer": [
+      9301426176,
+      574746624
+    ],
+    "finish": [
+      350285824,
+      1274826752
+    ]
+  },
+  "refaults": 2336402,
+  "major_faults": 1037518,
+  "prefix": "16",
+  "rounds": "4",
+  "carry": "1",
+  "phase_advice": "1",
+  "finish_stop_monitor": true,
+  "cancel_test": false,
+  "stop_requested_s": null,
+  "sha256": "6325c843c0d9aa9be00d69260aafdd794936e2e79f16174efb00c43db831f341"
+}
