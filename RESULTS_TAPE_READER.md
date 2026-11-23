@@ -1079,6 +1079,10 @@ First physical-order pipeline arm `sandbox/private-pipeline-physical-17954078560
 
 512 MiB: 177.92 s, 29.1 MB producer reads. `private-pipeline-physical-1795409800841498881` at 384 MiB: exact container, 1953.83 s, 597.59 GB producer-attributed reads (437.08 GB in landing, 75.50 GB LCP/emit, 69.82 GB local merge). `private-pipeline-physical-1795411754877183178` at 256 MiB: deliberately stopped in bin 68 after 13.83 TB reads; producer and finish both observed cooperative stop (75), no OOM, no product verdict. Smaller emit windows alone do not control locality of the landing probes. New experiment: compare actual occurrence prefix at text position to bin boundary directly (`XSA_TEST_POSITION_BOUNDS`), without chasing SA/rank/phrase references on each probe. Default off; use a cumulative process-read stop guard to cap negative experiments.
 
+### Direct-position landing A/B, 384 MiB
+
+`sandbox/private-pipeline-physical-1795434155732163682`, same 100 MB input/physical scan/131072 emit rows/384 MiB shared hard cap as `...-1795409800841498881`. Producer and finish rc=0, certified product SHA. Wall 1953.83 → 883.12 s; producer-attributed reads 597.59 → 286.84 GB; landing 437.08 → 88.24 GB. Local merge now largest at 111.97 GB (baseline 69.82), LCP/emit 66.20 GB. Whole directory sampled peak 571867136 B below guard, zero OOM. One before/after pair, not a cache-independent bound. Next isolated change: local arrival sort + linear merge by text position instead of reconstructing own rows and inserting arrivals individually. Both switches experimental and off by default.
+
 ## AMENDMENT R — levels + W5 gated (the port order state)
 
 levels.rs (built from the frozen L spec): gated EXACT vs the C++ LX

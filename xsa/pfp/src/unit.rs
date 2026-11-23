@@ -719,6 +719,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
     let t_all = std::time::Instant::now();
     let stride = ctx.stride;
     let trace_io = crate::laws::env_u64("XSA_TRACE_BIN_IO", 0) != 0;
+    let merge_positions = crate::laws::env_u64("XSA_TEST_POSITION_MERGE", 0) == 1;
     // Marks start (not end) of an interval. Deltas include all Rayon workers.
     let mark = |bin: u32, stage: &str| {
         if trace_io {
@@ -1295,6 +1296,32 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
                         }
                         own_off += own_n;
                         continue;
+                    }
+                    if merge_positions {
+                        // Own rows are already ordered. Decode each inbound occurrence once,
+                        // sort only the arrivals and merge the two streams without inserts.
+                        let cmp = |ap:u64, af:FactRow, bp:u64, bf:FactRow| {
+                            if af.v == bf.v && af.o == bf.o { af.n.cmp(&bf.n) }
+                            else { ctx.t[ap as usize..].cmp(&ctx.t[bp as usize..]) }
+                        };
+                        let mut arrivals = Vec::with_capacity(arr_b-arr_a);
+                        for &(pid, v, oi) in &arr_buf[arr_a..arr_b] {
+                            let occ = ctx.olist[oi as usize] as usize;
+                            let n = if occ+1 < ctx.m as usize {ctx.rank[occ+1]+1} else {0};
+                            let o = pid as u32;
+                            arrivals.push((ctx.pstart[occ]+u64::from(o),FactRow{v,o,n}));
+                        }
+                        arrivals.sort_unstable_by(|&(p,f),&(q,h)| cmp(p,f,q,h));
+                        let end = own_off+own_n;
+                        for (p,f) in arrivals {
+                            while own_off<end && !cmp(own.pos[own_off],own.facts[own_off],p,f).is_gt() {
+                                final_pos.push(own.pos[own_off]); final_facts.push(own.facts[own_off]); own_off+=1;
+                            }
+                            final_pos.push(p); final_facts.push(f);
+                        }
+                        final_pos.extend_from_slice(&own.pos[own_off..end]);
+                        final_facts.extend_from_slice(&own.facts[own_off..end]);
+                        own_off=end; continue;
                     }
                     let mut merged: Vec<u64> =
                         own.pos[own_off..own_off + own_n].to_vec();
