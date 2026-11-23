@@ -164,13 +164,17 @@ fn run_prefixed<const P: usize>(
     eprintln!("SS_OVERLAP_PHASE dedup_scatter");
     let mut words: Vec<Word> = Vec::with_capacity(m);
     let mut pa = vec![0i32; m];
+    let mut dict_adj = Vec::with_capacity(m);
     for (r, j) in indices.into_iter().enumerate() {
         if r % 32768 == 0 {
             check("dedup");
         }
         let j = j as usize;
         let (raw, eof) = key(j);
-        if words.last().map(|&p| (p.raw(bytes), p.eof())) != Some((raw, eof)) {
+        let old = words.last().map(|&p| (p.raw(bytes), p.eof()));
+        let h = old.map_or(0, |(a, _)| lcp(a, raw));
+        if !old.is_some_and(|(a, e)| h == a.len() && h == raw.len() && e == eof) {
+            dict_adj.push(u32::try_from(h).unwrap());
             words.push(Word {
                 pos: s[j] as u32,
                 span: raw.len() as u32 | ((eof as u32) << 31),
@@ -182,6 +186,9 @@ fn run_prefixed<const P: usize>(
     check("parse-kernel");
     let k = words.len();
     let (ps, pl) = order(&pa, k as i32);
+    // At the first differing phrase, lexicographic IDs are strictly ordered.
+    // Its exact byte LCP is the minimum over intervening dictionary neighbors.
+    let dict_min = BlockMin::new(dict_adj);
     let mut aligned = vec![0; m];
     for (r, &p) in ps.iter().enumerate() {
         let j = p as usize;
@@ -192,15 +199,12 @@ fn run_prefixed<const P: usize>(
                 check("aligned-lcp");
             }
             aligned[r] = u32::try_from(
-                s[i + z] - s[i]
-                    + lcp(
-                        words[pa[i + z] as usize].raw(bytes),
-                        words[pa[j + z] as usize].raw(bytes),
-                    ),
+                s[i + z] - s[i] + dict_min.between(pa[i + z] as usize, pa[j + z] as usize),
             )
             .expect("aligned LCP width");
         }
     }
+    drop(dict_min);
     drop(pl);
     let rmq = BlockMin::new(aligned);
     let mut loc = vec![0u32; k + 1];
