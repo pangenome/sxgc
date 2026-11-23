@@ -309,6 +309,7 @@ pub struct UnitStats {
 
 struct RowMach<'a> {
     c: &'a LevelCtx<'a>,
+    position_bounds: bool,
 }
 
 impl<'a> RowMach<'a> {
@@ -329,6 +330,13 @@ impl<'a> RowMach<'a> {
         r.nrank = if (occ as u64) + 1 < c.m {
             c.rank[occ as usize + 1] + 1
         } else { 0 };
+        if self.position_bounds {
+            let end = c.pstart[occ as usize] + u64::from(c.dlen[p as usize]);
+            let bytes = &c.t[end as usize..(end+4).min(c.file_n) as usize];
+            let mut word = [0;4]; word[..bytes.len()].copy_from_slice(bytes);
+            r.cont4 = u32::from_be_bytes(word);
+            return r;
+        }
         // the continuation's first 4 bytes (BE; 0-padded), from the
         // next phrases' content at their references
         let mut c4: u32 = 0;
@@ -585,6 +593,20 @@ impl<'a> RowMach<'a> {
     fn cmp_bound(&self, a: &BandRow, pbx: u64, eb: u64) -> i32 {
         let c = self.c;
         let occ_a = (a.occ_o >> 32) as usize;
+        if self.position_bounds {
+            // Compare the occurrence's bounded prefix at its text position, not
+            // via rank -> SA -> parse ID -> reference chains on every probe.
+            let pos = self.row_pos(a) as usize;
+            let bound = &c.t[pbx as usize..eb as usize];
+            let suffix = &c.t[pos..c.file_n as usize];
+            let k = suffix.len().min(bound.len());
+            return match suffix[..k].cmp(&bound[..k]) {
+                std::cmp::Ordering::Less => -1, std::cmp::Ordering::Greater => 1,
+                std::cmp::Ordering::Equal if k < bound.len() => -1,
+                std::cmp::Ordering::Equal if k == suffix.len() && a.nrank == 0 => 0,
+                std::cmp::Ordering::Equal => 1,
+            };
+        }
         let va = c.pa[occ_a] as usize;
         let pa = c.dref[va] + (a.occ_o & 0xFFFFFFFF);
         let ra = c.dlen[va] as u64 - (a.occ_o & 0xFFFFFFFF);
@@ -790,7 +812,7 @@ pub fn run_level(ctx: &mut LevelCtx, sink: &mut Sink) -> UnitStats {
               bin_target, pbk, window_count, sort_ahead, budget);
     laws.scratch_gate("pairs_plan");
     // ---- the run state
-    let mach = RowMach { c: ctx };
+    let mach = RowMach { c: ctx, position_bounds: crate::laws::env_u64("XSA_TEST_POSITION_BOUNDS", 0) == 1 };
     let mut cutter: Option<PieceCutter> = match sink {
         Sink::Product { ref out_prefix, .. } => {
             let window = crate::laws::env_u64("CROSS_V2_PIECE_WINDOW", 1100);
