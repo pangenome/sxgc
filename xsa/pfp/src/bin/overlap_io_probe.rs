@@ -38,12 +38,8 @@ fn main() {
     };
     let mut rows = 0;
     let mut hash = 0u64;
-    overlap::construct(&bytes, &check, |p, h| {
-        let b = if p == 0 {
-            256
-        } else {
-            bytes[p as usize - 1] as u64
-        };
+    overlap::construct(&bytes, &check, |p, h, raw| {
+        let b = if p == 0 { 256 } else { u64::from(raw) };
         for k in [p, h, b] {
             hash = hash
                 .rotate_left(19)
@@ -55,7 +51,11 @@ fn main() {
             check("emit");
         }
         if rows % 1_000_000 == 0 {
-            eprintln!("CHECKPOINT rows={rows} digest={hash:016x} reads={} wall={:.3}", read_bytes(), start.elapsed().as_secs_f64());
+            eprintln!(
+                "CHECKPOINT rows={rows} digest={hash:016x} reads={} wall={:.3}",
+                read_bytes(),
+                start.elapsed().as_secs_f64()
+            );
         }
         if rows == limit {
             let reads = read_bytes();

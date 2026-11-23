@@ -37,7 +37,12 @@ fn main() {
     overlap::construct(
         &t,
         |_| {},
-        |p, h| {
+        |p, h, raw| {
+            assert_eq!(
+                raw,
+                if p == 0 { 0 } else { t[p as usize - 1] },
+                "predecessor row {r}"
+            );
             assert_eq!((p, h), (sa[r] as u64, l[r] as u64), "row {r}");
             r += 1;
         },

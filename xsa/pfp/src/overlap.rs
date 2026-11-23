@@ -69,7 +69,7 @@ impl Min {
 }
 #[path = "overlap_binned.rs"]
 mod binned;
-pub fn construct(bytes: &[u8], check: impl Fn(&str), mut emit: impl FnMut(u64, u64)) {
+pub fn construct(bytes: &[u8], check: impl Fn(&str), mut emit: impl FnMut(u64, u64, u8)) {
     let w = 8;
     let n = bytes.len();
     let mut s = vec![0usize];
@@ -158,7 +158,7 @@ pub fn construct(bytes: &[u8], check: impl Fn(&str), mut emit: impl FnMut(u64, u
     drop(ps);
     drop(pa);
     let rank = |j: usize| if j + 1 == m { 0 } else { prank[j + 1] + 1 };
-    emit(n as u64, 0);
+    emit(n as u64, 0, bytes.last().copied().unwrap_or(0));
     let mut rows = 0;
     let mut reps = 0;
     let mut head = 0;
@@ -173,7 +173,12 @@ pub fn construct(bytes: &[u8], check: impl Fn(&str), mut emit: impl FnMut(u64, u
                 } else {
                     head
                 };
-                emit((s[occ[idx]] + off) as u64, l as u64);
+                let pos = s[occ[idx]] + off;
+                emit(
+                    pos as u64,
+                    l as u64,
+                    if pos == 0 { 0 } else { bytes[pos - 1] },
+                );
                 rows += 1;
                 prior = Some(r);
                 if idx + 1 < end {

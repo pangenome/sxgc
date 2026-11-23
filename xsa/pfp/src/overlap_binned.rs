@@ -125,7 +125,7 @@ pub(super) fn run(
     w: usize,
     s: Vec<usize>,
     check: &impl Fn(&str),
-    emit: impl FnMut(u64, u64),
+    emit: impl FnMut(u64, u64, u8),
 ) {
     match std::env::var("XSA_OVERLAP_INLINE_PREFIX").as_deref() {
         Ok("16") => run_prefixed::<16>(bytes, w, s, check, emit),
@@ -140,7 +140,7 @@ fn run_prefixed<const P: usize>(
     w: usize,
     s: Vec<usize>,
     check: &impl Fn(&str),
-    mut emit: impl FnMut(u64, u64),
+    mut emit: impl FnMut(u64, u64, u8),
 ) {
     let n = bytes.len();
     let m = s.len() - 1;
@@ -214,6 +214,24 @@ fn run_prefixed<const P: usize>(
     for v in 0..k {
         loc[v + 1] += loc[v];
     }
+    let carry = std::env::var("XSA_OVERLAP_CARRY_PRED").as_deref() == Ok("1");
+    let mask = if carry {
+        assert!(
+            k < 1 << 24 && m < 1 << 24,
+            "packed predecessor sandbox width"
+        );
+        0xffffff
+    } else {
+        u32::MAX
+    };
+    let starts: Vec<u8> = if carry {
+        s[..m]
+            .iter()
+            .map(|&p| if p == 0 { 0 } else { bytes[p - 1] })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut cur = loc.clone();
     // Each emit-list item needs only its source position and next-rank. Build
     // both directly in next-rank order: no inverse parse SA or starts in emit.
@@ -224,9 +242,13 @@ fn run_prefixed<const P: usize>(
             .filter_map(|(r, &x)| (x as usize).checked_sub(1).map(|j| (j, (r + 1) as u32))),
     ) {
         let v = pa[j] as usize;
-        occ[cur[v] as usize] = (s[j] as u32, r);
+        occ[cur[v] as usize] = (
+            s[j] as u32,
+            r | if carry { u32::from(starts[j]) << 24 } else { 0 },
+        );
         cur[v] += 1;
     }
+    drop(starts);
     drop(cur);
     drop(ps);
     drop(pa);
@@ -305,22 +327,34 @@ fn run_prefixed<const P: usize>(
     let mut prev: Option<([u8; P], Pair)> = None;
     let mut head = 0;
     let mut len = 0;
-    emit(n as u64, 0);
+    emit(n as u64, 0, bytes.last().copied().unwrap_or(0));
     let mut flush =
-        |q: &mut BinaryHeap<Reverse<(u32, usize, usize, u32)>>, len: usize, head: usize| {
+        |q: &mut BinaryHeap<Reverse<(u32, usize, usize, u32, u8)>>, len: usize, head: usize| {
             let mut prior = None;
-            while let Some(Reverse((r, i, end, o))) = q.pop() {
+            while let Some(Reverse((r, i, end, o, pred))) = q.pop() {
                 let h = if let Some(last) = prior {
                     assert!(0 < last && last < r);
                     len - w + rmq.between(last as usize - 1, r as usize - 1)
                 } else {
                     head
                 };
-                emit(u64::from(occ[i].0) + u64::from(o), h as u64);
+                let pos = occ[i].0 + o;
+                let raw = if carry {
+                    if o == 0 {
+                        (occ[i].1 >> 24) as u8
+                    } else {
+                        pred
+                    }
+                } else if pos == 0 {
+                    0
+                } else {
+                    bytes[pos as usize - 1]
+                };
+                emit(u64::from(pos), h as u64, raw);
                 rows += 1;
                 prior = Some(r);
                 if i + 1 < end {
-                    q.push(Reverse((occ[i + 1].1, i + 1, end, o)));
+                    q.push(Reverse((occ[i + 1].1 & mask, i + 1, end, o, pred)));
                 }
             }
         };
@@ -348,7 +382,12 @@ fn run_prefixed<const P: usize>(
                         let mut key = [0u8; P];
                         let used = P.min(raw.len());
                         key[..used].copy_from_slice(&raw[..used]);
-                        pairs.push((key, (v, o as u32)));
+                        let tag = if carry && o != 0 {
+                            u32::from(p.raw(bytes)[o - 1]) << 24
+                        } else {
+                            0
+                        };
+                        pairs.push((key, (v | tag, o as u32)));
                     }
                 }
             }
@@ -360,11 +399,18 @@ fn run_prefixed<const P: usize>(
                 if checks % 65536 == 0 {
                     check("descriptor-sort");
                 }
-                ka.cmp(kb)
-                    .then_with(|| tail(bytes, &words, *a).cmp(&tail(bytes, &words, *b)))
+                ka.cmp(kb).then_with(|| {
+                    tail(bytes, &words, (a.0 & mask, a.1)).cmp(&tail(
+                        bytes,
+                        &words,
+                        (b.0 & mask, b.1),
+                    ))
+                })
             });
             eprintln!("SS_OVERLAP_PHASE emit window={windows}");
-            for (key, id) in pairs {
+            for (key, tagged) in pairs {
+                let pred = (tagged.0 >> 24) as u8;
+                let id = (tagged.0 & mask, tagged.1);
                 let (raw, eof) = tail(bytes, &words, id);
                 let old = prev.map(|(k, p)| (k, tail(bytes, &words, p)));
                 if !old.is_some_and(|(k, t)| k == key && t == (raw, eof)) {
@@ -384,7 +430,13 @@ fn run_prefixed<const P: usize>(
                 }
                 let v = id.0 as usize;
                 let i = loc[v] as usize;
-                heap.push(Reverse((occ[i].1, i, loc[v + 1] as usize, id.1)));
+                heap.push(Reverse((
+                    occ[i].1 & mask,
+                    i,
+                    loc[v + 1] as usize,
+                    id.1,
+                    pred,
+                )));
             }
         }
         lo = hi;
