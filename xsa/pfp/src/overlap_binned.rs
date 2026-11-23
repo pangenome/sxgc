@@ -1,8 +1,80 @@
 //! Experimental bounded descriptor sort. The corpus is the only phrase-byte store.
 //! Workspace here bounds descriptor count, NOT all phrase/parse metadata.
-use super::{order, Min};
+use super::order;
 use std::{cmp::Reverse, collections::BinaryHeap};
 type Pair = (u32, u32);
+// The sandbox path requires n<i32::MAX. Byte LCPs therefore fit u32.
+// Keep the exact leaves, but index only minima of 16 consecutive ranks.
+struct BlockMin {
+    leaves: Vec<u32>,
+    tree: Vec<u32>,
+    blocks: usize,
+}
+impl BlockMin {
+    const B: usize = 16;
+    fn new(leaves: Vec<u32>) -> Self {
+        let blocks = leaves.len().div_ceil(Self::B);
+        let mut tree = vec![u32::MAX; 2 * blocks];
+        for (i, b) in leaves.chunks(Self::B).enumerate() {
+            tree[blocks + i] = *b.iter().min().unwrap();
+        }
+        for i in (1..blocks).rev() {
+            tree[i] = tree[i * 2].min(tree[i * 2 + 1]);
+        }
+        Self {
+            leaves,
+            tree,
+            blocks,
+        }
+    }
+    fn between(&self, x: usize, y: usize) -> usize {
+        assert!(x < y && y < self.leaves.len());
+        let (lo, hi) = (x + 1, y + 1);
+        let (a, b) = (lo.div_ceil(Self::B), hi / Self::B);
+        if a >= b {
+            return *self.leaves[lo..hi].iter().min().unwrap() as usize;
+        }
+        let mut v = u32::MAX;
+        for &t in self.leaves[lo..a * Self::B]
+            .iter()
+            .chain(&self.leaves[b * Self::B..hi])
+        {
+            v = v.min(t);
+        }
+        let (mut l, mut r) = (a + self.blocks, b + self.blocks);
+        while l < r {
+            if l % 2 == 1 {
+                v = v.min(self.tree[l]);
+                l += 1;
+            }
+            if r % 2 == 1 {
+                r -= 1;
+                v = v.min(self.tree[r]);
+            }
+            l /= 2;
+            r /= 2;
+        }
+        v as usize
+    }
+}
+#[cfg(test)]
+mod block_tests {
+    use super::*;
+    #[test]
+    fn every_interval() {
+        for n in 1..99 {
+            let t = BlockMin::new((0..n).map(|i| ((i * 37 + n) % 53) as u32).collect());
+            for x in 0..n {
+                for y in x + 1..n {
+                    assert_eq!(
+                        t.between(x, y),
+                        *t.leaves[x + 1..=y].iter().min().unwrap() as usize
+                    );
+                }
+            }
+        }
+    }
+}
 const ALPH: usize = 258;
 #[derive(Copy, Clone)]
 struct Word {
@@ -93,16 +165,19 @@ pub(super) fn run(
             if r % 32768 == 0 {
                 check("aligned-lcp");
             }
-            aligned[r] = s[i + z] - s[i]
-                + lcp(
-                    words[pa[i + z] as usize].raw(bytes),
-                    words[pa[j + z] as usize].raw(bytes),
-                );
+            aligned[r] = u32::try_from(
+                s[i + z] - s[i]
+                    + lcp(
+                        words[pa[i + z] as usize].raw(bytes),
+                        words[pa[j + z] as usize].raw(bytes),
+                    ),
+            )
+            .expect("aligned LCP width");
         }
     }
     drop(pl);
-    let rmq = Min::new(aligned);
-    let mut loc = vec![0usize; k + 1];
+    let rmq = BlockMin::new(aligned);
+    let mut loc = vec![0u32; k + 1];
     for &v in &pa {
         loc[v as usize + 1] += 1;
     }
@@ -113,7 +188,7 @@ pub(super) fn run(
     let mut occ = vec![0u32; m];
     for j in std::iter::once(m - 1).chain(ps.iter().filter_map(|&x| (x as usize).checked_sub(1))) {
         let v = pa[j] as usize;
-        occ[cur[v]] = j as u32;
+        occ[cur[v] as usize] = j as u32;
         cur[v] += 1;
     }
     drop(cur);
@@ -220,8 +295,8 @@ pub(super) fn run(
                     reps += 1;
                 }
                 let v = id.0 as usize;
-                let i = loc[v];
-                heap.push(Reverse((rank(occ[i]), i, loc[v + 1], id.1)));
+                let i = loc[v] as usize;
+                heap.push(Reverse((rank(occ[i]), i, loc[v + 1] as usize, id.1)));
             }
         }
         lo = hi;
