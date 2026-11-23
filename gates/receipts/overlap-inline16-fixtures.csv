@@ -1,0 +1,9 @@
+fixture,verified_sa_lcp_rows,descriptor_cap,prefix_bytes
+adv,20001,524288,16
+docsep,6291457,524288,16
+eofrun,6291457,524288,16
+internsep,6291457,524288,16
+mixed,6291457,524288,16
+period2,6291457,524288,16
+r0,6291457,524288,16
+single,6291457,524288,16
