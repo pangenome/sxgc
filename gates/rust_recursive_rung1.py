@@ -1,4 +1,4 @@
-"""Rust recursive ladder (default 1 GB; --rung 2 selects 3 GB). Fresh scratch only."""
+"""Rust recursive ladder (1 GB, 3 GB run14e, 10 GB lcpruns reference). Fresh scratch only."""
 import argparse
 import hashlib
 import struct
@@ -8,7 +8,7 @@ import subprocess
 import time
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--rung', type=int, choices=[1,2], default=1)
+parser.add_argument('--rung', type=int, choices=[1,2,3], default=1)
 rung = parser.parse_args().rung
 root = Path('/mnt/nvme2n1/erikg/TAPEREADER')
 base = root / 'climb' / f'rung{rung}'
@@ -16,11 +16,17 @@ if rung == 1:
     corpus, remap = base / 'pile-slice1g.bin', base / 'remap-256.bin'
     finish = Path('/tmp/xsa_finish_cur'); finish_flags = ['--with-chi','--container-stream']
     anchor = base/'run_wide/product.sxi2'
-else:
+elif rung == 2:
     corpus, remap = root.parent/'KEYRADIX/c3g.txt', root/'bins-p1/run14/remap-256.bin'
     finish = root/'bins-p1/bin/xsa_finish'; finish_flags = []
     anchor = root/'bins-p1/run14e/reader/product.sxi2'
-assert corpus.stat().st_size == (1000000665 if rung == 1 else 3000000000) and remap.stat().st_size == 256
+else:
+    refdir = root.parent/'lcpruns-gate/g3/scratch'
+    corpus, remap = root.parent/'pf-10gb.txt', refdir/'remap-256.bin'
+    anchor = refdir/'pf-10gb.sxi2'
+    assert hashlib.sha256(remap.read_bytes()).hexdigest() == '0ce35ac950b471c0da0e9a7773a6d82871d53d5de5a496bb9ffda6078b896780'
+    finish = Path('/tmp/xsa_finish_cur'); finish_flags = ['--with-chi','--container-stream']
+assert corpus.stat().st_size == {1:1000000665,2:3000000000,3:10000000000}[rung] and remap.stat().st_size == 256
 assert finish.is_file() and anchor.is_file()
 r = base / f'rust_recursive_{time.time_ns()}'
 r.mkdir(); (r/'bands').mkdir(); (r/'merged').mkdir()
@@ -28,7 +34,7 @@ print('arm=', r, flush=True)
 binpath = Path(__file__).resolve().parents[1] / 'xsa/target/release/pfp_sort_r'
 common = ['--corpus',corpus,'--remap',remap,'--threads','24']
 prefix = r/'merged/frag'
-env = dict(os.environ, XSA_SA_CEILING=('4000000' if rung == 1 else '12000000'), XSA_BAND_WORKSPACE_BYTES='12000000000', SS_LCP_SLICE_WINDOW='1000000', CROSS_V2_PIECES='1', CROSS_V2_PIECE_WINDOW='1100000')
+env = dict(os.environ, XSA_SA_CEILING={1:'4000000',2:'12000000',3:'40000000'}[rung], XSA_BAND_WORKSPACE_BYTES='12000000000', SS_LCP_SLICE_WINDOW='1000000', CROSS_V2_PIECES='1', CROSS_V2_PIECE_WINDOW='1100000')
 start = time.monotonic()
 with (r/'run.log').open('wb') as pl, (r/'finish.log').open('wb') as fl:
     prod = subprocess.Popen([binpath,*common,'--out-prefix',prefix,'--bands',r/'bands','--memory-gb','196','--budget-bytes','64000000000','--scratch-budget-bytes',str(2*corpus.stat().st_size)],stdout=pl,stderr=pl,env=env)
