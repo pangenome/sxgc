@@ -2571,7 +2571,12 @@ fn trie_boundary_gate(trie: &Trie, cross_doc: bool, what: &str) {
     }
 }
 
+include!("ctx_workspace.inc.rs");
+
 pub fn command(cmd: &str, args: &[String]) {
+    if cmd == "branch-of" && args.len()==2 && args[1]=="--workspace" {
+        return workspace_pages(&args[0]).unwrap_or_else(|e| die(&e.to_string()));
+    }
     match cmd {
         // FORWARD-ONLY: `ctx-build` (build m20 into a container that lacks it) is
         // GONE. Its input was a container WITHOUT m20, and the one container shape
