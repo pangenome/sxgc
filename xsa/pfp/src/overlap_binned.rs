@@ -112,6 +112,21 @@ pub(super) fn run(
     w: usize,
     s: Vec<usize>,
     check: &impl Fn(&str),
+    emit: impl FnMut(u64, u64),
+) {
+    match std::env::var("XSA_OVERLAP_INLINE_PREFIX").as_deref() {
+        Ok("16") => run_prefixed::<16>(bytes, w, s, check, emit),
+        Ok("0") | Err(_) => run_prefixed::<0>(bytes, w, s, check, emit),
+        _ => panic!("supported inline prefix: 0 or 16 bytes"),
+    }
+}
+// Zero padding preserves weak lexicographic order even for NUL bytes. A
+// prefix collision (including padding collisions) always compares finite keys.
+fn run_prefixed<const P: usize>(
+    bytes: &[u8],
+    w: usize,
+    s: Vec<usize>,
+    check: &impl Fn(&str),
     mut emit: impl FnMut(u64, u64),
 ) {
     let n = bytes.len();
@@ -223,7 +238,7 @@ pub(super) fn run(
     let mut rows = 0;
     let mut reps = 0;
     let mut windows = 0;
-    let mut prev = None;
+    let mut prev: Option<([u8; P], Pair)> = None;
     let mut head = 0;
     let mut len = 0;
     emit(n as u64, 0);
@@ -264,33 +279,42 @@ pub(super) fn run(
                 for o in 0..p.width(w) {
                     let c = cell(p.raw(bytes), p.eof(), o);
                     if (lo..hi).contains(&c) {
-                        pairs.push((v, o as u32));
+                        let raw = &p.raw(bytes)[o..];
+                        let mut key = [0u8; P];
+                        let used = P.min(raw.len());
+                        key[..used].copy_from_slice(&raw[..used]);
+                        pairs.push((key, (v, o as u32)));
                     }
                 }
             }
             assert_eq!(pairs.len(), mass);
             windows += 1;
             eprintln!("SS_OVERLAP_PHASE window_sort window={windows} pairs={mass}");
-            pairs.sort_unstable_by(|&a, &b| {
+            pairs.sort_unstable_by(|(ka, a), (kb, b)| {
                 checks = checks.wrapping_add(1);
                 if checks % 65536 == 0 {
                     check("descriptor-sort");
                 }
-                tail(bytes, &words, a).cmp(&tail(bytes, &words, b))
+                ka.cmp(kb)
+                    .then_with(|| tail(bytes, &words, *a).cmp(&tail(bytes, &words, *b)))
             });
             eprintln!("SS_OVERLAP_PHASE emit window={windows}");
-            for id in pairs {
+            for (key, id) in pairs {
                 let (raw, eof) = tail(bytes, &words, id);
-                let old = prev.map(|p| tail(bytes, &words, p));
-                if old != Some((raw, eof)) {
+                let old = prev.map(|(k, p)| (k, tail(bytes, &words, p)));
+                if !old.is_some_and(|(k, t)| k == key && t == (raw, eof)) {
                     flush(&mut heap, len, head);
-                    head = old.map_or(0, |(a, e)| {
-                        let h = lcp(a, raw);
+                    head = old.map_or(0, |(k, (a, e))| {
+                        let h = if k != key {
+                            lcp(&k, &key).min(a.len()).min(raw.len())
+                        } else {
+                            lcp(a, raw)
+                        };
                         assert!(h < a.len() || e, "proper prefix in overlap representatives");
                         h
                     });
                     len = raw.len() + usize::from(eof);
-                    prev = Some(id);
+                    prev = Some((key, id));
                     reps += 1;
                 }
                 let v = id.0 as usize;
