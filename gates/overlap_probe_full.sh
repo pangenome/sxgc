@@ -5,8 +5,11 @@ set -eu
 sandbox=/mnt/nvme2n1/erikg/TAPEREADER/sandbox
 r=$(mktemp -d "$sandbox/full-stream-XXXXXX"); echo "receipt=$r"
 for a in reference pressure; do
+ if [[ $a == reference && ${BANKED_REFERENCE:-0} == 1 ]]; then
+  mkdir "$r/reference"; cp gates/receipts/full-stream-FD0ekD/reference.log "$r/reference/run.log"; echo 'reused full-stream-FD0ekD' >"$r/reference/config"; continue
+ fi
  p=0; rounds=0; cap=4194304; mib=384; carry=0
- if [[ $a == pressure ]]; then p=16; rounds=4; cap=1398101; mib=192; carry=1; fi
+ if [[ $a == pressure ]]; then p=16; rounds=4; cap=${INLINE_PAIRS:-1398101}; mib=192; carry=1; [[ $cap =~ ^[0-9]+$ ]] && ((cap>0 && cap<=1398101)) || exit 2; fi
  d=$r/$a; mkdir "$d"; cp --reflink=never "$sandbox/pile-slice100.bin" "$d/corpus"
  python3 gates/private_cold.py "$d/corpus"; rows=$(($(stat -c%s "$d/corpus")+1)); [[ $rows == 100000504 ]]
  echo "prefix=$p rounds=$rounds pair_cap=$cap carry=$carry producer_mib=$mib rows=$rows" >"$d/config"
