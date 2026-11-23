@@ -100,18 +100,26 @@ fn tail<'a>(bytes: &'a [u8], words: &[Word], (v, o): Pair) -> (&'a [u8], bool) {
 fn lcp(a: &[u8], b: &[u8]) -> usize {
     a.iter().zip(b).take_while(|(x, y)| x == y).count()
 }
-fn refined_cell(levels: &[Vec<u32>], raw: &[u8], eof: bool, o: usize) -> usize {
-    let mut c = cell(raw, eof, o);
-    for (level, base) in levels.iter().enumerate() {
-        c = base[c] as usize
-            + if base[c + 1] - base[c] > 1 {
-                raw.get(o + 2 + level)
-                    .map_or(eof as usize, |&b| 2 + b as usize)
-            } else {
-                0
-            };
+const LEAF: u32 = 1 << 31;
+fn leaf_node(tree: &[u32], raw: &[u8], eof: bool, o: usize) -> usize {
+    let mut i = cell(raw, eof, o);
+    let mut d = o + 2;
+    while tree[i] & LEAF == 0 {
+        i = tree[i] as usize + raw.get(d).map_or(eof as usize, |&b| 2 + b as usize);
+        d += 1;
     }
-    c
+    i
+}
+fn number(tree: &mut [u32], counts: &[usize], id: usize, hist: &mut Vec<usize>) {
+    let base = tree[id];
+    if base & LEAF != 0 {
+        tree[id] = LEAF | hist.len() as u32;
+        hist.push(counts[id]);
+    } else {
+        for c in 0..ALPH {
+            number(tree, counts, base as usize + c, hist);
+        }
+    }
 }
 fn cell(raw: &[u8], eof: bool, o: usize) -> usize {
     let a = 2 + raw[o] as usize;
@@ -289,33 +297,28 @@ fn run_prefixed<const P: usize>(
     assert!(cap > 0);
     let largest = hist.iter().copied().max().unwrap();
     // Refine only oversized parent cells; avoid a dense 258^3 histogram.
-    let mut levels = Vec::new();
-    let mut table_bytes = 0usize;
+    let mut tree = Vec::new();
+    let mut depth = 0;
     while hist.iter().copied().max().unwrap() > cap {
         assert!(
-            levels.len() < 32,
+            depth < 32,
             "oversize cell requires more than 32 refinements"
         );
-        table_bytes += (hist.len() + 1) * 4;
-        assert!(
-            table_bytes <= 8 * 1024 * 1024,
-            "refinement maps exceed 8 MiB"
-        );
-        let mut base = Vec::with_capacity(hist.len() + 1);
-        let parent = hist;
-        let mut size = 0;
-        for &count in &parent {
-            base.push(u32::try_from(size).unwrap());
-            size += if count > cap { ALPH } else { 1 };
+        depth += 1;
+        let old = hist.len();
+        if tree.is_empty() {
+            tree.resize(old, LEAF);
         }
-        base.push(u32::try_from(size).unwrap());
-        assert!(size <= 1048576, "refined histogram exceeds slot guard");
-        hist = vec![0; size];
-        for c in 0..parent.len() {
-            if parent[c] <= cap {
-                hist[base[c] as usize] = parent[c];
+        for i in 0..old {
+            if hist[i] > cap {
+                let size = tree.len() + ALPH;
+                assert!(size <= 1048576, "refinement node budget");
+                tree[i] = tree.len() as u32;
+                tree.resize(size, LEAF);
+                hist[i] = 0;
             }
         }
+        hist.resize(tree.len(), 0);
         for v in phys.clone() {
             let p = words[v as usize];
             if v % 32768 == 0 {
@@ -323,18 +326,25 @@ fn run_prefixed<const P: usize>(
             }
             let raw = p.raw(bytes);
             for o in 0..p.width(w) {
-                let c = refined_cell(&levels, raw, p.eof(), o);
-                if parent[c] > cap {
-                    hist[base[c] as usize
-                        + raw
-                            .get(o + 2 + levels.len())
-                            .map_or(p.eof() as usize, |&b| 2 + b as usize)] += 1;
+                let c = leaf_node(&tree, raw, p.eof(), o);
+                if c >= old {
+                    hist[c] += 1;
                 }
             }
         }
         let refined = *hist.iter().max().unwrap();
-        eprintln!("SS_OVERLAP_REFINE parent_max={largest} child_max={refined} slots={size}");
-        levels.push(base);
+        eprintln!(
+            "SS_OVERLAP_REFINE depth={depth} parent_max={largest} child_max={refined} nodes={}",
+            tree.len()
+        );
+    }
+    if !tree.is_empty() {
+        let counts = hist;
+        hist = Vec::with_capacity(tree.len());
+        for root in 0..ALPH * ALPH {
+            number(&mut tree, &counts, root, &mut hist);
+        }
+        assert_eq!(counts.iter().sum::<usize>(), hist.iter().sum::<usize>());
     }
 
     let mut heap = BinaryHeap::new();
@@ -400,7 +410,11 @@ fn run_prefixed<const P: usize>(
                 }
                 for o in 0..p.width(w) {
                     let raw = p.raw(bytes);
-                    let c = refined_cell(&levels, raw, p.eof(), o);
+                    let c = if tree.is_empty() {
+                        cell(raw, p.eof(), o)
+                    } else {
+                        (tree[leaf_node(&tree, raw, p.eof(), o)] ^ LEAF) as usize
+                    };
                     if (lo..hi).contains(&c) {
                         let raw = &p.raw(bytes)[o..];
                         let mut key = [0u8; P];
