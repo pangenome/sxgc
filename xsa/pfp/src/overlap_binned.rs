@@ -207,6 +207,25 @@ fn run_prefixed<const P: usize>(
     drop(dict_min);
     drop(pl);
     let rmq = BlockMin::new(aligned);
+    // Lexical IDs have served their purpose: ps and the aligned byte minima
+    // are final. Renumber by first occurrence while visiting the parse once.
+    // Occurrence lists built below then share the physical dictionary layout.
+    let mut remap = vec![u32::MAX; k];
+    let mut physical = Vec::with_capacity(k);
+    for (j, v) in pa.iter_mut().enumerate() {
+        let old = *v as usize;
+        let id = &mut remap[old];
+        if *id == u32::MAX {
+            *id = physical.len() as u32;
+            assert_eq!(words[old].pos as usize, s[j]);
+            physical.push(words[old]);
+        }
+        *v = *id as i32;
+    }
+    assert_eq!(physical.len(), k);
+    drop(remap);
+    words = physical;
+    let phys = 0..k as u32;
     let mut loc = vec![0u32; k + 1];
     for &v in &pa {
         loc[v as usize + 1] += 1;
@@ -254,11 +273,9 @@ fn run_prefixed<const P: usize>(
     drop(pa);
     drop(s);
     // Census and regeneration in physical phrase order, not random reference order.
-    let mut phys: Vec<u32> = (0..k as u32).collect();
-    phys.sort_unstable_by_key(|&v| words[v as usize].pos);
     eprintln!("SS_OVERLAP_PHASE pair_census");
     let mut hist = vec![0usize; ALPH * ALPH];
-    for &v in &phys {
+    for v in phys.clone() {
         let p = words[v as usize];
         if v % 32768 == 0 {
             check("pair-census");
@@ -299,7 +316,7 @@ fn run_prefixed<const P: usize>(
                 hist[base[c] as usize] = parent[c];
             }
         }
-        for &v in &phys {
+        for v in phys.clone() {
             let p = words[v as usize];
             if v % 32768 == 0 {
                 check("refine-census");
@@ -369,7 +386,7 @@ fn run_prefixed<const P: usize>(
         assert!(hi > lo);
         if mass > 0 {
             let mut pairs = Vec::with_capacity(mass);
-            for &v in &phys {
+            for v in phys.clone() {
                 let p = words[v as usize];
                 if v % 32768 == 0 {
                     check("distribute");
