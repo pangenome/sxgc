@@ -1636,7 +1636,7 @@ fn cont_lcp_w5(mach: &RowMach, a: &FactRow, b: &FactRow, e: u64) -> u64 {
 }
 
 // THE SXLS LCP SLICE (the finish's handshake, transliterated)
-fn emit_lcp_slice(bands_dir: &str, u: u64, rows: usize,
+pub(crate) fn emit_lcp_slice(bands_dir: &str, u: u64, rows: usize,
                    lcpv: &[u64], rank_base: u64,
                    lcp_live: &mut std::collections::VecDeque<u64>,
                    window: u64, laws: &Laws) {
