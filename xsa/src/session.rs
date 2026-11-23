@@ -9,6 +9,7 @@ trait BranchRead {
 }
 struct Sealed {
     member: Option<OwnedMember>,
+    positions: Vec<usize>, // seal's depth-limited suffix ordering (includes EOF)
     open_suffix: Vec<u8>,
 }
 impl BranchRead for Sealed {
@@ -47,9 +48,55 @@ impl Live {
             sealed_ends: 0,
             base: Sealed {
                 member: None,
+                positions: Vec::new(),
                 open_suffix: vec![],
             },
         }
+    }
+    // Positions are logical byte offsets. Restrict the WHOLE occurrence to [lo,hi).
+    fn locate(
+        &self,
+        p: &[u8],
+        lo: usize,
+        hi: usize,
+        cap: usize,
+    ) -> Result<(Vec<usize>, usize, usize), String> {
+        if p.is_empty() || p.len() > self.depth || lo > hi || hi > self.text.len() || cap > 65536 {
+            return Err("invalid locate pattern/range/cap".into());
+        }
+        let cmp = |i: usize| self.text[i..self.cut.min(i + p.len())].cmp(p);
+        let sa = &self.base.positions;
+        let a = sa.partition_point(|&i| cmp(i).is_lt());
+        let b = sa.partition_point(|&i| !cmp(i).is_gt());
+        let mut out = Vec::new();
+        let mut push = |i: usize| -> Result<(), String> {
+            let doc = self.ends.partition_point(|&e| e <= i);
+            if i >= lo
+                && i + p.len() <= hi
+                && self.ends.get(doc).is_none_or(|&end| i + p.len() <= end)
+            {
+                if out.len() == cap {
+                    return Err("locate result cap exceeded".into());
+                }
+                out.push(i);
+            }
+            Ok(())
+        };
+        for &i in &sa[a..b] {
+            push(i)?;
+        }
+        let start = lo.max(self.cut.saturating_sub(p.len() - 1));
+        let mut scanned = 0;
+        if hi >= p.len() {
+            for i in start..=hi - p.len() {
+                scanned += 1;
+                if &self.text[i..i + p.len()] == p {
+                    push(i)?;
+                }
+            }
+        }
+        out.sort_unstable();
+        Ok((out, b - a, scanned))
     }
     fn end(&mut self) -> Result<(), String> {
         if self.ends.last().copied().unwrap_or(0) == self.text.len() {
@@ -66,7 +113,7 @@ impl Live {
         let prefix = |i: usize| &t[i..t.len().min(i + self.depth + 1)];
         let mut positions: Vec<_> = (0..=t.len()).collect();
         positions.sort_unstable_by(|&a, &b| prefix(a).cmp(prefix(b)));
-        for i in positions {
+        for &i in &positions {
             let doc = self.ends.partition_point(|&e| e <= i);
             let end = self.ends.get(doc).copied().unwrap_or(t.len());
             builder.feed(
@@ -85,6 +132,7 @@ impl Live {
             .max(t.len().saturating_sub(self.depth));
         self.base = Sealed {
             member: Some(OwnedMember::new(member)),
+            positions,
             open_suffix: t[start..].to_vec(),
         };
         self.cut = t.len();
@@ -198,6 +246,22 @@ pub fn command(args: &[String]) -> Result<(), String> {
                 session.seal();
                 serde_json::json!({"sealed":session.cut})
             }
+            ["locate", hex, lo, hi, cap] => {
+                let num = |s: &str| s.parse::<usize>().map_err(|_| "invalid unsigned offset");
+                let (positions, sealed_rows, tail_starts) =
+                    session.locate(&unhex(hex)?, num(lo)?, num(hi)?, num(cap)?)?;
+                serde_json::json!({"positions":positions,"sealed_rows":sealed_rows,"tail_starts":tail_starts})
+            }
+            ["byte", pos] => {
+                let pos = pos
+                    .parse::<usize>()
+                    .map_err(|_| "invalid unsigned offset")?;
+                let b = session
+                    .text
+                    .get(pos)
+                    .ok_or("offset outside visible prefix")?;
+                serde_json::json!({"byte":b})
+            }
             ["branch", s] => {
                 let p = unhex(s)?;
                 if p.is_empty() || p.len() > depth {
@@ -236,6 +300,39 @@ mod tests {
             }
         }
         h
+    }
+    #[test]
+    fn locate_ranges_cuts_and_boundaries() {
+        for cut in 0..=7 {
+            let mut s = Live::new(3);
+            for (i, b) in b"aaa\x00aaa".iter().enumerate() {
+                if i == cut {
+                    s.seal();
+                }
+                if i == 5 {
+                    s.end().unwrap();
+                }
+                s.text.push(*b);
+            }
+            if cut == 7 {
+                s.seal();
+            }
+            for lo in 0..=7 {
+                for hi in lo..=7 {
+                    for p in [b"a".as_slice(), b"aa", b"aaa", b"\x00a"] {
+                        let want = (lo..hi)
+                            .filter(|&i| {
+                                i + p.len() <= hi
+                                    && !(i < 5 && i + p.len() > 5)
+                                    && s.text[i..].starts_with(p)
+                            })
+                            .collect::<Vec<_>>();
+                        assert_eq!(s.locate(p, lo, hi, 32).unwrap().0, want);
+                    }
+                }
+            }
+            assert!(s.locate(b"a", 0, 7, 1).is_err());
+        }
     }
     #[test]
     fn pending_generation_preserves_new_bytes_and_ends() {
