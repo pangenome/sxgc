@@ -1,4 +1,4 @@
-//! Fixture-only row43 producer; no resident/default dispatch.
+//! Fixture and fixed 100 MB component row43 producer; no resident/default dispatch.
 #[path = "../overlap_min.rs"]
 mod min;
 #[path = "../overlap_range_order.rs"]
@@ -177,17 +177,30 @@ fn main() {
         component_plan(&args[2]);
         return;
     }
-    let compact = args.get(1).is_some_and(|s| s == "--fixture-compact");
+    let component = args.get(1).is_some_and(|s| s == "--component-100m");
+    let compact = component || args.get(1).is_some_and(|s| s == "--fixture-compact");
     let required = if compact { 7 } else { 6 };
-    assert!(
+    if component {
+        assert_eq!(args.len(), 4, "--component-100m COLUMNS STOP");
+    } else {
+        assert!(
         (required..=required + 1).contains(&args.len()) && (compact || args[1] == "--fixture"),
         "--fixture COLUMNS STOP ARRAY_BYTES ARENA_BYTES [EXPECTED_RANKS] or --fixture-compact COLUMNS STOP ARRAY_BYTES ARENA_BYTES CURSOR_CAP [EXPECTED_RANKS]");
+    }
     let dir = Path::new(&args[2]);
     let flag = Path::new(&args[3]);
     stop(flag);
-    let grant: usize = args[4].to_str().unwrap().parse().unwrap();
-    let arena: usize = args[5].to_str().unwrap().parse().unwrap();
-    assert!(usize::BITS == 64 && arena <= grant && grant <= 200_000_000);
+    let grant: usize = if component {
+        320 << 20
+    } else {
+        args[4].to_str().unwrap().parse().unwrap()
+    };
+    let arena: usize = if component {
+        64 << 20
+    } else {
+        args[5].to_str().unwrap().parse().unwrap()
+    };
+    assert!(usize::BITS == 64 && arena <= grant && (component || grant <= 200_000_000));
     let open = |name| {
         let f = File::open(dir.join(name)).unwrap();
         let len = usize::try_from(f.metadata().unwrap().len()).unwrap();
@@ -195,7 +208,16 @@ fn main() {
     };
     let (input, mb) = open("parse.u32");
     let m = mb / 4;
-    assert!(m > 0 && m <= FIXTURE && 4 * m == mb && mb <= grant);
+    assert!(
+        m > 0
+            && (if component {
+                m == 3_170_531
+            } else {
+                m <= FIXTURE
+            })
+            && 4 * m == mb
+            && mb <= grant
+    );
     let mut ids = Vec::with_capacity(m);
     {
         let mut f = BufReader::with_capacity(8192, input);
@@ -209,7 +231,11 @@ fn main() {
     assert!(k <= m);
     let eof = ids[m - 1] as usize;
     let (mut file, t) = open("dictionary.packed");
-    assert!(t <= 16 * FIXTURE);
+    if component {
+        assert_eq!((k, t), (2_689_467, 127_708_112));
+    } else {
+        assert!(t <= 16 * FIXTURE);
+    }
     let parse = wide::plan(m as u64, k as u64, wide::Workspace::SixK, grant as u64).unwrap();
     let phases = phase_bytes(m as u64, k as u64, t as u64, arena as u64);
     eprintln!(
@@ -222,7 +248,11 @@ fn main() {
     );
     let bins = (1 << BITS) * size_of::<range::Load>();
     let (cap, workspace) = if compact {
-        let requested: usize = args[6].to_str().unwrap().parse().unwrap();
+        let requested: usize = if component {
+            8192
+        } else {
+            args[6].to_str().unwrap().parse().unwrap()
+        };
         assert!(requested > 0, "empty cursor cap");
         let cap = requested.min(k);
         (
@@ -274,7 +304,14 @@ fn main() {
         starts.push(starts[j].checked_add(width(v) as u64).unwrap());
     }
     let n = starts[m];
-    assert!(n <= FIXTURE as u64, "text exceeds fixture cap");
+    if component {
+        assert_eq!(
+            (n, (0..k).map(width).sum::<usize>()),
+            (100_000_503, 95_434_516)
+        );
+    } else {
+        assert!(n <= FIXTURE as u64, "text exceeds fixture cap");
+    }
     assert!(counts.iter().all(|&x| x > 0), "unused lexical ID");
     stop(flag);
     let pl = wide::ParsePlcp::build(&ids, ranks, grant as u64).unwrap();
