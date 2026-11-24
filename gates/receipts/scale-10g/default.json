@@ -1,0 +1,30 @@
+{
+  "arrays_gib": 140,
+  "build_cpus": 4,
+  "counted_limit": 20000000000,
+  "counted_peak": 15090631800,
+  "finish_threads": 2,
+  "harness_revision": "076980318c30e576dd2a2729be07506731253121",
+  "normalized_speed_target_met": true,
+  "prepared_s": 3326.4373236801475,
+  "profile": "packed-10g-l2-b1-t4-r1",
+  "raw_s": 3652.559418001212,
+  "reference_sha256": "26cfb2de0cccab8a8712a332956d58693dcbbb34373a9031a7bbaaa08cc504c9",
+  "rung": "10g",
+  "selection": "complete 1/2/4 sweep: within 3% of fastest pick lower shared CPU, then fewer lanes",
+  "shared_gib": 200,
+  "swap_max": 0,
+  "verifier_cpus": 1,
+  "verifier_mib": 14000,
+  "worker_revision": "8513cccb7d0ade1f4917752e3e8be33c3f7e49e3",
+  "worker_sha256": {
+    "bitmap.so": "ed0b651a8907e0be70ac9e029d1684c08997de633ae2cef6ed3844007c80bc1f",
+    "lexparse": "fd17c0fa38da23f59738294a0272c0668af1f1a95ad9f26c83787e9a5b11c4cf",
+    "monitor.so": "fe5173c7d32215bdc7d41e59fd70edf059621ce83b38fb87b2e4d73ebbcb960a",
+    "oracle": "5231446d19b42c8f502cafd4a7a283f80171c24fdafd693bb98a9540aa579ddc",
+    "overlap_resident": "bcdb6796e3d6270680389c828eaed36c83eddb31bf0a48c95fc4bec80bd6960c",
+    "pfp_sort_r": "3aaa0ad2142c12a623b8c42c02081856764c1c0ab121913294522c4560e819d4",
+    "remap": "0ce35ac950b471c0da0e9a7773a6d82871d53d5de5a496bb9ffda6078b896780",
+    "xsa_finish_cur": "9a0bde6739ba1819f8d298beca2c8a9bf53480fab19f637b49cf6e3c8e200fa7"
+  }
+}

@@ -1,0 +1,3 @@
+PASS exclusive private tmpfs bitmap, mmap visibility, unchanged neighbor, cleanup and invalid-fd refusal
+PASS compact lexical buckets: 6 independent byte-exact word tapes and ID strings; wrong rung, reuse and stop refused
+PASS 7 full brute row43 streams; truncated, extra, narrow, invalid wide extent, BWT and stop/rung refusals
