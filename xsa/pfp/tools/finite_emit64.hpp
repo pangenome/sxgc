@@ -4,9 +4,9 @@
 namespace finiteemit {
 struct Counts {U rows=0,groups=0,multi=0,bitmaps=0,max_tie=0,max_mass=0;double sort=0,gather=0,produce=0;};
 struct Emit {
- const Route& ix;Planner plan;const rawview::View& v;const uint8_t* text;U n,m;int team;rawview::Stop stop;
+ const Route& ix;const std::vector<U>* learned;Planner plan;const rawview::View& v;const uint8_t* text;U n,m;int team;rawview::Stop stop;
  unsigned ob=0,payload=0;bool pair=false;U value_mask=0,arrays=0,packets=0,waves=0;double sort_wall=0,stream_wall=0,queue_blocked=0;Counts totals;Sink sink_stats;
- explicit Emit(const Route& index):ix(index),plan(index),v(index.v),text(index.text),n(index.n),m(index.m),team(index.team),stop(index.stop){
+ explicit Emit(const Route& index,const std::vector<U>* prefixes=nullptr):ix(index),learned(prefixes),plan(index),v(index.v),text(index.text),n(index.n),m(index.m),team(index.team),stop(index.stop){
   U longest=0;for(auto& s:ix.stripe)longest=std::max(longest,s.longest);need(longest,"no owned words");ob=std::bit_width(longest-1);unsigned rb=std::bit_width(m-1);
   pair=rb+ob<=64;payload=pair?rb+ob:std::bit_width(ix.pages.count*PAGE-1);value_mask=mask(payload);
  }
@@ -22,7 +22,7 @@ struct Emit {
   while(h<len && text[a.p+h]==text[b.p+h])++h;
   // Proper-prefix exhaustion between DIFFERENT finite keys can only be the EOF suffix.
   need((h==a.len && a.terminal && h<b.len) || (h<len && text[a.p+h]<text[b.p+h]),"unordered/split finite key seam");return h;}
- unsigned skip(U b)const{const auto& z=ix.bands[b];return z.hi==z.lo+1 && z.lo%257!=0?2:(z.lo/257==(z.hi-1)/257?1:0);}
+ U skip(U b)const{if(learned)return learned->at(b);const auto& z=ix.bands[b];return z.hi==z.lo+1 && z.lo%257!=0?2:(z.lo/257==(z.hi-1)/257?1:0);}
  void order(const Job& j,U* a,Counts& c)const{if(j.exact)return;double ts=omp_get_wtime();const U d=j.d;U i=0,known=std::max<U>(skip(j.band),j.depth);
   plan.visit(j,[&](U r,U off,U tok,Span s){need(i<d,"sort arena overrun");a[i++]=pack(r,off,tok,known,s);});need(i==d,"sort arena underflow");
   c.gather=omp_get_wtime()-ts;U compares=0;std::sort(a,a+d,[&](U x,U y){if(!(++compares%32768))stop.check();U hx=x&~value_mask,hy=y&~value_mask;return hx!=hy?hx<hy:cmp(span(x),span(y))<0;});c.sort=omp_get_wtime()-ts;}
@@ -50,7 +50,7 @@ struct Emit {
  static Big emit_arrays(U n,U m,U team,U nb,U pg,U slots){Big live=Big(rawview::budget(n,m,team))+Pages::bytes(pg)+Big(team)*nb*sizeof(Layout)+CELL*(sizeof(Band)+sizeof(unsigned))+team*sizeof(Stripe);
   return live+8*Big(slots)+team*(Marks::bytes(m)+sizeof(Pipe)+(256<<10))+2*Big(Planner::LIMIT)*sizeof(Job)+(2<<20);}
  void run(int sink,U max_slots,U grant){need(n<(U(1)<<43) && max_slots,"row ABI or empty arena");stop.check();U slots=std::min(max_slots,v.stats.owned);
-  need(ix.bands.capacity()==CELL,"unexpected vector reservation");arrays=narrow(std::max<Big>(ix.array_bound,emit_arrays(n,m,team,ix.bands.size(),ix.pages.count,slots)));need(arrays<=grant,"ordered stream array grant");plan.build(slots);const auto& jobs=plan.jobs;
+  need(ix.bands.capacity()==CELL,"unexpected vector reservation");arrays=narrow(std::max<Big>(ix.array_bound,emit_arrays(n,m,team,ix.bands.size(),ix.pages.count,slots)+(learned?8*Big(learned->capacity()):0)));need(arrays<=grant,"ordered stream array grant");plan.build(slots);const auto& jobs=plan.jobs;
   std::vector<U> arena(slots);std::vector<Marks> marks;marks.reserve(team);for(int i=0;i<team;++i)marks.emplace_back(m);
   int flags=fcntl(sink,F_GETFL);need(flags>=0 && !fcntl(sink,F_SETFL,flags|O_NONBLOCK),"nonblocking row sink");Span prev{};Row first=row(n,0,text[n-1]);send(sink,&first,1,stop,sink_stats);
   for(U lo=0,hi;lo<jobs.size();lo=hi){std::array<U,65> at{};hi=lo;while(hi<jobs.size() && hi-lo<U(team)){U i=hi-lo,d=jobs[hi].exact?0:jobs[hi].d;if(d>slots-at[i])break;at[i+1]=at[i]+d;++hi;}

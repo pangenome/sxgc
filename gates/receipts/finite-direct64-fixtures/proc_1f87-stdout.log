@@ -1,0 +1,5 @@
+build=/tmp/finite-direct64-sanitized-ycij1l
+PASS 960 independent page/fragment streams; 16 early high endings, 16 mixed low columns, 80 empty slices, no padding amplification in file extent
+PASS 45 exact sampled layouts/full byte streams at 1/2/4 workers, 6 certified pre-open scratch refusals, 1 mixed page/fragment payloads, 10 budget-limited splitter counts and 3 skewed >8192-slot ties
+PASS one-shot direct gate bounds, prior score unchanged, mechanism miss retained, invalid wire bound refused
+PASS matched stream controls, timing miss preserved, no promotion on missing raw-row witness, fixed source and scratch proofs

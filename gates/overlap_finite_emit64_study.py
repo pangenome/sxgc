@@ -74,22 +74,26 @@ def setup(d,end):
     w=d/'parse.u32';need(w.stat().st_nlink==1 and not w.samefile(PARSE) and s.sha(w)==P_SHA,'witness retirement');w.unlink();r.update(after=s.grant(192<<20,1),rank_sha256=hout.hexdigest(),private_stats={k:list(s.identity(d/k)) for k in ('raw','oracle-raw','inverse.u64')},source_hashes=p['source_hashes']);s.save(d/'setup.json',r)
 def checked_inputs(d):
     x=load(d,'setup.json');need(not (d/'parse.u32').exists() and x['private_stats']=={k:list(s.identity(d/k)) for k in ('raw','oracle-raw','inverse.u64')} and not (d/'raw').samefile(d/'oracle-raw'),'private inputs drift')
-def unit(d,end,w,role,until):
+def unit(d,end,w,role,until,script=Path(__file__).resolve()):
     mem,cpu=(RAM,4) if role=='emit' else (ORACLE,1)
-    return ['systemd-run','--user','--quiet','--wait','--pipe','--collect','-p',f'MemoryMax={mem}','-p','MemorySwapMax=0','-p',f'CPUQuota={100*cpu}%','-p','Nice=10','-p','IOAccounting=yes','-p','LimitCORE=0','-p','LimitSTACK=1M','-p',f'RuntimeMaxSec={max(1,until-int(time.time())+5)}','-p','TimeoutStopSec=3','/usr/bin/python3','-BE',str(Path(__file__).resolve()),'meter',str(d),str(end),str(w),role,str(until)]
+    return ['systemd-run','--user','--quiet','--wait','--pipe','--collect','-p',f'MemoryMax={mem}','-p','MemorySwapMax=0','-p',f'CPUQuota={100*cpu}%','-p','Nice=10','-p','IOAccounting=yes','-p','LimitCORE=0','-p','LimitSTACK=1M','-p',f'RuntimeMaxSec={max(1,until-int(time.time())+5)}','-p','TimeoutStopSec=3','/usr/bin/python3','-BE',str(script),'meter',str(d),str(end),str(w),role,str(until)]
 def meter(d,end,w,role,until):
-    p=authority(d,end);tools(d);checked_inputs(d);need(w in (4,1) and role in ('emit','oracle') and load(d,f'cold{w}.json')['arm_deadline']==until<=end and not (d/f'{role}{w}.json').exists(),'arm identity');prod=role=='emit';mem,cpu=(RAM,4) if prod else (ORACLE,1);aff=p['cores'][:4] if prod else p['cores'][4:];caps=(12*N,BOUND+(8<<20)) if prod else (2*N,4<<20);before=s.grant(mem,cpu);stop=d/'stop.requested';name=f'{role}{w}';ph=None;reason=None;rss=count=alloc=0
+    p=authority(d,end);tools(d);checked_inputs(d);need(w in (4,1) and role in ('emit','oracle') and load(d,f'cold{w}.json')['arm_deadline']==until<=end and not (d/f'{role}{w}.json').exists(),'arm identity');stop=d/'stop.requested'
+    cmd=[d/'emit',d/'raw',d/'inverse.u64',d/f'route{w}.ef',w,ARRAYS,OTHER,TARGET,SLOTS,stop,until] if role=='emit' else [d/'oracle','--component-100m',d/'oracle-raw',stop]
+    native(d,w,role,until,p['cores'],cmd,BOUND)
+def native(d,w,role,until,cores,cmd,bound):
+    prod=role=='emit';mem,cpu=(RAM,4) if prod else (ORACLE,1);aff=cores[:4] if prod else cores[4:];caps=(12*N,bound+(8<<20)) if prod else (2*N,4<<20);before=s.grant(mem,cpu);stop=d/'stop.requested';name=f'{role}{w}';ph=None;reason=None;rss=count=alloc=0
     for path in (s.CG,*s.CG.parents):
         if path==Path('/sys/fs/cgroup'):break
         lim=(path/'memory.max').read_text().strip();quota,period=(path/'cpu.max').read_text().split();need((lim=='max' or int(lim)>=mem) and (quota=='max' or int(quota)>=cpu*int(period)),'ancestor resource limit')
-    cmd=[d/'emit',d/'raw',d/'inverse.u64',d/f'route{w}.ef',w,ARRAYS,OTHER,TARGET,SLOTS,stop,until] if prod else [d/'oracle','--component-100m',d/'oracle-raw',stop];r=dict(before=before,argv=list(map(str,cmd)),affinity=aff,io_caps=caps,status='INCOMPLETE');env=dict(PATH=os.defpath,LC_ALL='C',OMP_THREAD_LIMIT='4',OMP_DYNAMIC='FALSE',OMP_STACKSIZE='1M',OMP_PROC_BIND='FALSE',OMP_WAIT_POLICY='PASSIVE',GOMP_SPINCOUNT='0');start=time.monotonic()
+    r=dict(before=before,argv=list(map(str,cmd)),affinity=aff,io_caps=caps,status='INCOMPLETE');env=dict(PATH=os.defpath,LC_ALL='C',OMP_THREAD_LIMIT='4',OMP_DYNAMIC='FALSE',OMP_STACKSIZE='1M',OMP_PROC_BIND='FALSE',OMP_WAIT_POLICY='PASSIVE',GOMP_SPINCOUNT='0');start=time.monotonic()
     try:
         with (d/(name+'.log')).open('xb') as log:
             ph=sp.Popen(list(map(str,cmd)),stdin=sp.DEVNULL if prod else None,stdout=None if prod else log,stderr=log,env=env,preexec_fn=lambda:os.sched_setaffinity(0,aff));need(os.sched_getaffinity(ph.pid)==set(aff),'native affinity')
             with open(f'/proc/{ph.pid}/io') as io:
                 while True:
                     finished=s.finished(ph);x=s.proc_info(ph.pid,io);rss=max(rss,x['VmHWM']);logical,physical=use(d);count=max(count,logical);alloc=max(alloc,physical);di=s.io_delta(s.stat_io(before['io.stat']),s.current_io(s.CG));traffic=[(x['read_bytes'],x['write_bytes'])]+[(z['rbytes'],z['wbytes']) for z in (di or {}).values()]
-                    if time.time()>=until or stop.exists() or logical>BOUND or shutil.disk_usage(d).free<256<<20 or any(a>caps[0] or b>caps[1] for a,b in traffic):reason='scratch/IO/stop/deadline';stop.touch(exist_ok=True)
+                    if time.time()>=until or stop.exists() or logical>bound or shutil.disk_usage(d).free<256<<20 or any(a>caps[0] or b>caps[1] for a,b in traffic):reason='scratch/IO/stop/deadline';stop.touch(exist_ok=True)
                     if finished:break
                     time.sleep(.12)
             rc=ph.wait();r.update(rc=rc,wall_s=time.monotonic()-start,process=x,sampled_rss=rss,counted_sampled=count,allocated_including_raw_copies=alloc,stop=reason)
@@ -104,11 +108,13 @@ def pair(d,end,w):
         checked_pair(d,4);f=d/'route4.ef';need(list(s.identity(f))==load(d,'emit4.json')['route_stat'] and f.stat().st_nlink==1,'closed route payload changed');f.unlink()
     t=time.monotonic()
     for k in ('raw','oracle-raw','inverse.u64'):s.cold(d/k)
-    until=min(end-(340 if w==4 else 10),int(time.time())+(390 if w==4 else 560));s.save(d/f'cold{w}.json',dict(wall_s=time.monotonic()-t,resident_pages=0,arm_deadline=until,inputs=['raw','inverse.u64','oracle-raw']));stop=d/'stop.requested';rc=oc=None;size=None
+    until=min(end-(340 if w==4 else 10),int(time.time())+(390 if w==4 else 560));s.save(d/f'cold{w}.json',dict(wall_s=time.monotonic()-t,resident_pages=0,arm_deadline=until,inputs=['raw','inverse.u64','oracle-raw']));pipeline(d,w,until,unit(d,end,w,'emit',until),unit(d,end,w,'oracle',until));checked_pair(d,w);print(f'FINITE_EMIT64_CHECKED w={w} rows={N+1}',flush=True)
+def pipeline(d,w,until,emit_cmd,oracle_cmd):
+    stop=d/'stop.requested';rc=oc=None;size=None
     with (d/f'pair{w}.log').open('xb') as log:
-        start=time.monotonic();pp=sp.Popen(unit(d,end,w,'emit',until),stdout=sp.PIPE,stderr=log);oo=None
+        start=time.monotonic();pp=sp.Popen(emit_cmd,stdout=sp.PIPE,stderr=log);oo=None
         try:
-            size=fcntl.fcntl(pp.stdout,fcntl.F_GETPIPE_SZ);need(size<=1<<20,'row pipe reservation');oo=sp.Popen(unit(d,end,w,'oracle',until),stdin=pp.stdout,stdout=log,stderr=sp.STDOUT);pp.stdout.close();idle=0
+            size=fcntl.fcntl(pp.stdout,fcntl.F_GETPIPE_SZ);need(size<=1<<20,'row pipe reservation');oo=sp.Popen(oracle_cmd,stdin=pp.stdout,stdout=log,stderr=sp.STDOUT);pp.stdout.close();idle=0
             while pp.poll() is None or oo.poll() is None:
                 if pp.poll() not in (0,None) or oo.poll() not in (0,None):stop.touch(exist_ok=True)
                 guard(d,until)
@@ -118,7 +124,6 @@ def pair(d,end,w):
             pp.stdout.close()
             if sys.exc_info()[0]:stop.touch(exist_ok=True)
             rc=pp.wait();oc=oo.wait() if oo else None;s.save(d/f'pair{w}.json',dict(emitter=rc,oracle=oc,prepared_to_verified_EOF_s=time.monotonic()-start,pipe_bytes=size))
-    checked_pair(d,w);print(f'FINITE_EMIT64_CHECKED w={w} rows={N+1}',flush=True)
 def checked_pair(d,w):
     p=load(d,f'pair{w}.json');need(p['emitter']==p['oracle']==0 and (d/f'oracle{w}.log').read_text().strip()==f'VERIFIED rows={N+1} final_rank={N+1} narrow_sha256={old.DIGEST}','independent row proof missing')
     return p

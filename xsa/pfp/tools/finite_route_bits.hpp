@@ -24,6 +24,8 @@ inline void transfer(int fd,bool wr,U at,void* data,U n){
 }
 struct Layout {
  U count=0, rows=0, low_at=0,high_at=0,used_high=0; Shape fmt;
+ // Optional second extents for the subpage fragments. UINT64_MAX = legacy contiguous column.
+ U low_tail=UINT64_MAX,high_tail=UINT64_MAX;
  U end()const{return narrow(Big(high_at)+8*Big(fmt.high));}
  void place(U at,U universe){fmt=shape(universe,count);low_at=at;high_at=narrow(Big(at)+8*Big(fmt.low));}
 };
@@ -44,16 +46,21 @@ struct Encoder {
  }
  void finish(int fd,Layout& s){need(seen==s.count,"missing postings");if(filled)low.put(fd,s.low_at,s.fmt.low,low_word);
   if(seen)high.put(fd,s.high_at,s.fmt.high,high_word);
-  low.flush(fd,s.low_at);high.flush(fd,s.high_at);s.used_high=high.sent;need(low.sent==s.fmt.low && high.sent<=s.fmt.high,"EF extents");}
+  // Whole-page interiors have exclusive file pages. Leave only the packed end fragments
+  // for a single sequential writer; a short high stream can also end inside its own interior.
+  if(s.low_tail==UINT64_MAX || low.sent<s.fmt.low/BUF*BUF)low.flush(fd,s.low_at);
+  if(s.high_tail==UINT64_MAX || high.sent<s.fmt.high/BUF*BUF)high.flush(fd,s.high_at);
+  s.used_high=high.sent+high.used;need(low.sent+low.used==s.fmt.low && s.used_high<=s.fmt.high,"EF extents");}
 };
 struct InBuf {
- int fd;U pos,end;std::array<U,BUF> buf;U index=0,size=0;
- InBuf(int file,U at,U length):fd(file),pos(at),end(at+8*length){}
- U get(){if(index==size){need(pos<end,"truncated posting bits");size=std::min<U>(BUF,(end-pos)/8);transfer(fd,false,pos,buf.data(),8*size);pos+=8*size;index=0;}return buf[index++];}
+ int fd;U pos=0,end,at,full,tail;std::array<U,BUF> buf;U index=0,size=0;
+ InBuf(int file,U start,U used,U capacity,U fragment):fd(file),end(used),at(start),full(fragment==UINT64_MAX?capacity:capacity/BUF*BUF),tail(fragment){need(used<=capacity,"read outside posting slice");}
+ U get(){if(index==size){need(pos<end,"truncated posting bits");bool main=pos<full;U edge=main?std::min(full,end):end;size=std::min<U>(BUF,edge-pos);
+   transfer(fd,false,main?at+8*pos:tail+8*(pos-full),buf.data(),8*size);pos+=size;index=0;}return buf[index++];}
  bool empty()const{return pos==end && index==size;}
 };
 template<class Visit> void decode(int fd,const Layout& s,U universe,const rawview::Stop& stop,Visit visit){
- InBuf low(fd,s.low_at,s.fmt.low),high(fd,s.high_at,s.used_high);U bits=0,seen=0,prev=0;unsigned have=0,l=s.fmt.l;
+ InBuf low(fd,s.low_at,s.fmt.low,s.fmt.low,s.low_tail),high(fd,s.high_at,s.used_high,s.fmt.high,s.high_tail);U bits=0,seen=0,prev=0;unsigned have=0,l=s.fmt.l;
  for(U w=0;w<s.used_high;++w){if(!(w%65536))stop.check();for(U m=high.get();m;m&=m-1){
    if(!(seen%65536))stop.check();
    U select=narrow(Big(w)*64+std::countr_zero(m));need(seen<s.count && select>=seen,"excess high bits");

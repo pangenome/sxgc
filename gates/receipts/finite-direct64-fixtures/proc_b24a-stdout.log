@@ -1,0 +1,6 @@
+build=/tmp/finite-direct64-initial-DJfrmi
+PASS 8312 EF posting permutations, malformed bitmap refusal and 3027 paged rank/offset seams
+PASS 45 exact sampled layouts/full byte streams at 1/2/4 workers, 6 certified pre-open scratch refusals, 1 mixed page/fragment payloads, 10 budget-limited splitter counts and 3 skewed >8192-slot ties
+PASS 57 complete independent byte-SA row43 streams; 1/2/4 ordered lanes, 3 predicted scratch refusals, 3 actual 8311-word ties beyond old cursor limit, synthetic wire/seam/backpressure/STOP and no-row-file checks
+DIRECT_PLAN max_bands=2605 bands_if_upper_dimensions=1992 files_if_upper_dimensions=199990580220 route_array_upper=146832308320 emit_array_upper=149890044352 array_upper=149890044352
+DIRECT_PLAN max_bands=2486 bands_if_upper_dimensions=2486 files_if_upper_dimensions=199532024 route_array_upper=247981272 emit_array_upper=161201376 array_upper=247981272
