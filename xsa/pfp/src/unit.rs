@@ -1697,6 +1697,12 @@ pub(crate) fn emit_lcp_slice(bands_dir: &str, u: u64, rows: usize,
                    lcpv: &[u64], rank_base: u64,
                    lcp_live: &mut std::collections::VecDeque<u64>,
                    window: u64, laws: &Laws) {
+    emit_lcp_slice_mode(bands_dir,u,rows,lcpv,rank_base,lcp_live,window,laws,crate::laws::env_u64("XSA_BATCH_SXLS_ESCAPES",0)==1);
+}
+
+fn emit_lcp_slice_mode(bands_dir:&str,u:u64,rows:usize,lcpv:&[u64],rank_base:u64,
+                       lcp_live:&mut std::collections::VecDeque<u64>,window:u64,laws:&Laws,batch:bool) {
+    assert_eq!(lcpv.len(),rows);
     // the flow: wait for the old slice to be consumed
     if u >= window {
         let want = format!("{}/band_{}.lcp.consumed",
@@ -1709,18 +1715,17 @@ pub(crate) fn emit_lcp_slice(bands_dir: &str, u: u64, rows: usize,
         lcp_live.pop_front();
     }
     // the body: 255 markers + the escape list
-    let mut esc: Vec<(u64, u64)> = Vec::new();
+    let mut esc=Vec::<u8>::new();let mut max_l=0u64;
     let mut band_lcp = vec![0u8; rows];
     for (i, &v) in lcpv.iter().enumerate() {
         if v >= 255 {
-            esc.push((rank_base + i as u64, v));
+            esc.extend_from_slice(&(rank_base+i as u64).to_le_bytes());esc.extend_from_slice(&v.to_le_bytes());
+            max_l=max_l.max(v);
             band_lcp[i] = 255;
         } else {
             band_lcp[i] = v as u8;
         }
     }
-    let mut max_l = 0u64;
-    for &(_, v) in &esc { max_l = max_l.max(v); }
     let tmp = format!("{}/band_{}.lcp.tmp", bands_dir, u);
     let dst = format!("{}/band_{}.lcp", bands_dir, u);
     let mut f = fs::File::create(&tmp)
@@ -1729,20 +1734,23 @@ pub(crate) fn emit_lcp_slice(bands_dir: &str, u: u64, rows: usize,
     h[0..4].copy_from_slice(&0x534C5853u32.to_le_bytes());
     h[4..8].copy_from_slice(&1u32.to_le_bytes());
     h[8..16].copy_from_slice(&(rows as u64).to_le_bytes());
-    h[16..24].copy_from_slice(&(esc.len() as u64).to_le_bytes());
+    h[16..24].copy_from_slice(&(esc.len() as u64 / 16).to_le_bytes());
     h[24..32].copy_from_slice(&max_l.to_le_bytes());
     h[32..40].copy_from_slice(&rank_base.to_le_bytes());
     h[40..48].copy_from_slice(&1u64.to_le_bytes());
-    let _ = f.write_all(&h);
-    let _ = f.write_all(&band_lcp);
-    for &(r, v) in &esc {
-        let _ = f.write_all(&r.to_le_bytes());
-        let _ = f.write_all(&v.to_le_bytes());
-    }
-    let _ = f.sync_all();
+    f.write_all(&h).expect("lcp header");f.write_all(&band_lcp).expect("lcp markers");
+    // Same bounded, little-endian escape tail. Change only the granularity
+    // of its write calls; no unsafe struct casts or second copy of the tail.
+    if batch {f.write_all(&esc).expect("lcp escape block");}
+    else {for x in esc.chunks_exact(8){f.write_all(x).expect("lcp escape field");}}
+    f.sync_all().expect("sync before publishing lcp slice");
     drop(f);
     fs::rename(&tmp, &dst).unwrap_or_else(|_| die("publish lcp slice"));
     let df = format!("{}.done", dst);
     fs::write(&df, b"").unwrap_or_else(|_| die("lcp done marker"));
-    lcp_live.push_back(rows as u64 + esc.len() as u64 * 16);
+    lcp_live.push_back(rows as u64 + esc.len() as u64);
 }
+
+#[cfg(test)]
+#[path="sxls_batch_test.rs"]
+mod sxls_batch_test;
