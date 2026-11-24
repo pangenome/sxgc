@@ -3,10 +3,13 @@ No component timing is substituted for construction wall. Score only finished
 raw builds with the independent concurrent row check and exact v8 product.
 """
 import argparse
+import contextlib
+import io
 import json
+import tempfile
 from pathlib import Path
 
-from overlap_radix_product_score import metrics as one_metrics
+from overlap_radix_product_score import metrics as one_metrics, score as score_lanes, score_batch
 from overlap_resident_gate import ONE, TEN, TEN_ARMS, save
 from overlap_ten_matched_score import compare
 from overlap_ten_score import get, verified_arm
@@ -16,6 +19,22 @@ def one_series(pair):
     emit=get(pair,'comparison.json');batch=get(pair,'batch.json')
     assert emit['parallel']==batch['fields'] and emit['lanes']==batch['lanes'] and emit['same_binary_and_product'] and batch['same_binary_and_product']
     paths=list(map(Path,(emit['control'],emit['parallel'],batch['block'])))
+    # A portable receipt bank can stand in for the original private arm dirs.
+    # Require all three mappings or none. Never silently mix unrelated arms.
+    local=[pair/label for label in ('serial','parallel','batch')]
+    if any(p.exists() for p in local):
+        for p,original in zip(local,paths):
+            source=get(p,'source.json');assert source['source']==str(original) and source['complete_arm'] is True
+        paths=local
+    # Recompute the actual score, not just the boolean in an input JSON file.
+    with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
+        dest=Path(tmp)/'score.json'
+        for func,ar,reported,provenance in [(score_lanes,paths[:2],emit,('control','parallel')),(score_batch,paths[1:],batch,('fields','block'))]:
+            try:func(*ar,dest)
+            except SystemExit as exc:
+                if exc.code!=75:raise
+            actual=json.loads(dest.read_text());omit=lambda r:{k:v for k,v in r.items() if k not in provenance}
+            assert omit(actual)==omit(reported),'one-GB score does not replay'
     # Reopen the actual three arm receipts. A verified MISS does not invalidate
     # the subsequent same-scale diagnostic but cannot count as a performance pass.
     stats=[one_metrics(p) for p in paths]; l=emit['lanes']; assert l in (2,4)
