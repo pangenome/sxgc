@@ -14,9 +14,11 @@ use std::{
 #[path = "../overlap_min.rs"]
 mod ranges;
 use ranges::{BlockMin, Value};
+#[path = "../overlap_radix.rs"]
+mod radix;
 #[path = "../overlap_row43.rs"]
 mod row43;
-trait Coord: Value + Default + std::fmt::Debug {
+trait Coord: Value + Default + std::fmt::Debug + Send + Sync {
     const WIDE: bool;
     fn checked(x: usize) -> Self;
 }
@@ -190,34 +192,51 @@ struct Output<'a> {
     progress: bool,
     flag: &'a Path,
 }
-impl Output<'_> {
+const BLOCK_ROWS: usize = 65536;
+const BLOCK_BYTES: usize = BLOCK_ROWS * 12;
+trait RowTarget {
+    fn push<C: Coord>(&mut self, p: usize, h: usize, b: u32);
+}
+#[inline]
+fn encode<C: Coord>(bytes: &mut Vec<u8>, p: usize, h: usize, b: u32) {
+    if C::WIDE {
+        bytes.extend_from_slice(&row43::encode(p as u64, h as u64, b));
+    } else {
+        bytes.extend_from_slice(&u32::checked(p).to_le_bytes());
+        bytes.extend_from_slice(&u32::checked(h).to_le_bytes());
+        bytes.extend_from_slice(&b.to_le_bytes());
+    }
+}
+impl RowTarget for Output<'_> {
     fn push<C: Coord>(&mut self, p: usize, h: usize, b: u32) {
-        if C::WIDE {
-            self.bytes
-                .extend_from_slice(&row43::encode(p as u64, h as u64, b));
-        } else {
-            self.bytes.extend_from_slice(&u32::checked(p).to_le_bytes());
-            self.bytes.extend_from_slice(&u32::checked(h).to_le_bytes());
-            self.bytes.extend_from_slice(&b.to_le_bytes());
-        }
+        encode::<C>(&mut self.bytes, p, h, b);
         self.rows += 1;
-        if self.bytes.len() == 65536 * 12 {
+        if self.bytes.len() == BLOCK_BYTES {
             self.send();
         }
     }
+}
+impl Output<'_> {
     fn send(&mut self) {
+        let mut block = std::mem::take(&mut self.bytes);
+        if !block.is_empty() {
+            self.write_block(&block);
+        }
+        block.clear();
+        self.bytes = block;
+    }
+    fn write_block(&mut self, block: &[u8]) {
         stop(self.flag);
         let t = Instant::now();
-        self.sink.write_all(&self.bytes).expect("product pipe");
+        self.sink.write_all(block).expect("product pipe");
         self.sink.flush().unwrap();
         self.sink_time += t.elapsed();
         if let Some(f) = &mut self.audit {
             let t = Instant::now();
-            f.write_all(&self.bytes).expect("oracle pipe");
+            f.write_all(block).expect("oracle pipe");
             self.audit_time += t.elapsed();
         }
-        self.bytes.clear();
-        if self.progress && self.rows % (1 << 28) == 0 {
+        if self.progress && (self.rows >> 28) != ((self.rows - (block.len() / 12) as u64) >> 28) {
             eprintln!("RESIDENT_PROGRESS emitted={}", self.rows);
         }
     }
@@ -230,7 +249,7 @@ fn flush<C: Coord>(
     lists: &Lists<C>,
     len: usize,
     head: u32,
-    out: &mut Output,
+    out: &mut impl RowTarget,
 ) {
     let mut prior = None;
     while let Some(Reverse((mut rank, mut i, end, off, bwt))) = q.pop() {
@@ -507,7 +526,9 @@ fn run<C: Coord>(ten: bool, fixture: bool) {
     let sa_bytes = if wide { 8 * d } else { 4 * d };
     let owner_bytes = if wide { RankStarts::bytes(d) } else { 4 * d };
     let dict_bound = d + sa_bytes + retained + (64 << 20);
-    let emit_bound = d + sa_bytes + owner_bytes + retained + 40 * k + (8 << 20);
+    let mode = radix::Mode::from_env(n);
+    let emit_bound =
+        d + sa_bytes + owner_bytes + retained + 40 * k + (8 << 20) + mode.extra_bytes(d);
     eprintln!(
         "RESIDENT_TRANSPORT row43={} text_width={} lcp_width={} rank_width=4",
         C::WIDE,
@@ -697,10 +718,7 @@ fn run<C: Coord>(ten: bool, fixture: bool) {
     let sa = Suffixes::sort(&dict.bytes, wide);
     p.end();
     let p = phase("owner_map");
-    enum Owners {
-        Dense(Vec<u32>),
-        Compact(RankStarts),
-    }
+    use radix::Owners;
     let owner = if wide {
         Owners::Compact(RankStarts::new(&dict.start, d))
     } else {
@@ -730,57 +748,18 @@ fn run<C: Coord>(ten: bool, fixture: bool) {
         flag,
     };
     out.push::<C>(n, 0, last as u32);
-    let mut q = BinaryHeap::new();
-    let (mut prev, mut len, mut head) = (0, 0, 0);
-    let (mut seen, mut groups, mut max_group) = (0usize, 0usize, 0usize);
-    for r in 0..d {
-        if r % (1 << 22) == 0 {
-            stop(flag);
-        }
-        let i = sa.at(r);
-        let v = match &owner {
-            Owners::Dense(a) => {
-                if a[i] == u32::MAX {
-                    continue;
-                }
-                a[i] as usize
-            }
-            Owners::Compact(a) => a.word(i),
-        };
-        let end = dict.start[v + 1] as usize - 1;
-        let size = end - i;
-        if size <= if v == dict.eof_id { 1 } else { W } {
-            continue;
-        }
-        let h = common(&dict.bytes[prev..prev + len], &dict.bytes[i..end]);
-        if len == 0 || h < len.min(size) {
-            flush(&mut q, &lists, len, head, &mut out);
-            groups += 1;
-            head = h as u32;
-        } else {
-            assert_eq!(len, size, "proper prefix among representatives");
-        }
-        let off = local_offset(i, dict.start[v]);
-        let idx = lists.loc[v];
-        let b = if off == 0 {
-            0
-        } else {
-            dict.decode[dict.bytes[i - 1] as usize] as u32
-        };
-        q.push(Reverse((
-            lists.next[idx as usize],
-            idx,
-            lists.loc[v + 1],
-            off,
-            b,
-        )));
-        max_group = max_group.max(q.len());
-        prev = i;
-        len = size;
-        seen += 1;
-    }
-    flush(&mut q, &lists, len, head, &mut out);
-    out.send();
+    let sweep = radix::Sweep {
+        dict: &dict,
+        sa: &sa,
+        owner: &owner,
+        lists: &lists,
+        flag,
+    };
+    let radix::Counts {
+        seen,
+        groups,
+        max_group,
+    } = sweep.emit(mode, &mut out);
     assert_eq!(seen, descriptors);
     assert_eq!(out.rows, n as u64 + 1);
     eprintln!("RESIDENT_STREAM rows={} descriptors={seen} groups={groups} max_group={max_group} sink_write_s={:.6} audit_write_s={:.6}",out.rows,out.sink_time.as_secs_f64(),out.audit_time.as_secs_f64());
