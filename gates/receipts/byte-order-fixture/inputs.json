@@ -1,0 +1,12 @@
+{
+  "baseline_score_sha256": "0827609e682d72d1e3e2ae4ce2ea5f564414f7691edc38f99072c0c0f5a2b8c4",
+  "book": "/home/erikg/text/pg64317.txt",
+  "book_bytes": 306317,
+  "book_sha256": "43b101cc636c0214414fb994b71b2180074f3ec0b11d5699e7ce81450688dbd3",
+  "deadline": 1795525178,
+  "parent": 1913481,
+  "profile": "book+2 seeded in-RAM finite-group crossover; no Pile input",
+  "revision": "261de0723152a5681bbed9dfc427845bccaf1279",
+  "width": 3072,
+  "windows": 64
+}

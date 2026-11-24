@@ -1,0 +1,17 @@
+{
+  "artifacts": {
+    "build-and-fixtures.log": "bb06b5bda23ff2b0a039e0a3f822166ce4fb48e5f36136c7b40e6e0da3f4aae0",
+    "exits.log": "ac7aa68881eea66b404d4da6b831e8c29c39f513904a604fe612fc1a5c8dbfd8",
+    "fixture.log": "47e0028d290a46ec180d4f9005c67535f13b28ab1bdcd285cded9481cf685832",
+    "fixture.sha": "3627bf5d8e8d5fa077ba287887667974f6502997381cae45d7a43cc7fac593a8",
+    "inputs.json": "946cca9d211a6f87258cf7d1426f4322c70cfadd3ebfc75c3b3bf28797b2e154",
+    "meter.json": "56d21ec64f2c5a8b3ea98d59fe2ae73118e730088f9139b5684db500ddc55ff3",
+    "score.json": "4dccf74d174d8d08c207aeba22c49dc48839fa657f7b9e1b639428183c94b605"
+  },
+  "exit_code": 0,
+  "launcher": "proc_c84b",
+  "native_sha256": "75926bddba74397009ea5061808d25928868643b6941a10c6f7035ff5fb41d1b",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/byte-local-fixture-igNdiz",
+  "revision": "261de0723152a5681bbed9dfc427845bccaf1279",
+  "tiny_test_sha256": "9603921b0d3d10854f5cdb7111b18283e72b0f3a66eaf2ead1d3b292b50e5d05"
+}

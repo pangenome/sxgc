@@ -81,7 +81,17 @@ def score(log):
     worst={k:max(v['bytes_over_bits_wall']) for k,v in out.items()};good=worst['book']<=.65 and min(worst['wide'],worst['families'])<=.8 and max(worst.values())<=1.1
     return dict(shapes=out,worst_wall_ratio=worst,fixture_hypothesis_met=good,product_promotion=False,scope='in-RAM finite groups and same checker; not full suffix rows, raw preparation, or a Pile product; no dispatch')
 
+def checked_fixture_bank(d):
+    s=load(d/'source.json');p=load(d/'inputs.json');m=load(d/'meter.json');names=set('build-and-fixtures.log exits.log fixture.log fixture.sha inputs.json meter.json score.json'.split());original=Path(s['original_directory'])
+    need(s['artifacts'].keys()==names and all(not (d/n).is_symlink() and (d/n).is_file() and (d/n).stat().st_size<=32768 and sha(d/n)==s['artifacts'][n] for n in names),'archive digests')
+    need(s['exit_code']==0 and p['revision']==s['revision']=='261de0723152a5681bbed9dfc427845bccaf1279' and original.parent==S and re.fullmatch(PREFIX+'[A-Za-z0-9]{6}',original.name) and (d/'fixture.sha').read_text().split()==[s['native_sha256'],str(original/'fixture')] and (d/'exits.log').read_text().strip()=='fixture=0','launch pin/exit')
+    need(p['book_bytes']==SIZE and p['book_sha256']==DIGEST and p['baseline_score_sha256']==BASE_SCORE and (p['width'],p['windows'])==(WIDTH,WINDOWS) and m['offsets']==[i*(SIZE-WIDTH)//(WINDOWS-1) for i in range(WINDOWS)] and m['sample_bytes']==WIDTH*WINDOWS and m['sample_sha256']=='09840d8046cb448eb6d9a04d60e85bbe053cfd397b676a9f188c7a925309034c','sample identity')
+    need(m['status']=='CHECKED_FINITE_ORDER_ONLY' and m['rc']==0 and m['process']['cpu_s']>0 and m['per_device_io']==io_delta(stat_io(m['before']['io.stat']),stat_io(m['after']['io.stat'])),'fixture meter')
+    for cg in (m['before'],m['after']):need((cg['memory.max'],cg['cpu.max'],cg['memory.swap.max'])==(str(192<<20),'100000 100000','0') and 0<int(cg['memory.peak'])<=192<<20 and {'oom 0','oom_kill 0'}<=set(cg['memory.events'].splitlines()),'fixture grant/OOM')
+    z=score(d/'fixture.log');need(z==load(d/'score.json'),'score mismatch');return z
+
 if __name__=='__main__':
-    if len(sys.argv)==3 and sys.argv[1]=='score':print(json.dumps(score(Path(sys.argv[2])),sort_keys=True,indent=2))
+    if len(sys.argv)==3 and sys.argv[1]=='archived':print(json.dumps(checked_fixture_bank(Path(sys.argv[2])),sort_keys=True,indent=2))
+    elif len(sys.argv)==3 and sys.argv[1]=='score':print(json.dumps(score(Path(sys.argv[2])),sort_keys=True,indent=2))
     elif len(sys.argv)==4 and sys.argv[1] in ('admit','measure') and re.fullmatch(r'[1-9][0-9]{9}',sys.argv[3]):{'admit':admit,'measure':measure}[sys.argv[1]](Path(sys.argv[2]),int(sys.argv[3]))
     else:raise SystemExit('expected score FIXTURE_LOG or fixed launcher mode')

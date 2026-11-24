@@ -1,0 +1,15 @@
+rustc 1.97.1 (8bab26f4f 2026-07-14)
+261de0723152a5681bbed9dfc427845bccaf1279
+
+running 8 tests
+test adaptive_skew_ties_and_long_prefix ... ok
+test byte_children_and_virtual_ends_share_the_band ... ok
+test compact::tests::byte_workspace_inverts_at_leaf_and_recursion_steps ... ok
+test compact::tests::only_local_geometry_must_fit_u32 ... ok
+test distributed_windows ... ignored
+test refusals_are_atomic ... ok
+test seeded_varied_shapes ... ok
+test shortest_counts_the_ninth_byte_not_trigger_or_occurrence_mass ... ok
+
+test result: ok. 7 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

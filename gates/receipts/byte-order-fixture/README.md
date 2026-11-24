@@ -1,0 +1,15 @@
+# Byte MSD crossover: finite orders exact; predeclared wall hypothesis **missed**
+
+`proc_c84b`, launch `261de07`, `byte-local-fixture-igNdiz`, exit 0. All **12** in-memory orders passed the same full finite-class membership, permutation, order, inter-group LCP and occurrence-mass checker. No Pile payload, SA/LCP/BWT row product or scale authorization. Replay the unchanged criterion: `python3 -BE gates/overlap_byte_fixture.py score gates/receipts/byte-order-fixture/fixture.log`; `score.json` SHA `4dccf74d174d8d08c207aeba22c49dc48839fa657f7b9e1b639428183c94b605`.
+
+| Shape | Descriptors / groups / largest tie | Equal workspace, B | Full walks (bits → bytes) | bits→bytes wall, ms (rep 1; rep 2 ran in reverse order) | Byte/bit wall ratios (1 / 2) |
+|---|---:|---:|---:|---:|---:|
+| 64 public-book windows | 192,164 / 188,501 / 73 | 147,832 | 16 → 25 | 47.935→47.639; 47.395→47.612 | 0.994 / **1.005** |
+| Wide synthetic | 1,044,232 / 1,044,232 / 1 | 745,424 | 13 → 14 | 245.594→198.048; 244.477→197.952 | 0.806 / **0.810** |
+| Generated suffix families | 636,980 / 342,552 / 96 | 459,800 | 15 → 16 | 135.871→105.884; 135.725→105.621 | **0.779** / 0.778 |
+
+The family arm met its ≤0.80 cutoff, neither generated shape regressed past 1.10, but the book needed ≤0.65 on **both** comparisons. Effectively flat on the book, **do not schedule byte MSD on 100 MB from this result**. Millisecond local observations on tiny resident dictionaries, not evidence of a larger corpus speedup or slowdown. No retuning the threshold or re-running the crossovers.
+
+**Fewer digit reads did not imply faster order.** Book digit probes fell from 9,846,960 to 1,688,760, but the byte method also used 598,107 comparison-sort predicates on variable-length finite slices, shifted 596,570 descriptor slots, and charged 37,440 B for explicit stack capacity. Peak admitted descriptors fell 16,780→12,119. Nine more full walks mean **1,729,476** more classifications. Wide probes 38,213,466→4,392,752 plus 3,895,573 leaf comparisons; families 30,150,330→9,528,118 plus 194,592 leaf comparisons. In the book the frame reserve alone was 25.3% of the local workspace; do not transpose that percentage to a 64 MiB arena. The counters identify work exchanged, not isolated causal milliseconds, device reads or misses.
+
+**Scope/resources.** 64 disjoint 3,072-byte windows from the pinned 306,317-byte public book (196,608 B memfd sample SHA `09840d8046cb448eb6d9a04d60e85bbe053cfd397b676a9f188c7a925309034c`); two other shapes generated, one synthetic EOF per dictionary, no cross-window parse. AB then BA, includes the checker, excludes authentication and deck generation. Isolated 192 MiB / one CPU / no swap, cgroup peak 21,815,296 B and no OOM. Native whole-fixture 1.58 CPU-s, 0/4,096 attributed read/write B (loaded input/logging; not a device IO win). Device accounting null. No row spool or produced columns. The actual 100 MB shortest-tail **bit** order/stream remains the certified lower-memory observation: 2.726× raw, 2.917× prepared vs resident. No product default changed.
