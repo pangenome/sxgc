@@ -1,0 +1,53 @@
+{
+  "affinity": [
+    0,
+    1
+  ],
+  "after": {
+    "cpu.max": "200000 100000",
+    "cpu.stat": "usage_usec 327104\nuser_usec 182616\nsystem_usec 144487\ncore_sched.force_idle_usec 0\nnr_periods 6\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "15798272",
+    "memory.swap.max": "0"
+  },
+  "argv": [
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pfck128-ready-100m-6cvEAD/ready-run",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pfck128-ready-100m-6cvEAD"
+  ],
+  "before": {
+    "cpu.max": "200000 100000",
+    "cpu.stat": "usage_usec 316949\nuser_usec 177971\nsystem_usec 138977\ncore_sched.force_idle_usec 0\nnr_periods 4\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "13398016",
+    "memory.swap.max": "0"
+  },
+  "counted_dir_sampled": 12283843,
+  "io_caps": [
+    400002012,
+    22944520
+  ],
+  "per_device_io": null,
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 0,
+    "cpu_s": 0.0,
+    "rchar": 22045,
+    "read_bytes": 0,
+    "syscr": 35,
+    "syscw": 103,
+    "wchar": 61440,
+    "write_bytes": 0
+  },
+  "rc": -11,
+  "sampled_rss": 86016,
+  "status": "INCOMPLETE",
+  "stop": null,
+  "wall_s": 0.20231340918689966,
+  "whole_dir_sampled_allocated": 112316416
+}

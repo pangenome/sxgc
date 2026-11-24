@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "/tmp/overlap-study-src-zSkeDd/gates/overlap_pfck128_study.py", line 87, in <module>
+    else:worker(d,int(sys.argv[3]),mode)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/overlap-study-src-zSkeDd/gates/overlap_pfck128_study.py", line 63, in worker
+    s.measure(d,mode,cmd,until,4*N,3*EXT+(4<<20),a['affinity'],192<<20,2,ledger=lambda:ledger(d),cutoff=end)
+  File "/tmp/overlap-study-src-zSkeDd/gates/overlap_parse64_study.py", line 68, in measure
+    after=grant(mem,cpus);r.update(after=after,per_device_io=io_delta(stat_io(before['io.stat']),stat_io(after['io.stat'])));need(rc==0 and reason is None and int(after['memory.peak'])<=mem,label+' failed');r['status']='COMPLETED'
+                                                                                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/overlap-study-src-zSkeDd/gates/overlap_segmented_gate.py", line 27, in need
+    raise RuntimeError(reason)
+RuntimeError: ready failed

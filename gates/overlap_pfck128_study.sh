@@ -12,6 +12,11 @@ if [[ ${1:-} == --fixture-tools && $# == 2 ]]; then
     install -m 500 gates/overlap_pfck128_worker.sh "$d/ready-run"
     /usr/bin/python3 -BE gates/overlap_pfck128_test.py "$d/proof"; exit 0
 fi
+# Keep the failed 1 MiB main-stack profile closed even on a fresh host. The
+# fixture/tools arm above has no corpus or historical executable entry.
+if [[ -e gates/receipts/pfck128-ready-entry-failure/source.json ]]; then
+    echo 'HOLD: frozen finish main frame exceeds this readiness stack grant' >&2; exit 75
+fi
 now=$(date +%s);[[ $# == 1 && $1 =~ ^[1-9][0-9]{9}$ ]] && (( $1 > now+600 && $1 <= now+1000 )) || exit 75
 end=$1; [[ ! -e gates/receipts/pfck128-ready-100m && -f gates/receipts/finish-credits-100m/review.json ]] || exit 75
 source gates/overlap_pin.sh;overlap_pin_series gates/overlap_pfck128_study.sh "$end"

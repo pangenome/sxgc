@@ -1,0 +1,22 @@
+{
+  "bank_utc": "2026-11-24T20:04:26.081899+00:00",
+  "files": {
+    "admission.json": "f382c759fbc198ff738f41d9d8ae02c7ca653b75af9036d36b82f9f52540e739",
+    "copy.json": "6a8788c9c4a5175a1f034f092ffad759c735463f48d3ef29070007ddeeb0a043",
+    "exits.log": "ad2a4cb773a17738ac8a418cfdb1acd32ec08964f32861cf3a4ed721cd8740ef",
+    "fixtures.log": "3f91ed73b7b759f185d1d0bfff189f0f3548a9997a6fa3f5bd02571e0844eb5b",
+    "launcher-error.log": "ddecef161b3072e9d3d07ebe63224d85d7cb669d554f85ccee5835ec616582e1",
+    "ready.json": "ca5134432c76f66504a433a7b3de53690ca85e4cb1a76a37e525c398c28fad8c",
+    "ready.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tools.json": "5f64ab7d6ec184d82d77bbb58d9caf8de671db9faec4f9a19f7fa7a2140fab5d"
+  },
+  "insufficiency_before_argv_bytes": 1173888,
+  "launcher_rc": 1,
+  "main_fixed_frame_bytes": 2222464,
+  "native_rc": -11,
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pfck128-ready-100m-6cvEAD",
+  "process": "proc_c9e3",
+  "scope": "FAIL at frozen executable entry. Private copy and fixture phases finished. No PFCK, no identity or readiness timing, no production retry.",
+  "source": "8ae995922cd9ce5bbfa94a272de0e4fe66f2af38",
+  "stack_cap_bytes": 1048576
+}
