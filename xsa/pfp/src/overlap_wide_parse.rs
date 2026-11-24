@@ -109,6 +109,139 @@ fn certified_ranks(ids: &[u32], sa: &[i64]) -> Result<Vec<u32>, &'static str> {
     Ok(ranks)
 }
 
+/// Logical bytes for the IDs, inverse (overwritten by PLCP), and compact SA.
+pub fn plcp_array_bytes(m: u64) -> Result<u64, &'static str> {
+    if usize::BITS != 64 || m == 0 || m >= u64::from(u32::MAX) {
+        return Err("unsupported PLCP extent");
+    }
+    Ok(12 * m)
+}
+
+pub struct ParsePlcp<'a> {
+    ids: &'a [u32],
+    plcp: Vec<u32>,
+    order: ParseOrder,
+}
+
+pub struct ParseOrder(Vec<u32>);
+
+impl ParseOrder {
+    /// (occurrence position, continuation rank), in list insertion order.
+    pub fn continuations(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        std::iter::once((self.0.len() as u32 - 1, 0)).chain(
+            self.0
+                .iter()
+                .enumerate()
+                .filter_map(|(r, &p)| p.checked_sub(1).map(|j| (j, r as u32 + 1))),
+        )
+    }
+}
+
+impl<'a> ParsePlcp<'a> {
+    pub fn build(ids: &'a [u32], mut inverse: Vec<u32>, grant: u64) -> Result<Self, &'static str> {
+        let m = ids.len();
+        if plcp_array_bytes(m as u64)? > grant || inverse.len() != m {
+            return Err("PLCP extent/grant mismatch");
+        }
+        let mut order = reserve(m)?;
+        order.resize(m, u32::MAX);
+        for (p, &r) in inverse.iter().enumerate() {
+            let slot = r
+                .checked_sub(1)
+                .and_then(|i| order.get_mut(i as usize))
+                .ok_or("invalid rank")?;
+            if *slot != u32::MAX {
+                return Err("duplicate rank");
+            }
+            *slot = p as u32;
+        }
+        let key = |p: u32| {
+            (
+                ids[p as usize],
+                inverse.get(p as usize + 1).copied().unwrap_or(0),
+            )
+        };
+        if !order.windows(2).all(|w| key(w[0]) < key(w[1])) {
+            return Err("invalid rank recurrence");
+        }
+        // Only inverse[p] is needed once position p is reached; overwrite in text order.
+        let mut z = 0;
+        for (p, slot) in inverse.iter_mut().enumerate() {
+            if *slot == 1 {
+                z = 0;
+            } else {
+                let q = order[*slot as usize - 2] as usize;
+                while p + z < m && q + z < m && ids[p + z] == ids[q + z] {
+                    z += 1;
+                }
+            }
+            *slot = z as u32;
+            z = z.saturating_sub(1);
+        }
+        Ok(Self {
+            ids,
+            plcp: inverse,
+            order: ParseOrder(order),
+        })
+    }
+
+    pub fn text_plcp(&self) -> &[u32] {
+        &self.plcp
+    }
+
+    /// Adjacent suffix positions and their common token count, starting at rank 2.
+    pub fn predecessor_pairs(&self) -> impl Iterator<Item = (u32, u32, u32)> + '_ {
+        self.order
+            .0
+            .windows(2)
+            .map(|w| (w[0], w[1], self.plcp[w[1] as usize]))
+    }
+
+    /// Starts and first-unequal-word common byte lengths come from the verified packed reader.
+    /// Write directly into the caller's aligned/RMQ input. Discard output on error.
+    pub fn fill_aligned(
+        &self,
+        starts: &[u64],
+        eof: u32,
+        mut common: impl FnMut(u32, u32) -> u64,
+        out: &mut [u64],
+    ) -> Result<(), &'static str> {
+        let m = self.ids.len();
+        if starts.len() != m + 1
+            || out.len() != m
+            || starts[0] != 0
+            || !starts.windows(2).all(|w| w[0] < w[1])
+        {
+            return Err("invalid aligned extent");
+        }
+        if self.ids[m - 1] != eof || self.ids[..m - 1].contains(&eof) {
+            return Err("EOF must occur only at end");
+        }
+        out[0] = 0;
+        for (slot, (i, j, z)) in out[1..].iter_mut().zip(self.predecessor_pairs()) {
+            let (i, j, z) = (i as usize, j as usize, z as usize);
+            // Unique final ID precludes any proper-prefix suffix pair.
+            let (x, y) = (self.ids[i + z], self.ids[j + z]);
+            if x >= y || starts[i + z] - starts[i] != starts[j + z] - starts[j] {
+                return Err("inconsistent aligned prefix");
+            }
+            let h = (starts[i + z] - starts[i])
+                .checked_add(common(x, y))
+                .ok_or("aligned LCP overflow")?;
+            if h > starts[m] - starts[i.max(j)] {
+                return Err("aligned LCP outside text");
+            }
+            *slot = h;
+        }
+        Ok(())
+    }
+
+    /// Drop PLCP before constructing occurrence lists; keep only the compact SA.
+    pub fn into_order(self) -> ParseOrder {
+        self.order
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
