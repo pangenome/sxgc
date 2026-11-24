@@ -1,0 +1,10 @@
+{
+  "phase": "prepared IDs/refs to completed container including pipe audit",
+  "input_bytes": 1000000665,
+  "reference_commit": "143ade3253f95984ca48069b2d772abfa5254bf6",
+  "reference_wall_s": 465.6692705443129,
+  "wall_s": 561.7964413445443,
+  "strict_limit_s": 4656.692705443129,
+  "slowdown": 1.2064279884474018,
+  "pass_strictly_under_10x": true
+}

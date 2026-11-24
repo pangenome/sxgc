@@ -1,0 +1,9 @@
+{
+  "target_under_2x": true,
+  "promotion_under_3x": true,
+  "target_s": 931.3385410886258,
+  "promotion_limit_s": 1397.0078116329387,
+  "attributed_reads_ratio": 1.0000224903572594,
+  "attributed_writes_ratio": 1.0399424556348023,
+  "note": "Traffic ratios exclude verifier; not seek counts or proof of a disk improvement."
+}

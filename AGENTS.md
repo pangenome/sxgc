@@ -2,7 +2,7 @@
 
 Work in the `main` checkout (`~/sxgc`); commit verified changes and receipts to `main` and push to `origin/main`. Historical lanes are evidence, not the integration target. Do not remove other worktrees or rewrite their history.
 
-The memory-bounded scaling target is **strictly less than 10×** the resident wall time per input byte, at matching phase boundaries, product profile and verification. State the baseline, RAM/swap/CPU grants, scratch, and timings from raw input vs from prepared columns separately. Do not promote a larger rung merely because the cap was respected.
+Aim for **under 2×** the resident wall time per input byte; require **under 3×** for performance promotion at matching phase boundaries, product profile and verification. An old under-10× safety check is not the new goal. Measure physical/attributed traffic and access locality separately; speed parity alone does not establish an IO saving. State the baseline, RAM/swap/CPU grants, scratch, and timings from raw input vs from prepared columns separately. Do not promote a larger rung merely because the cap was respected.
 
 A stopped experiment is evidence, not a stopping point. Carry on through process notifications and failed gates: preserve the receipt, diagnose the limiting mechanism, and start the next safe, informative study. Never treat a running but stranded worker as useful progress. Respect cooperative stops and the existing resource/scale gates; if blocked on a production arm, study independently on small inputs instead.
 

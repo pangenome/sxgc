@@ -33,7 +33,14 @@ def main(candidate):
               reference_commit='143ade3253f95984ca48069b2d772abfa5254bf6',reference_wall_s=baseline['wall_s'],wall_s=b['wall_s'],
               strict_limit_s=n/bn*baseline['wall_s']*10,slowdown=ratio,pass_strictly_under_10x=passed)
     (candidate/'speed.json').write_text(json.dumps(data,indent=2)+'\n')
-    print(f"SPEED {'PASS' if passed else 'REFUSED'} wall_s={b['wall_s']:.3f} normalized_slowdown={ratio:.4f} target=<10")
-    if not passed: raise SystemExit(75)
+    def traffic(build,key): return sum(worker[key] for worker in build['process'].values())
+    goals=dict(target_under_2x=ratio<2, promotion_under_3x=ratio<3,
+               target_s=2*baseline['wall_s'],promotion_limit_s=3*baseline['wall_s'],
+               attributed_reads_ratio=traffic(b,'read_bytes')/traffic(baseline,'read_bytes'),
+               attributed_writes_ratio=traffic(b,'write_bytes')/traffic(baseline,'write_bytes'),
+               note='Traffic ratios exclude verifier; not seek counts or proof of a disk improvement.')
+    (candidate/'goals.json').write_text(json.dumps(goals,indent=2)+'\n')
+    print(f"SPEED {'PASS' if ratio<3 else 'REFUSED'} wall_s={b['wall_s']:.3f} normalized_slowdown={ratio:.4f} target=<2 promotion=<3")
+    if not goals['promotion_under_3x']: raise SystemExit(75)
 
 if __name__=='__main__': main(Path(sys.argv[1]))
