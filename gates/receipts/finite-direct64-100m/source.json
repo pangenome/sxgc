@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "admission.json": "efc2cda74c6059aa790b0062f4ff63d95ac8e810c6fabace76c12430d4e371a6",
+    "build-and-test.log": "8a3e1a552c2f16b11c796f9395c983199a105395380c0e29f95776b267d42f8b",
+    "cold4.json": "8fd93611b3b2bec207b0c17085beae9f349fe127e3281c67adef9afc96718d35",
+    "emit4.json": "88dbd5125108f46af3f59d5fb94b6952c851a205a1b5957272e71d0dbcbb655c",
+    "emit4.log": "fe5921edc1d2a54078703f5c679f6c753187b41154a93c8eeff5dab23796905d",
+    "exits.log": "8a6beca7c51adc0930a9d96083e447d3f836b44653355696983fb02aa7368752",
+    "oracle4.json": "757452cff0b84e89f68566ef15012f06ec9af74d3bc9100755049820f758361b",
+    "oracle4.log": "08280269ad6c43f460ba3b80f3d9ed704a4f7294b6a4040199e9a1d81827b684",
+    "pair4.json": "eccc34443404100273044e8c8ac3e9d4ad30837ee786869557a6fe30731bef94",
+    "pair4.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "score.json": "ce28e5e539ecdb47757f37cfb2d1e4afda00e93a7ac11fb51c0269884368debd",
+    "setup.json": "c9446997d15367ceab46e14e263990e8a1357fb334cf3e4b8d675f838e970ead",
+    "tools.json": "8c177fe0afba9c0261f98b150be63e959425a1ef17f8fc59d93f72743f62792e"
+  },
+  "launcher": "proc_2def",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-direct64-100m-kzCqUS",
+  "rc": 0,
+  "revision": "ca74354eb2cd73e85e79dda5f9baa80a3d80cf98"
+}
