@@ -1,0 +1,113 @@
+{
+  "credits": {
+    "largest_piece_rows": 1126176,
+    "piece_sufficient": 3,
+    "slice_necessary": 4,
+    "slice_sufficient": 4,
+    "slice_worst_piece": 550
+  },
+  "epoch_held": 120442203,
+  "historical_floor": {
+    "bytes": 123611895,
+    "hi": 576,
+    "lo": 512,
+    "parts": {
+      "bitmap": 12500063,
+      "lcp_flushed": 25167168,
+      "pfck": 36363864,
+      "pieces": 49285888,
+      "sparse": 294912
+    },
+    "verified_runs_lower": 37748734
+  },
+  "historical_joint_lower": 219796260,
+  "joint_over_2n": 19795254,
+  "models": [
+    {
+      "consumer_model_upper": 149949703,
+      "piece_window": 6,
+      "post_m1": {
+        "bitmap": 12500063,
+        "control_and_bounded_transport": 2097152,
+        "ef_spools": 13679143,
+        "lcpruns": 26563024,
+        "pfck": 36363864,
+        "sparse": 301936
+      },
+      "slack_vs_held": -29507500,
+      "slice_window": 5,
+      "sweep": {
+        "bitmap": 12500063,
+        "control_and_bounded_transport": 2097152,
+        "lcpruns": 26563024,
+        "pfck": 36363864,
+        "pieces": 60069984,
+        "slices": 12053680,
+        "sparse": 301936
+      },
+      "tau": 22
+    },
+    {
+      "consumer_model_upper": 126085943,
+      "piece_window": 6,
+      "post_m1": {
+        "bitmap": 12500063,
+        "control_and_bounded_transport": 2097152,
+        "ef_spools": 13679143,
+        "lcpruns": 26563024,
+        "pfck": 12500104,
+        "sparse": 301936
+      },
+      "slack_vs_held": -5643740,
+      "slice_window": 5,
+      "sweep": {
+        "bitmap": 12500063,
+        "control_and_bounded_transport": 2097152,
+        "lcpruns": 26563024,
+        "pfck": 12500104,
+        "pieces": 60069984,
+        "slices": 12053680,
+        "sparse": 301936
+      },
+      "tau": 64
+    },
+    {
+      "consumer_model_upper": 119835911,
+      "piece_window": 6,
+      "post_m1": {
+        "bitmap": 12500063,
+        "control_and_bounded_transport": 2097152,
+        "ef_spools": 13679143,
+        "lcpruns": 26563024,
+        "pfck": 6250072,
+        "sparse": 301936
+      },
+      "slack_vs_held": 606292,
+      "slice_window": 5,
+      "sweep": {
+        "bitmap": 12500063,
+        "control_and_bounded_transport": 2097152,
+        "lcpruns": 26563024,
+        "pfck": 6250072,
+        "pieces": 60069984,
+        "slices": 12053680,
+        "sparse": 301936
+      },
+      "tau": 128
+    }
+  ],
+  "retained_prepared_files": 96184365,
+  "scope": "Exact v8 historical lower bound and conditional credit/extent models on the identical row stream. Not a measured new finish, hard quota, RAM proof, v10 model or launch gate.",
+  "shortfall_vs_epoch_finish_reserve": 3169692,
+  "sweep_release_floors": [
+    98182583,
+    102409751,
+    106636999,
+    106669767,
+    110897383,
+    115124871,
+    115157639,
+    119384759,
+    123611895
+  ]
+}
