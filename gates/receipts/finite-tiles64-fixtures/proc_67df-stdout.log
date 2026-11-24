@@ -1,0 +1,5 @@
+build=/tmp/finite-tiles64-fixture-ZD0AmK
+PASS 39 byte-identical tiled streams, 0 predicted refusals; 9 multi-tile cases, whole 8311-descriptor classes and >9200-row tiles, exact bypass, stalled publication STOP
+PASS 45 exact sampled layouts/full byte streams at 1/2/4 workers, 6 certified pre-open scratch refusals, 1 mixed page/fragment payloads, 10 budget-limited splitter counts and 3 skewed >8192-slot ties
+DIRECT_PLAN max_bands=2605 bands_if_upper_dimensions=1992 files_if_upper_dimensions=199990580220 route_array_upper=146832308320 emit_array_upper=149897044800 array_upper=149897044800
+DIRECT_PLAN max_bands=2486 bands_if_upper_dimensions=2486 files_if_upper_dimensions=199532024 route_array_upper=247981272 emit_array_upper=161208880 array_upper=247981272

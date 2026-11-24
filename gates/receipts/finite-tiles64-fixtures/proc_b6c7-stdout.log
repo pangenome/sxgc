@@ -1,0 +1,5 @@
+build=/tmp/finite-tiles64-sanitized-oKVJg2
+PASS 39 byte-identical tiled streams, 0 predicted refusals; 9 multi-tile cases, whole 8311-descriptor classes and >9200-row tiles, exact bypass, stalled publication STOP
+PASS pinned whole-range control, one tile arm, mechanism and wall misses retained; changed routing and invalid packet coverage refused
+PASS one-shot direct gate bounds, prior score unchanged, mechanism miss retained, invalid wire bound refused
+PASS prior scores unchanged, pre-pin time refusals

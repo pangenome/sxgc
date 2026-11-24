@@ -8,6 +8,7 @@ import shutil
 import subprocess as sp
 import sys
 import time
+from typing import NamedTuple
 import overlap_finite_emit64_study as old
 from overlap_scanplan_gate import Phase
 
@@ -20,25 +21,32 @@ def sources():
     prior();z=load(BANK,'source.json');d=Path(z['original_directory']);old.private(d);p=load(BANK,'setup.json');need(z['rc']==0 and z['revision']=='1563640503aac0fd2636170567a7b225c916c259' and z['artifacts']['score.json']==PIN,'wrong prior launch');raw=p['source_hashes']['raw'];paths={'raw':(d/'raw',N,raw),'oracle-raw':(d/'oracle-raw',N,raw),'inverse.u64':(d/'inverse.u64',8*M,RANK)}
     need(all(f.resolve()==f and list(s.identity(f))==p['private_stats'][k] and f.stat().st_size==n for k,(f,n,h) in paths.items()),'banked prepared file changed');return paths
 def window(start,end):need(600<end-start<=1000,'fixed 601..1000 s single 100 MB arm')
-def private(d):need(d.resolve()==d and d.parent==s.S and re.fullmatch(PREFIX+'[A-Za-z0-9]{6}',d.name) and d.stat().st_uid==os.getuid() and not d.stat().st_mode&0o077,'private candidate receipt')
-def admit(d,end):
-    start=int(time.time());window(start,end);private(d);s.lease(os.getppid(),end,SCRIPT);s.exclusive();old.guard(d,end,600);rev=s.published_main(Path.home()/'sxgc');paths=sources();p=load(BANK,'admission.json');need(old.cpus()==p['cores'] and BOUND==199532024<=2*N and s.memory_available()>3<<30 and shutil.disk_usage(d).free>2<<30,'grant/scratch headroom')
-    need(set(s.S.glob(PREFIX+'*'))=={d} and not any(d.iterdir()) and not OUT.exists() and sp.check_output(['git','-C',s.REPO,'rev-parse','HEAD'],text=True).strip()==rev and not sp.check_output(['git','-C',s.REPO,'status','--porcelain']),'repeat or unpublished source');s.save(d/'admission.json',dict(rev=rev,parent=os.getppid(),start_unix=start,deadline=end,cores=p['cores'],source_stats={k:s.identity(f) for k,(f,n,h) in paths.items()},hashes={k:h for k,(f,n,h) in paths.items()},prior=PIN,counted_upper=BOUND,slots=old.SLOTS,desired_descriptors=TARGET,scope='one 4-worker direct candidate vs frozen 4-worker coarse replay only; same slot/grant/EOF checker. No rank/front/product rerun.'))
-def authority(d,end):
-    private(d);p=load(d,'admission.json');window(p['start_unix'],end);need(p['deadline']==end and time.time()>=p['start_unix'],'changed window');s.lease(p['parent'],end,SCRIPT);old.guard(d,end);return p
+class Profile(NamedTuple):
+    prefix:str
+    launcher:str
+    bank:Path
+    driver:Path
+    mode:str
+DIRECT=Profile(PREFIX,SCRIPT,OUT,Path(__file__).resolve(),'sampled')
+def private(d,profile=DIRECT):need(d.resolve()==d and d.parent==s.S and re.fullmatch(profile.prefix+'[A-Za-z0-9]{6}',d.name) and d.stat().st_uid==os.getuid() and not d.stat().st_mode&0o077,'private candidate receipt')
+def admit(d,end,profile=DIRECT,control=PIN):
+    start=int(time.time());window(start,end);private(d,profile);s.lease(os.getppid(),end,profile.launcher);s.exclusive();old.guard(d,end,600);rev=s.published_main(Path.home()/'sxgc');paths=sources();p=load(BANK,'admission.json');need(old.cpus()==p['cores'] and BOUND==199532024<=2*N and s.memory_available()>3<<30 and shutil.disk_usage(d).free>2<<30,'grant/scratch headroom')
+    need(set(s.S.glob(profile.prefix+'*'))=={d} and not any(d.iterdir()) and not profile.bank.exists() and sp.check_output(['git','-C',s.REPO,'rev-parse','HEAD'],text=True).strip()==rev and not sp.check_output(['git','-C',s.REPO,'status','--porcelain']),'repeat or unpublished source');s.save(d/'admission.json',dict(rev=rev,parent=os.getppid(),start_unix=start,deadline=end,cores=p['cores'],source_stats={k:s.identity(f) for k,(f,n,h) in paths.items()},hashes={k:h for k,(f,n,h) in paths.items()},prior=PIN,counted_upper=BOUND,slots=old.SLOTS,desired_descriptors=TARGET,control_score=control,emit_mode=profile.mode,scope='one 4-worker candidate vs frozen 4-worker arm; same slot/grant/EOF checker. No rank/front/product rerun.'))
+def authority(d,end,profile=DIRECT):
+    private(d,profile);p=load(d,'admission.json');window(p['start_unix'],end);need(p['deadline']==end and p['emit_mode']==profile.mode and time.time()>=p['start_unix'],'changed window/profile');s.lease(p['parent'],end,profile.launcher);old.guard(d,end);return p
 def tools(d):r=load(d,'tools.json');need(set(r)=={'emit','oracle'} and r['oracle']==CHECKER and all(s.sha(d/k)==h for k,h in r.items()),'binary drift')
-def setup(d,end):
-    p=authority(d,end);tools(d);s.exclusive();r=dict(before=s.grant(192<<20,1));ph=Phase(d,r,'private_authenticated_copy_cold',end,3*N,3*N);paths=sources()
+def setup(d,end,profile=DIRECT):
+    p=authority(d,end,profile);tools(d);s.exclusive();r=dict(before=s.grant(192<<20,1));ph=Phase(d,r,'private_authenticated_copy_cold',end,3*N,3*N);paths=sources()
     for k,(f,n,h) in paths.items():need(list(s.identity(f))==p['source_stats'][k] and s.copy_file(f,d/k,n,ph)==h,'prepared source changed: '+k)
     ph.guard(True);r.update(after=s.grant(192<<20,1),private_stats={k:s.identity(d/k) for k in paths},hashes=p['hashes'],resident_pages=0);s.save(d/'setup.json',r)
 def inputs(d):
     x=load(d,'setup.json');need(x['private_stats']=={k:list(s.identity(d/k)) for k in ('raw','inverse.u64','oracle-raw')} and len({(d/k).stat().st_ino for k in x['private_stats']})==3 and not (d/'parse.u32').exists(),'private file drift')
-def pair(d,end):
-    authority(d,end);tools(d);inputs(d);s.exclusive();old.guard(d,end,420);need(not (d/'pair4.json').exists(),'do not repeat');t=time.monotonic()
+def pair(d,end,profile=DIRECT):
+    authority(d,end,profile);tools(d);inputs(d);s.exclusive();old.guard(d,end,420);need(not (d/'pair4.json').exists(),'do not repeat');t=time.monotonic()
     for k in ('raw','oracle-raw','inverse.u64'):s.cold(d/k)
-    until=min(end-5,int(time.time())+405);s.save(d/'cold4.json',dict(wall_s=time.monotonic()-t,resident_pages=0,inputs=['raw','inverse.u64','oracle-raw'],arm_deadline=until));script=Path(__file__).resolve();old.pipeline(d,4,until,old.unit(d,end,4,'emit',until,script),old.unit(d,end,4,'oracle',until,script));old.checked_pair(d,4);print(f'DIRECT64_BYTE_ROWS_VERIFIED rows={N+1}',flush=True)
-def meter(d,end,w,role,until):
-    p=authority(d,end);tools(d);inputs(d);stop=d/'stop.requested';need(w==4 and role in ('emit','oracle') and load(d,'cold4.json')['arm_deadline']==until<=end and not (d/f'{role}4.json').exists(),'wrong candidate arm');cmd=[d/'emit','sampled',d/'raw',d/'inverse.u64',d/'route4.ef',w,old.ARRAYS,old.OTHER,TARGET,old.SLOTS,stop,until] if role=='emit' else [d/'oracle','--component-100m',d/'oracle-raw',stop];old.native(d,w,role,until,p['cores'],cmd,BOUND)
+    until=min(end-5,int(time.time())+405);s.save(d/'cold4.json',dict(wall_s=time.monotonic()-t,resident_pages=0,inputs=['raw','inverse.u64','oracle-raw'],arm_deadline=until));script=profile.driver;old.pipeline(d,4,until,old.unit(d,end,4,'emit',until,script),old.unit(d,end,4,'oracle',until,script));old.checked_pair(d,4);print(f'DIRECT64_BYTE_ROWS_VERIFIED rows={N+1}',flush=True)
+def meter(d,end,w,role,until,profile=DIRECT):
+    p=authority(d,end,profile);tools(d);inputs(d);stop=d/'stop.requested';need(w==4 and role in ('emit','oracle') and load(d,'cold4.json')['arm_deadline']==until<=end and not (d/f'{role}4.json').exists(),'wrong candidate arm');cmd=[d/'emit',profile.mode,d/'raw',d/'inverse.u64',d/'route4.ef',w,old.ARRAYS,old.OTHER,TARGET,old.SLOTS,stop,until] if role=='emit' else [d/'oracle','--component-100m',d/'oracle-raw',stop];old.native(d,w,role,until,p['cores'],cmd,BOUND)
 def fields(d,tag):
     line,=[l for l in (d/'emit4.log').read_text().splitlines() if l.startswith(tag+' ')];return {k:float(v) if k.endswith('_s') else int(v) for k,v in (kv.split('=',1) for kv in line.split()[1:])}
 def score(d):

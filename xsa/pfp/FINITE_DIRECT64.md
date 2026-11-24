@@ -14,7 +14,7 @@ The [real 100 MB coarse-index result](../../gates/receipts/finite-emit64-100m/) 
 
 `finite_emit64 sampled plan 100000000000 3181334488 1 100000000000 38400000 192000000 4` conservatively reserves arrays for up to 2,605 desired ranges independent of unknown vocabulary: **149,890,044,352 B** max incl raw producer. If `U=N,k_min=1` for the upper calculation, the file cap clips the count to 1,992 and gives **199,990,580,220 B** incl inverse/margin. A smaller measured U may allow *more* ranges. Only **9.42 MB** below the cap in that example: no implicit allowance for retained tape, key witness or additional output scratch. Not a 100 GB grant, benchmark or joint finish guarantee.
 
-**[100 MB qualification passed](../../gates/receipts/finite-direct64-100m/)**: 93.489 s to independently verified EOF vs 276.754 s, one decode per distinct offset, 3.164 active order lanes and effectively unchanged attributed IO. 34.124 s remains in publication; not an index or scale admission.
+**[100 MB qualification passed](../../gates/receipts/finite-direct64-100m/)**: 93.489 s to independently verified EOF vs 276.754 s, one decode per distinct offset, 3.164 active order lanes and effectively unchanged attributed IO. 34.124 s remains in publication; the [whole-key tile experiment](FINITE_TILES64.md) targets head-of-line waits without enlarging the buffers. Not an index or scale admission.
 
 ### Fixed 100 MB follow-up
 
