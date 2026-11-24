@@ -55,7 +55,8 @@ def verified_arm(d):
         base=dict(SS_LCP_SLICE_WINDOW='64',CROSS_V2_PIECES='1',CROSS_V2_PIECE_WINDOW='32',PFCK_SPACING='22',XSA_GATE_PACKED_10G='1',XSA_RESIDENT_RADIX_LANES=str(lanes),XSA_RESIDENT_RADIX_STEP='16384')
         sink_controls=dict(base,XSA_TEST_RESIDENT_TRIPLES='1',XSA_BATCH_SXLS_ESCAPES=str(batch))
         if reclaim:sink_controls['XSA_PRIVATE_SXLS_RECLAIM']='1'
-        assert b['worker_controls']==dict(resident=dict(base,**b['omp_settings'],XSA_RESIDENT_PACKED='1',XSA_RESIDENT_WIDE_DICT='1'),sink=sink_controls,finish=base)
+        from overlap_ten_controls import evidence
+        evidence(d,b,dict(resident=dict(base,**b['omp_settings'],XSA_RESIDENT_PACKED='1',XSA_RESIDENT_WIDE_DICT='1'),sink=sink_controls,finish=base))
         sink=d/'sink.log' if (d/'sink.log').exists() else d/'sink-metrics.log'
         lines=sink.read_text().splitlines();assert [x for x in lines if x.startswith('SS_PRIVATE_SXLS_RECLAIM ')]==(['SS_PRIVATE_SXLS_RECLAIM window=64 resume=unsupported'] if reclaim else [])
         marks=b['sxls_markers'];expected_markers=128 if reclaim else 2*((TEN.n+1+262143)//262144)

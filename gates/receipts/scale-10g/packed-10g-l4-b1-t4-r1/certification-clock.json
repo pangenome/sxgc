@@ -1,0 +1,19 @@
+{
+  "close_events": {
+    "exits.log": [
+      5573243261480898,
+      1795507255061076764,
+      "29c470dc4d9b8097dbde316fd5c91d0fede589456bc199879347b4eedf19f41a"
+    ],
+    "identity.json": [
+      5573249963831216,
+      1795507261763076299,
+      "59521cc92c3a4a6e9a4dac45bc6edaefa351c047d70f17892544689224fd991b"
+    ]
+  },
+  "filesystem_mtime_delta_s": 6.701999535,
+  "kind": "post-service certification envelope; not SHA kernel time",
+  "observed_close_to_close_s": 6.702350318,
+  "profile": "packed-10g-l4-b1-t4-r1",
+  "source": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l4-b1-t4-r1-fD3JdP"
+}

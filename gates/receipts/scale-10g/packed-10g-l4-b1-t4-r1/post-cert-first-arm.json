@@ -1,0 +1,15 @@
+{
+  "harness": "076980318c30e576dd2a2729be07506731253121",
+  "launcher_exit": 1,
+  "notes": "All three instant proc reads were empty. Do not substitute expected for observed. Timed children and oracle exited normally before certification. Knob attribution is separately checked from frozen source, explicit settings, native/effect evidence.",
+  "observed_environments": false,
+  "orig_identity_sha256": "59521cc92c3a4a6e9a4dac45bc6edaefa351c047d70f17892544689224fd991b",
+  "pinned_source_files": {
+    "overlap_resident_gate.py": "50f9e993aad79c346012a3efde99b49d80fb2948d713ea6a442cb0520b0e0564",
+    "overlap_ten_product.sh": "3c8b975a22ecc40ceac089878011d440a29e72c74a70c0b5b795a167b4d12731",
+    "overlap_ten_score.py": "878926d5c2ccf35ee6bdf45eae2e983bfd79ee63ca7ca758ad7a5c0571800525"
+  },
+  "stage": "original post-service scorer",
+  "traceback": "Traceback (most recent call last):\n  File \"/tmp/overlap-restart-jceQI2/gates/overlap_ten_score.py\", line 103, in <module>\n    if __name__=='__main__':score(Path(sys.argv[1]))\n                            ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/overlap-restart-jceQI2/gates/overlap_ten_score.py\", line 89, in score\n    root=Path(__file__).resolve().parent/'receipts'; b,f,_=verified_arm(d)\n                                                           ^^^^^^^^^^^^^^^\n  File \"/tmp/overlap-restart-jceQI2/gates/overlap_ten_score.py\", line 58, in verified_arm\n    assert b['worker_controls']==dict(resident=dict(base,**b['omp_settings'],XSA_RESIDENT_PACKED='1',XSA_RESIDENT_WIDE_DICT='1'),sink=sink_controls,finish=base)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n",
+  "worker": "8513cccb7d0ade1f4917752e3e8be33c3f7e49e3"
+}

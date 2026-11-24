@@ -1,0 +1,20 @@
+{
+  "complete_arm": true,
+  "identity": true,
+  "score": "see goals/comparison separately, not attested by this copy",
+  "selected_logs": {
+    "finish.log": {
+      "original_bytes": 5370760,
+      "original_lines": 68061,
+      "selected_lines": 17,
+      "sha256": "09282c54f4449af0bb95a1d09e004e5688057892396d756ef968767aa5657012"
+    },
+    "sink.log": {
+      "original_bytes": 8557468,
+      "original_lines": 38156,
+      "selected_lines": 5,
+      "sha256": "61a1db8af451fc5ffaa1ea71b84150f6a6c30d1eba0f8342bec8469923b5b018"
+    }
+  },
+  "source": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l4-b1-t4-r1-fD3JdP"
+}

@@ -14,7 +14,7 @@ SMALL = ('binaries.sha', 'cold.log', 'exits.log', 'fixtures.log', 'seam-fixtures
          'layout-test.log', 'front-end.json', 'pack.log', 'resident.log', 'scratch-plan.json',
          'build.json', 'build-source.log', 'oracle.json', 'oracle.log', 'identity.json', 'goals.json', 'summary.md',
          'stop.requested', 'arm.json', 'settings.json', 'matched.json', 'launch.json')
-KEEP = {'sink.log': ('SS_SXLS_WRITER ', 'SS_PRIVATE_SXLS_RECLAIM ', 'SS_SCRATCH_PEAK ',
+KEEP = {'sink.log': ('SS_TAPE_START ', 'SS_SXLS_WRITER ', 'SS_PRIVATE_SXLS_RECLAIM ', 'SS_SCRATCH_PEAK ',
                      'SS_DONE_R ', 'STOP_OBSERVED', 'FATAL', 'thread '),
         'finish.log': ('XSA_FINISH_PFCK ', 'GATE_BITMAP ', 'XSA_FINISH_SWEEP_ANATOMY ',
                        'LCP_RUNS_ENCODING ', 'SXI2_MEMBER ', 'CONTAINER_FINAL ', 'XSA_FINISH_DONE ',

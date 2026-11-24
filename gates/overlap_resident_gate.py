@@ -258,8 +258,10 @@ def build(d,tools,profile,deadline=None):
         logs[name]=(d/(name+'.log')).open('xb'); started[name]=time.monotonic()
         kwargs.setdefault('stdout',logs[name]); w[name]=sp.Popen(cmd,stderr=logs[name],**kwargs); peaks[name]=0
         if matched:
-            environ=Path(f'/proc/{w[name].pid}/environ').read_bytes().split(b'\0')
-            controls[name]={os.fsdecode(k):os.fsdecode(v) for k,_,v in (item.partition(b'=') for item in environ) if os.fsdecode(k) in CONTROL_KEYS}
+            from overlap_ten_controls import stable_read
+            requested={k:v for k,v in kwargs['env'].items() if k in CONTROL_KEYS}
+            controls[name]=stable_read(w[name].pid,requested)
+            if controls[name]!=requested:request('child environment mismatch or unavailable: '+name)
         iofiles[name]=open(f'/proc/{w[name].pid}/io')
     def request(reason):
         if not flag.exists():say('STOP_REQUEST',reason); flag.write_text(reason+'\n')
