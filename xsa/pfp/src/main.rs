@@ -65,11 +65,31 @@ fn main() {
         .unwrap_or_else(|| ".".to_string());
     let modeb_dir = format!("{}/modeb", merged_dir);
     if bands_dir.is_empty() { bands_dir = format!("{}/bands", merged_dir); }
-    for d in [&merged_dir, &modeb_dir, &bands_dir] {
-        let _ = fs::create_dir_all(d);
-    }
     let stop_flag = format!("{}/stop.requested", modeb_dir);
-    let _ = fs::remove_file(&stop_flag);
+    let piece_pool = std::env::var_os("XSA_TEST_V8_100M_PIECE_POOL");
+    if let Some(flag) = &piece_pool {
+        use std::os::unix::fs::PermissionsExt;
+        let merged = Path::new(&merged_dir);
+        let root = merged.parent().expect("private arm root");
+        let is = |k, v| std::env::var(k).ok().as_deref() == Some(v);
+        let file_bytes = fs::symlink_metadata(&corpus_path).ok().filter(|m| m.is_file()).map(|m| m.len());
+        if flag != "1" || file_bytes != Some(100_000_503) || remap_path.is_empty() || threads != 2 ||
+            ![("XSA_TEST_EXTERNAL_TRIPLES","1"), ("CROSS_V2_PIECES","1"), ("CROSS_V2_PIECE_WINDOW","6"),
+              ("SS_LCP_SLICE_WINDOW","5"), ("XSA_BATCH_SXLS_ESCAPES","1"), ("PFCK_SPACING","128")].iter().all(|&(k,v)| is(k,v)) ||
+            ["TRIE_TAP","XSA_FINISH_SPOOL","XSA_GATE_VOLATILE_PIECES","XSA_TEST_RESIDENT_TRIPLES","XSA_TEST_OVERLAP_STREAM",
+             "XSA_GATE_PACKED_3G","XSA_GATE_PACKED_10G","XSA_PRIVATE_SXLS_RECLAIM"].iter().any(|k| std::env::var_os(k).is_some()) ||
+            !root.is_absolute() || fs::canonicalize(root).ok().as_deref() != Some(root) ||
+            fs::metadata(root).expect("private arm root").permissions().mode() & 0o777 != 0o700 ||
+            merged != root.join("merged") || Path::new(&out_prefix) != merged.join("frag") ||
+            Path::new(&bands_dir) != root.join("bands") || root.join("stop.requested").try_exists().unwrap_or(true) {
+            die("fenced PRC1 handoff: private exact 100 MB v8 narrow profile required");
+        }
+        // No restart, no cleanup. In particular, never remove a STOP or anyone's old pieces.
+        for d in [&merged_dir, &bands_dir, &modeb_dir] { fs::create_dir(d).expect("fenced handoff dirs must be fresh"); }
+    } else {
+        for d in [&merged_dir, &modeb_dir, &bands_dir] { let _ = fs::create_dir_all(d); }
+        let _ = fs::remove_file(&stop_flag);
+    }
 
     let corpus = fs::File::open(&corpus_path)
         .unwrap_or_else(|_| die("open corpus"));
@@ -144,7 +164,9 @@ fn main() {
         eprintln!("SS_SXLS_WRITER batched_escapes={}", laws::env_u64("XSA_BATCH_SXLS_ESCAPES",0)==1);
         let volatile=std::env::var_os("XSA_GATE_VOLATILE_PIECES");
         assert!(volatile.is_none() || resident_sink,"volatile handoff is a fresh resident-product gate only");
-        let mut cutter=unit::PieceCutter::with_piece_target(&out_prefix,file_n+1,laws::env_u64("CROSS_V2_PIECE_WINDOW",1100),volatile.as_deref().map(Path::new));
+        let window=laws::env_u64("CROSS_V2_PIECE_WINDOW",1100);
+        let mut cutter=if piece_pool.is_some() { unit::PieceCutter::fixed_v8_pool(&out_prefix,file_n+1,window) }
+                       else { unit::PieceCutter::with_piece_target(&out_prefix,file_n+1,window,volatile.as_deref().map(Path::new)) };
         let mut lcp=Vec::with_capacity(262144);let mut live=std::collections::VecDeque::new();
         let (mut base,mut u,mut ends)=(0,0,0);
         let mut publish=|lcp:&mut Vec<u64>|{if !lcp.is_empty(){unit::emit_lcp_slice(&bands_dir,u,lcp.len(),lcp,base,&mut live,laws::env_u64("SS_LCP_SLICE_WINDOW",128),&laws);base+=lcp.len() as u64;u+=1;lcp.clear();laws.scratch_gate("overlap-slice");}};

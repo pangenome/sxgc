@@ -71,8 +71,11 @@ pub struct LevelCtx<'a> {
     pub laws: &'a Laws,
 }
 
+#[path="v8_piece_pool.rs"]
+mod v8_piece_pool;
 // ---- the piece cutter (BPS1/PRC1/BPG1, transliterated)
 pub struct PieceCutter {
+    pool: Option<v8_piece_pool::Pool>,
     pub prefix: String,
     pub dir: String,
     pub n: u64,
@@ -106,8 +109,21 @@ impl PieceCutter {
     // spools. No overwrite, no recursive deletion, and never resume it.
     pub fn with_piece_target(prefix: &str, n: u64, window: u64,
                              volatile_target: Option<&std::path::Path>) -> PieceCutter {
+        Self::create(prefix, n, window, volatile_target, false)
+    }
+
+    pub fn fixed_v8_pool(prefix: &str, n: u64, window: u64) -> PieceCutter {
+        assert_eq!((n, window), (v8_piece_pool::ROWS, 6), "fixed v8 piece pool only");
+        Self::create(prefix, n, window, None, true)
+    }
+
+    fn create(prefix: &str, n: u64, window: u64, volatile_target: Option<&std::path::Path>, pooled: bool) -> PieceCutter {
         let dir = format!("{}.pieces", prefix);
-        if let Some(target) = volatile_target {
+        let mut pool = None;
+        if pooled {
+            fs::create_dir(&dir).expect("fenced PRC1 directory must be fresh");
+            pool = Some(v8_piece_pool::Pool::fixed(std::path::Path::new(&dir)).expect("fresh PRC1 pool"));
+        } else if let Some(target) = volatile_target {
             assert!(target.is_absolute() && target.starts_with("/dev/shm") && target.file_name()==Some("pieces".as_ref()));
             fs::create_dir(target).unwrap_or_else(|_| die("volatile piece target must be fresh"));
             std::os::unix::fs::symlink(target, &dir).unwrap_or_else(|_| die("refusing to replace piece path"));
@@ -117,7 +133,7 @@ impl PieceCutter {
         }
         let width = 64 - (n.leading_zeros()) as u32;
         let mut pc = PieceCutter {
-            prefix: prefix.to_string(), dir, n, window, width,
+            prefix: prefix.to_string(), dir, n, window, width, pool,
             band_size: 65536, next: 0, index: 0, band_start: 0,
             pend_c: 0, pend_len: 0, pend_head: 0, pend_tail: 0,
             pend_head_rank: 0, have_pending: false,
@@ -157,6 +173,7 @@ impl PieceCutter {
         if !self.have_pending { return; }
         let predicted = self.band_base_rank + self.band_cum_len;
         if predicted != self.pend_head_rank {
+            assert!(self.pool.is_none(), "non-contiguous run in fenced v8 stream");
             self.run_exc.push([self.pend_head, self.pend_head_rank,
                                self.pend_head_rank + self.pend_len - 1]);
         }
@@ -207,11 +224,7 @@ impl PieceCutter {
         self.band_cum_len = 0;
         self.flow_wait(band_no);
         // v2_write_piece (PRC1)
-        {
-            let tmp = format!("{}/p-{}-0.partial", self.dir, band_no);
-            let fin = format!("{}/p-{}-0", self.dir, band_no);
-            let mut f = fs::File::create(&tmp)
-                .unwrap_or_else(|_| die("create the piece tmp"));
+        let write_body = |f: &mut dyn Write| -> std::io::Result<()> {
             let mut hdr = [0u8; 44];
             hdr[0..4].copy_from_slice(&0x31435250u32.to_le_bytes());
             hdr[4..12].copy_from_slice(&band_no.to_le_bytes());
@@ -220,7 +233,7 @@ impl PieceCutter {
             hdr[24..32].copy_from_slice(&count.to_le_bytes());
             hdr[32..36].copy_from_slice(&self.width.to_le_bytes());
             hdr[36..44].copy_from_slice(&0u64.to_le_bytes());
-            f.write_all(&hdr).unwrap_or_else(|_| die("piece hdr"));
+            f.write_all(&hdr)?;
             let mut chars = Vec::with_capacity(count as usize);
             let mut lens = Vec::with_capacity(count as usize);
             let mut heads = Vec::with_capacity(count as usize);
@@ -228,10 +241,10 @@ impl PieceCutter {
             for &(c, l, h, tl) in &self.band {
                 chars.push(c); lens.push(l); heads.push(h); tails.push(tl);
             }
-            f.write_all(&chars).unwrap_or_else(|_| die("piece chars"));
+            f.write_all(&chars)?;
             let mut lb = Vec::with_capacity(count as usize * 4);
             for l in &lens { lb.extend_from_slice(&l.to_le_bytes()); }
-            f.write_all(&lb).unwrap_or_else(|_| die("piece lens"));
+            f.write_all(&lb)?;
             let w = self.width as u64;
             let words = ((w * count) + 63) / 64;
             let mut out = vec![0u64; words.max(1) as usize];
@@ -254,13 +267,23 @@ impl PieceCutter {
                 std::slice::from_raw_parts(
                     out.as_ptr() as *const u8,
                     out.len() * 8)
-            }).unwrap_or_else(|_| die("piece heads"));
+            })?;
             pack(&tails, &mut out);
             f.write_all(unsafe {
                 std::slice::from_raw_parts(
                     out.as_ptr() as *const u8,
                     out.len() * 8)
-            }).unwrap_or_else(|_| die("piece tails"));
+            })
+        };
+        if let Some(pool) = &mut self.pool {
+            assert!(self.index <= pool.runs, "fenced v8 run limit before PRC1 growth");
+            let bytes = v8_piece_pool::piece_bytes(self.width, count).expect("PRC1 wire geometry");
+            pool.publish(band_no, bytes, write_body).unwrap_or_else(|e| die(&format!("PRC1 pool: {e}")));
+        } else {
+            let tmp = format!("{}/p-{}-0.partial", self.dir, band_no);
+            let fin = format!("{}/p-{}-0", self.dir, band_no);
+            let mut f = fs::File::create(&tmp).unwrap_or_else(|_| die("create the piece tmp"));
+            write_body(&mut f).unwrap_or_else(|_| die("piece write"));
             f.sync_all().unwrap_or_else(|_| die("piece sync"));
             drop(f);
             fs::rename(&tmp, &fin).unwrap_or_else(|_| die("publish piece"));
@@ -289,6 +312,10 @@ impl PieceCutter {
         }
         self.flush_run();
         if !self.band.is_empty() { self.close_band(); }
+        if let Some(pool) = self.pool.take() {
+            assert_eq!(self.index, pool.runs, "fenced v8 run count");
+            pool.retire().expect("retire all private PRC1 slots before terminal");
+        }
         let mut terminal = Vec::from(*b"BPT1");
         for field in [(self.index - 1) / self.band_size, self.index, 0, 0] {
             terminal.extend_from_slice(&field.to_le_bytes());
@@ -308,6 +335,10 @@ impl PieceCutter {
             .unwrap_or_else(|_| die("publish terminal"));
     }
 }
+
+#[cfg(test)]
+#[path="v8_piece_pool_test.rs"]
+mod v8_piece_pool_test;
 
 #[cfg(test)]
 mod handoff_test {

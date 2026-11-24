@@ -1,0 +1,16 @@
+{
+  "base": "4f78134ba000a501ac6001422e23e934f59b0d49",
+  "debug_sink_sha256": "18293e035828c9b08df9ccbdfd629b10c640ec83a75994445ec617a8dba13adb",
+  "full_log_sha256": "c1bcfa21b1b8044e574df2cdfde19f547114e4a7c1d3ea34eb7953339c1c60ac",
+  "original_directory": "/tmp/v8-piece-slots-9EcqMV",
+  "process": "proc_6122",
+  "rc": 0,
+  "resource_ceilings": {
+    "cpu_quota": 1,
+    "shared_bytes": 805306368,
+    "swap_bytes": 0,
+    "time_s": 220
+  },
+  "scope": "Private synthetic wire and file lifetime tests + refusal-only CLI; not a real row/finish arm, throughput result or production grant.",
+  "utc": "2026-11-24T19:55:52.297531+00:00"
+}

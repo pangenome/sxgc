@@ -1,0 +1,11 @@
+test unit::v8_piece_pool_test::cutter_generated_stream_matches_wire_across_reuse_and_terminal ... ok
+test unit::v8_piece_pool_test::failures_precede_growth_or_publication_and_retain_evidence ... ok
+test unit::v8_piece_pool_test::open_handles_are_not_extra_extents_and_ack_is_not_unlink ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.13s
+test unit::handoff_test::only_pieces_move_and_their_bytes_are_unchanged ... ok
+test unit::handoff_test::row43_sink_keeps_wide_piece_endpoints_and_slice_escapes ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s
+test unit::sxls_batch_test::escape_publications_are_byte_identical ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+PASS 19 wrong geometry/profile/path/STOP/stale refusals; fresh start then refused empty input, no PRC1/terminal or product
+18293e035828c9b08df9ccbdfd629b10c640ec83a75994445ec617a8dba13adb  /tmp/v8-piece-slots-9EcqMV/build/debug/pfp_sort_r
