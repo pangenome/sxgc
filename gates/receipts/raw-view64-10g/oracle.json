@@ -1,0 +1,57 @@
+{
+  "affinity": [
+    0
+  ],
+  "after": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 271619456\nuser_usec 259129357\nsystem_usec 12490098\ncore_sched.force_idle_usec 0\nnr_periods 2798\nnr_throttled 1886\nthrottled_usec 1517173\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 2268\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "14680064000",
+    "memory.peak": "14680064000",
+    "memory.swap.max": "0"
+  },
+  "argv": [
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/raw-view64-10g-rsmbAB/oracle",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/raw-view64-10g-rsmbAB/raw",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/raw-view64-10g-rsmbAB/oracle-keys.u64",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/raw-view64-10g-rsmbAB/inverse.u64",
+    "14680064000",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/raw-view64-10g-rsmbAB/stop.requested",
+    "1795538258"
+  ],
+  "before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 1175675\nuser_usec 655261\nsystem_usec 520413\ncore_sched.force_idle_usec 0\nnr_periods 12\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "14680064000",
+    "memory.peak": "26677248",
+    "memory.swap.max": "0"
+  },
+  "counted_dir_sampled": 5090725994,
+  "io_caps": [
+    40449699072,
+    268435456
+  ],
+  "per_device_io": null,
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 0,
+    "cpu_s": 268.57,
+    "rchar": 2545339740,
+    "read_bytes": 17660719104,
+    "syscr": 310734,
+    "syscw": 1,
+    "wchar": 365,
+    "write_bytes": 4096
+  },
+  "rc": 0,
+  "sampled_rss": 12552691712,
+  "status": "COMPLETED",
+  "stop": null,
+  "wall_s": 278.590970617719,
+  "whole_dir_sampled_allocated": 15090786304
+}

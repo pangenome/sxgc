@@ -1,0 +1,89 @@
+{
+  "arms": {
+    "oracle": {
+      "cpu_s": 268.57,
+      "peak": 14680064000,
+      "per_device_io": null,
+      "read_bytes": 17660719104,
+      "sampled_rss": 12552691712,
+      "service_s": 278.590970617719,
+      "write_bytes": 4096
+    },
+    "view1": {
+      "carried": 63931736304,
+      "cold_barrier_s": 1.6088853208348155,
+      "cpu_s": 371.89,
+      "extended": 4422945847,
+      "groups_s": 102.947908,
+      "peak": 16733487104,
+      "per_device_io": null,
+      "plcp_s": 84.962591,
+      "proof_cpu_s": 110.212289,
+      "proof_s": 110.269668,
+      "read_bytes": 12545323008,
+      "ready_cpu_s": 260.68845,
+      "ready_s": 261.582891,
+      "rmq_s": 3.17202,
+      "sampled_rss": 14581698560,
+      "scan_s": 51.735356,
+      "scatter_s": 18.765015,
+      "service_s": 373.04249215032905,
+      "stripe_plcp_s": [
+        84.96257305
+      ],
+      "write_bytes": 8192
+    },
+    "view4": {
+      "carried": 63931736304,
+      "cold_barrier_s": 0.5518081495538354,
+      "cpu_s": 401.97,
+      "extended": 4422945847,
+      "groups_s": 27.878808,
+      "peak": 17186742272,
+      "per_device_io": null,
+      "plcp_s": 24.152144,
+      "proof_cpu_s": 110.858886,
+      "proof_s": 28.456208,
+      "read_bytes": 12545323008,
+      "ready_cpu_s": 289.9456,
+      "ready_s": 75.385557,
+      "rmq_s": 0.880328,
+      "sampled_rss": 14581932032,
+      "scan_s": 15.571331,
+      "scatter_s": 6.902946,
+      "service_s": 105.06565513741225,
+      "stripe_plcp_s": [
+        23.978753862,
+        23.968091627,
+        24.15209893,
+        24.123414259
+      ],
+      "write_bytes": 8192
+    }
+  },
+  "array_bound_10gb": 14586197448,
+  "counted_upper": 5094826112,
+  "four_over_one": {
+    "cpu_s": 1.0808841324047433,
+    "groups_s": 0.2708049978052978,
+    "plcp_s": 0.28426797859778075,
+    "proof_s": 0.25806015848347347,
+    "read_bytes": 1.0,
+    "ready_s": 0.28818993746804333,
+    "rmq_s": 0.2775291454656654,
+    "scan_s": 0.3009804552229234,
+    "scatter_s": 0.36786253568142635,
+    "service_s": 0.28164527459534766
+  },
+  "max_aligned_byte_lcp": 699513,
+  "modeled_bound_100gb": 145744266192,
+  "parallel_goal_met": true,
+  "roots": {
+    "nav_root": "791c1c39b56c9b793f6ed75eada4f39b02420628e580370ede7fd7c2c6e8a157",
+    "query_root": "4fe906b815e8223d8030aa93cd04961b3edbafbed6ae0492ab039ababbd25747",
+    "raw_root": "f3c9805bbb6232630705d634458ae1a2ca0fe281e5a3da7c6aa9af69ba5d1328"
+  },
+  "scope": "10 GB raw + previously certified inverse -> resident parse-start view, then full ordered-field attestation. Not raw-only, full byte suffix stream, product or 100 GB measurement.",
+  "sum_aligned_byte_lcp": 68354682151,
+  "verified_navigation": true
+}

@@ -1,0 +1,7 @@
+01b9bebfbcac0355fdb4ca8dc94497a7c30928bc
+g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+Copyright (C) 2023 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+PASS 39 raw+inverse views at 1/2/4 workers; 38 direct raw oracles, 1 predicted quadratic-work refusals, independent Python shard hashes and exact malformed-rank/grant/STOP refusals

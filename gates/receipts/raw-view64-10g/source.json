@@ -1,0 +1,23 @@
+{
+  "artifacts": {
+    "admission.json": "1d47d06fe4d1196c61ef44eb5e7776d9de4f41d134d8a515d7830faf17c3816a",
+    "build-and-test.log": "f5c581da9e765f7791899170582892f115de4004b663bbad7b437b1588fed439",
+    "copy.json": "54012313ba3bfde9c29155f82ab6ed216487dfb21b336a652fd09b48e145b53d",
+    "exits.log": "928545ac770c3bb5fd9deffae18a0412ee769ddd6c2eb1803fd1d0a3962c267c",
+    "oracle.json": "d5fa62e8f59abc9069d453edeefc830799d2a8862f90d6957179642a687d6f79",
+    "oracle.log": "73db356aaebc6b54a03e64eb5fe9fca52af2329781af393483bceff717b78222",
+    "score.json": "27d05a8912317bfb29f6b8892886e44717b843b5005284aebb38bfeb4a39101a",
+    "tools.json": "babfa80d2a5af6214531c6748550bce6d3144591294fe8cb32e9497c9b28236d",
+    "view1-cold.json": "93242e34ff3e30a0dd0cfca7c9a86311954498255a9712ce90af1980f281a9fe",
+    "view1.json": "d8cf9bb7799c64fe044610bb06e7f6d3cb52b6ee95704b18e757e2915b7f5377",
+    "view1.log": "0113863da79aa5c54b441438c7b2370b2f9ed627bf4fec5102bb376dfcbfd8f6",
+    "view4-cold.json": "7fc46b2843cced6a0c1ca43b56a1a3d2e764eccfe042dad803c7d29c97abb92b",
+    "view4.json": "fadd2ecf3df0deeb22287606f0645e99cf6556d3b076b250a934b477baf5f8f0",
+    "view4.log": "68513b89078374e6e633dc0de5c4ec1a90c57a74384ce2c2f207ccd025ace9b9",
+    "witness.json": "c86ef110618a68272595b964c6575dd42dfd5244dbb7fa0880ceb94621122fda"
+  },
+  "launcher": "proc_2928",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/raw-view64-10g-rsmbAB",
+  "rc": 0,
+  "revision": "01b9bebfbcac0355fdb4ca8dc94497a7c30928bc"
+}

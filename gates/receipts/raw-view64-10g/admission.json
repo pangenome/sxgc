@@ -1,0 +1,46 @@
+{
+  "admitted_unix": 1795537060,
+  "cores": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "counted_upper": 5094826112,
+  "deadline": 1795539280,
+  "parent": 3482309,
+  "paths": {
+    "inverse.u64": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/raw64-p1-10g-TyJqjC/inverse.u64",
+    "oracle-keys.u64": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pos64-front-10g-XTNbSv/columns/keys.u64",
+    "raw": "/mnt/nvme2n1/erikg/pf-10gb.txt"
+  },
+  "prior_scores": [
+    "518e22ba6052a15607e0b3961448881d67a3946cfccb51c7860f8066d9ccf25c",
+    "c6b8b58ee87c0bbb3ce98c079358ce3f08034d78d59f792b4a625b9459474edd"
+  ],
+  "rev": "01b9bebfbcac0355fdb4ca8dc94497a7c30928bc",
+  "scope": "raw+inverse prepared navigation only, 4 then 1 workers. Separate verifier is the sole key witness reader. No full-text rows or next launch.",
+  "stats": {
+    "inverse.u64": [
+      66308,
+      33290845327,
+      2545315904,
+      1795535346765124653,
+      1795535347877124576
+    ],
+    "oracle-keys.u64": [
+      66308,
+      2553337066,
+      2545315904,
+      1795535939186083485,
+      1795535939954083432
+    ],
+    "raw": [
+      66308,
+      31764165843,
+      10000000000,
+      1792357584906949472,
+      1792357584906949472
+    ]
+  }
+}

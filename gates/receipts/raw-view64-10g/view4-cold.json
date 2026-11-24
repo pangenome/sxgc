@@ -1,0 +1,8 @@
+{
+  "only_inputs": [
+    "raw",
+    "inverse.u64"
+  ],
+  "resident_pages": 0,
+  "wall_s": 0.5518081495538354
+}
