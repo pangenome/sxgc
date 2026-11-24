@@ -98,8 +98,12 @@ Refuse a changed publication, kernel hash, or less than 15 × measured 10 GB
 (copy+cold + raw scan wall) + 180 seconds remaining; original cutoff
 1795531169 Unix seconds cannot be extended by the caller. Only after passing
 these checks does it inspect contract metadata. It reads the fixed raw source,
-hashes a new unlinked private copy, checks the manifest SHA, fsync/evicts and
-mincores all copy pages, scans it exactly once and checks SHA again. The copy
+hashes a new unlinked private copy, checks the manifest SHA, reopens it read-only
+(mode 0400, closes its sole writable FD), fsync/evicts and mincores all copy
+pages, scans it exactly once and checks SHA again. Even charging the private
+copy + the entire 192 MiB RAM grant + 64 MiB of helper/receipt margin gives
+100,268,435,456 B, below 2N. The banked small v10 and stalled-credit receipts
+are checked for provenance, not as a 100 GB working-set proof. The copy
 is closed on success or failure. Same chunk kernel, fixtures, IO guards and
 192 MiB / one CPU / no swap grant as calibration. `MEASURED_100G_SCAN_ONLY`
 records census, conservative packing bounds and separately metered phases;

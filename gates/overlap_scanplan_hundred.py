@@ -1,4 +1,5 @@
 """Conditional fixed-input 100 GB scan only. No product or downstream dispatch."""
+import fcntl
 import hashlib
 import json
 import math
@@ -107,6 +108,15 @@ def check_sweep(directory: Path, selected: str) -> None:
              json.loads((arm/'build.json').read_bytes())['profile'] == arm.name, 'incomplete/misfiled sweep arm')
 
 
+def v10_fixture(bank):
+    # Product identity of the small rehearsal, NOT a production resource bound.
+    for wire in ('narrow','row43'):
+        v=json.loads((bank/f'{wire}.json').read_bytes());need(v['wire']==wire and v['n']==6311445 and
+            v['rows']==6311446 and v['verified_equal_bytes']==8847248 and v['boundary_queries_passed'] is True and
+            v['members']==[1,4,5,7,10,11,12,13,15,20] and v['full_sha256']=='55eea26f9d735664204fb58f33f7c601477bfbecfb8f34d298e6425ce92bcb07' and
+            v['relay']=='relay rows=6311446 bands=193 credit=1' and v['finish_sha256']==contract.TOOLS[contract.CACHE/'xsa_finish'],'small v10 relay identity')
+    s=json.loads((bank/'stalled.json').read_bytes());need(s['product_published'] is s['verification_published'] is False and s['relay']=='STOP_OBSERVED phase=v10-relay','small v10 stalled credit')
+
 def admitted(deadline: int) -> dict:
     need(__debug__, 'assertions required'); budget(deadline, 0)
     rev = defaults.published_main(LIVE)
@@ -129,7 +139,7 @@ def admitted(deadline: int) -> dict:
     from overlap_ten_dict_grid import replay
     replay(defaults.BANK/'native-grid-10g')
     decision = defaults.decision('10g')
-    check_sweep(defaults.BANK/'scale-10g',decision['profile'])
+    check_sweep(defaults.BANK/'scale-10g',decision['profile']);v10_fixture(defaults.BANK/'v10-relay')
     docs = files[DOCS[0]].decode()
     verify_default(files[DEFAULT],docs,decision)
     s = json.loads(files[SCAN]); clock = calibration_clock(s,json.loads(files[FRONT])['census'])
@@ -140,6 +150,9 @@ def admitted(deadline: int) -> dict:
                 profile=decision['profile'], under_2x=decision['normalized_speed_target_met'],
                 calibration_kernel=s['kernel_sha256'], calibration_clock_s=clock, required_s=budget(deadline,clock))
 
+
+def reservation(n):
+    return n+(192<<20)+gate.MARGIN
 
 def scan(d: Path, deadline: int, pin: str, report: dict) -> None:
     def live():
@@ -160,11 +173,15 @@ def scan(d: Path, deadline: int, pin: str, report: dict) -> None:
          metadata['manifest_only_sha256'] == contract.CORPUS, 'contract metadata mismatch')
     original = gate.identity(source); free = shutil.disk_usage(d).free
     need(stat.S_ISREG(source.lstat().st_mode) and original[2] == n and free >= n+(1<<30), 'source/space')
+    # Even if the private unlinked copy is charged, its known N bytes plus the
+    # entire working RAM grant and private helper/receipt margin stay under 2N.
+    reserve=reservation(n);need(reserve<=2*n,'conservative scan reservation')
     report.update(metadata_match=True, manifest_sha256=contract.CORPUS, source=str(source),
-                  source_stat=original, free_before=free, private_copy_budget=n)
+                  source_stat=original, free_before=free, private_copy_budget=n,
+                  conservative_scan_reservation=reserve, counted_limit=2*n)
     budget(deadline,ticket['calibration_clock_s']); live()
     with tempfile.TemporaryFile(dir=d) as raw:
-        fd = raw.fileno(); os.fchmod(fd,0o700); st = os.fstat(fd)
+        fd = raw.fileno(); st = os.fstat(fd)
         need(stat.S_ISREG(st.st_mode) and st.st_nlink == st.st_size == 0 and
              st.st_uid == os.getuid() and (st.st_dev,st.st_ino) != original[:2], 'not a new anonymous private file')
         prep = gate.Phase(d,report,'copy_cold',deadline,n+gate.MARGIN,n+gate.MARGIN)
@@ -176,14 +193,20 @@ def scan(d: Path, deadline: int, pin: str, report: dict) -> None:
                 raw.write(block); h.update(block); left -= len(block)
             need(not src.read(1) and gate.identity(source)==original, 'source changed')
         raw.flush(); need(os.fstat(fd).st_size == n and h.hexdigest()==contract.CORPUS, 'manifest/copy mismatch')
-        gate.cold(Path(f'/proc/self/fd/{fd}')); raw.seek(0); prep.guard(True)
-        report.update(copy_sha256=h.hexdigest(), private_copy_bytes=n, mincore_resident_pages=0,
-                      mincore_checked_pages=(n+os.sysconf('SC_PAGE_SIZE')-1)//os.sysconf('SC_PAGE_SIZE'))
-        phase = gate.Phase(d,report,'raw_scan',deadline,n+gate.MARGIN,gate.MARGIN)
-        c = census(lib,raw,n,phase.guard); phase.guard(True)
-        need(c['sha256'] == contract.CORPUS and phase.record['worker_io']['read_bytes'] > 0, 'scan SHA/cold IO')
-        report.update(census=c,models=[plan(c,size) for size in (256<<20,1<<30)],
-                      private_copy_allocated=os.fstat(fd).st_blocks*512, free_after_scan=shutil.disk_usage(d).free)
+        os.fchmod(fd,0o400)
+        with open(f'/proc/self/fd/{fd}','rb') as frozen:
+            raw.close()  # the only writable reference to the anonymous inode
+            fd=frozen.fileno();need(fcntl.fcntl(fd,fcntl.F_GETFL)&os.O_ACCMODE==os.O_RDONLY,'unsealed copy')
+            gate.cold(Path(f'/proc/self/fd/{fd}')); prep.guard(True)
+            report.update(copy_sha256=h.hexdigest(), private_copy_bytes=n, immutable_read_fd=True, mincore_resident_pages=0,
+                          mincore_checked_pages=(n+os.sysconf('SC_PAGE_SIZE')-1)//os.sysconf('SC_PAGE_SIZE'))
+            phase = gate.Phase(d,report,'raw_scan',deadline,n+gate.MARGIN,gate.MARGIN)
+            c = census(lib,frozen,n,phase.guard); phase.guard(True)
+            need(c['sha256'] == contract.CORPUS and phase.record['worker_io']['read_bytes'] > 0, 'scan SHA/cold IO')
+            alloc=os.fstat(fd).st_blocks*512
+            report.update(census=c,models=[plan(c,size) for size in (256<<20,1<<30)], private_copy_allocated=alloc,
+                          whole_run_allocated_before_receipt=alloc+sum(p.stat().st_blocks*512 for p in [d,*d.iterdir()]),
+                          free_after_scan=shutil.disk_usage(d).free)
     after = report['cgroup_after'] = gate.cg_info(); cg_check(after); live()
     report['status'] = 'MEASURED_100G_SCAN_ONLY'
 

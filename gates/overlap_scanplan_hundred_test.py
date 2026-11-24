@@ -34,6 +34,9 @@ def example():
 
 
 class Hundred(unittest.TestCase):
+    def test_v10_and_conservative_reservation(self):
+        hundred.v10_fixture(hundred.defaults.BANK/'v10-relay');self.assertLessEqual(hundred.reservation(hundred.contract.N),2*hundred.contract.N)
+
     def test_calibration_replay(self):
         s,bank=example(); self.assertTrue(all(model['ranges'] is None for model in s['models']))
         self.assertEqual(hundred.calibration_clock(s,bank),20)
@@ -102,11 +105,11 @@ class Hundred(unittest.TestCase):
                 ticket=dict(commit='admitted',calibration_kernel='kernel',calibration_clock_s=1)
                 mock(hundred,'admitted',return_value=ticket); pin=hundred.sha(json.dumps(ticket,sort_keys=True).encode())
                 mock(hundred.defaults,'published_main',return_value='other' if outcome=='moved' else 'admitted')
-                mock(hundred.gate,'exclusive'); mock(hundred,'budget'); mock(hundred.time,'time',return_value=100)
+                mock(hundred.gate,'exclusive'); mock(hundred,'budget');mock(hundred,'reservation',return_value=2*len(data)); mock(hundred.time,'time',return_value=100)
                 inventory=mock(hundred.contract,'inventory',return_value=dict(corpus_path=str(source),corpus_stat_bytes=len(data),manifest_only_sha256=hundred.contract.CORPUS))
                 mock(hundred.gate,'build_kernel',side_effect=lambda d,t,r,g:r.update(kernel_sha256='kernel'))
                 def inspect_private(path):
-                    self.assertEqual(path.stat().st_nlink,0); self.assertEqual(path.stat().st_mode&0o777,0o700)
+                    self.assertEqual(path.stat().st_nlink,0); self.assertEqual(path.stat().st_mode&0o777,0o400)
                     self.assertFalse(path.samefile(source)); self.assertEqual(path.read_bytes(),data)
                 cold=mock(hundred.gate,'cold',side_effect=inspect_private)
                 mock(hundred.gate,'current_io',return_value=None)
