@@ -1,0 +1,24 @@
+{
+  "artifacts": {
+    "admission.json": "fe5172e837b2ff1630b4715c7fcd533e60e0fd2fb85670af130ef2e67a5edace",
+    "build-and-test.log": "016eecf39a32618f0a53fee2d32423d80564987c460ccb406fb6cbc4392d830d",
+    "build.json": "2af0f1f66f71bc7d9f0c8c7b1d34c9d8c4b0cb21a88c9a40f5dc44a3817b6c2f",
+    "columns-check.json": "22418e7e07d724499c15dbe6bf24ee911093da2aaf710b2baa21cd82a65c3076",
+    "columns-check.log": "5966b1eef914d662df6120ad14241fc6bef1aeef0d57b9e148551b30b184b806",
+    "copy.json": "33c2b28c5729a818c51d13615e658476a80869e22d2c8e0aea4dd2fdd7813a70",
+    "exits.log": "fbf724c7053bcaf2dbfa7cfa43bf59d88421968d92d4fbbf7c74df0d5f9a32f9",
+    "front.json": "2913bd744d23f18177033e5ba7a3fb0f7ffb2c8ab10bcc8c75f57b10b5649651",
+    "front.log": "8ea48998b8c22d86614688c11bf87bc52faef9f5e0febc9fca55a4488feab8b0",
+    "identity.json": "cb08eae23a0c9474055efb7fe1348e8bdb7576b230bd6990850a4a82ea4da4c0",
+    "rank.json": "c453386f73b8d2187c7f8ab9da4dbcd154c1c946c719d4804753b8928d25d5e9",
+    "rank.log": "bb7d800948c8842a8229f1f5009382ddad1279b81b776dc55097d341316dd407",
+    "ranks-check.json": "1df138687f65ed8db5e376257a6926d008a0443e0126f6396c1ac505ab015c72",
+    "ranks-check.log": "ac87b2d7515447102a2555ad472fee82d9755b3676fead44bfaf8f7bbb5e9b83",
+    "score.json": "518e22ba6052a15607e0b3961448881d67a3946cfccb51c7860f8066d9ccf25c",
+    "tools.json": "965d411dc1634f2ce50b839c6ee04238e6fd7b843b15ff3d54b141a5ae1461d4"
+  },
+  "launcher": "proc_0ac1",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/raw64-p1-10g-TyJqjC",
+  "rc": 0,
+  "revision": "f060b101d40b18a99f2dfdff4c8ef3ebf96b23a4"
+}

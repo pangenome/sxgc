@@ -1,0 +1,38 @@
+{
+  "admitted_unix": 1795535190,
+  "cores": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "counted_upper": 17975679784,
+  "deadline": 1795536690,
+  "parent": 2160475,
+  "prior_score": "3e05977d201c7afda0487314df9a22bf736154759da687a2c40869660776b37d",
+  "raw_stat": [
+    66308,
+    31764165843,
+    10000000000,
+    1792357584906949472,
+    1792357584906949472
+  ],
+  "reference_stats": {
+    "dictionary.packed": [
+      66308,
+      8622678848,
+      11942962780,
+      1795486824470496500,
+      1795486824470496500
+    ],
+    "parse.u32": [
+      66308,
+      8592385746,
+      1272657952,
+      1795486831560496007,
+      1795486831560496007
+    ]
+  },
+  "rev": "f060b101d40b18a99f2dfdff4c8ef3ebf96b23a4",
+  "scope": "one fixed raw-to-P1 stage; no byte suffix stream, product or scale launch"
+}

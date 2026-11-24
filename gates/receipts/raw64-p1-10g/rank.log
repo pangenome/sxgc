@@ -1,0 +1,17 @@
+HEAD rows=318164488 tiles=128 distinct=234472723 max_group=375961 unresolved=99082360 radix_passes=5 keys_above_u32=211844700 requested=4 team=4
+REFINE depth=2 unresolved=36237586 max_group=368988
+REFINE depth=4 unresolved=16187355 max_group=355805
+REFINE depth=8 unresolved=10922483 max_group=330142
+REFINE depth=16 unresolved=7512480 max_group=281414
+REFINE depth=32 unresolved=5242093 max_group=192430
+REFINE depth=64 unresolved=3686911 max_group=41971
+REFINE depth=128 unresolved=2640878 max_group=2797
+REFINE depth=256 unresolved=1886779 max_group=1744
+REFINE depth=512 unresolved=1281662 max_group=1488
+REFINE depth=1024 unresolved=737697 max_group=976
+REFINE depth=2048 unresolved=353056 max_group=131
+REFINE depth=4096 unresolved=184136 max_group=2
+REFINE depth=8192 unresolved=99986 max_group=2
+REFINE depth=16384 unresolved=25310 max_group=2
+REFINE depth=32768 unresolved=0 max_group=0
+PARSE64 rows=318164488 key_bits=64 rank_bits=64 array_bound=12739162432 rounds=15 initial_s=4.639520 refine_s=4.344984 certify_s=1.460141 write_fsync_s=1.097271 prepared_s=12.526905 cpu_s=41.036711 permutation_recurrence=1

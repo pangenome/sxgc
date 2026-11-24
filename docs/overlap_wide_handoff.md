@@ -1,11 +1,11 @@
 # 100,000,000,000-byte path: measured milestone and next fit decisions
 
-**As of the 14:39:29 UTC experimental cutoff, 2026-11-24.** No more payloads in this window. Product HOLD. Keep pinned source/tools, private originals, and the raw-front prelaunch refusal; don't repeat completed timings. [Contract](../OVERLAP_100G_CONTRACT.md).
+**Daytime update, 2026-11-24 (Memphis).** The overnight experimental cutoff remains in the record. The operator renewed work; the previously unstarted 10 GB raw front now has its own measured result. Product HOLD. Keep pins, private originals and the first prelaunch refusal; don't repeat completed timings. [Contract](../OVERLAP_100G_CONTRACT.md).
 
 | Endpoint | Evidence | Still missing |
 |---|---|---|
 | Prepared 10 GB text's P1 occurrences → fsynced `inverse.u64` | [real 4→1 pair](../gates/receipts/parse64-10g/): 318,164,488 ranks, 203,696,244 addresses above u32, same SHA after both independent proofs. 11.652 / 33.759 s; 2.897× speedup, 1.128× CPU, same attributed IO to rounding. | This is not raw-input time, `>2^32` ranks, or a byte index. |
-| Raw → canonical [wide columns](../xsa/pfp/FRONT64.md) → ranks | Real native handoffs on generated inputs, no intermediate u32 IDs. The planned fixed raw 10 GB arm [did not start](../gates/receipts/raw64-p1-prelaunch/). | With a **new authorized window** and unchanged headroom/grants, verify full old/new record+occurrence correspondence and certified rank SHA. No raw timing or result yet. |
+| Raw → canonical [wide columns](../xsa/pfp/FRONT64.md) → ranks | [Daytime 10 GB run](../gates/receipts/raw64-p1-10g/): 122.281 s raw→wide columns, 12.880 s prepared→ranks; 138.361 s continuous incl. cold barrier. All records, occurrences and ranks verified. Four lanes occupied 94.84% of the bin-order loop. | The straightforward front still reserves 164.25 GiB incl. input at 100 GB. Test a smaller position-based order representation against these exact native columns, not a repeat of the baseline. |
 | Wide ranks/words → [ranked occurrences and aligned LCE](../xsa/pfp/RANK_VIEW64.md) | Every parse-start byte LCP, predecessor and list entry agrees with independent raw suffix order on [fixtures](../gates/receipts/rank-view64-fixtures/). No signed PLCP, dense `loc` or explicit occurrence sort. | Real column consumer clock/peak, usable scale layout, bounded parallel descriptor ranges/merge, concurrent v10 raw-row verifier/relay and exact finish. |
 
 ## A concrete fit route to try, not implemented or admitted

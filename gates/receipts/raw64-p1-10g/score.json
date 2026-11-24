@@ -1,0 +1,111 @@
+{
+  "bin_balance": {
+    "order": {
+      "active_fraction": 0.9484450657731078,
+      "active_lane_s": 317.420467391,
+      "label_lane_s": 49.30992825,
+      "lane_active_s": [
+        78.105832595,
+        77.822036863,
+        83.668276226,
+        77.824321706
+      ],
+      "lane_rows": [
+        72175349,
+        86076848,
+        75168277,
+        84744014
+      ],
+      "longest_bin": 518,
+      "longest_bin_fraction": 0.3416594690962227,
+      "longest_bin_rows": 22553017,
+      "longest_bin_s": 28.586186033,
+      "sort_lane_s": 268.11053914,
+      "wall_s": 83.668648519
+    },
+    "publish": {
+      "active_fraction": 0.9688438764170562,
+      "active_lane_s": 49.809059898,
+      "label_lane_s": 0.0,
+      "lane_active_s": [
+        12.852098733,
+        12.351593433,
+        12.302877381,
+        12.302490352
+      ],
+      "lane_rows": [
+        82597640,
+        78403985,
+        79074031,
+        78088832
+      ],
+      "longest_bin": 518,
+      "longest_bin_fraction": 0.2746829181323274,
+      "longest_bin_rows": 22553017,
+      "longest_bin_s": 3.53041864,
+      "sort_lane_s": 0.0,
+      "wall_s": 12.852705454
+    }
+  },
+  "cold_barrier_s": 3.1952236611396074,
+  "counted_upper": 17975679784,
+  "front": {
+    "arrays": "17648530632",
+    "descriptors": "9129290112",
+    "dictionary_bytes": "12880853672",
+    "k": "234472723",
+    "key_bytes": "2545315904",
+    "keys_above_u32": "211844700",
+    "m": "318164488",
+    "max_bin": "22553017",
+    "max_phrase": "88468",
+    "n": "10000000000",
+    "nonempty_bins": "2380",
+    "partition_s": "2.330827",
+    "publish_dict_s": "14.851323",
+    "publish_keys_s": "3.140114",
+    "raw_s": "122.260516",
+    "scan_s": "18.269324",
+    "sort_dedup_s": "83.668929",
+    "starts_above_u32": "181581998",
+    "team": "4"
+  },
+  "peaks": [
+    30612901888,
+    30612901888,
+    14680064000,
+    14680064000
+  ],
+  "prepared_to_rank_s": 12.879986304789782,
+  "rank_sha256": "b2adba88d6bd0bfee923928ba84cb4c9d7bc53eef17a84472fd6965bec8ec89f",
+  "raw_to_columns_s": 122.28148436453193,
+  "raw_to_rank_s": 138.3613829864189,
+  "scope": "10000000000 raw bytes through fsynced inverse.u64 only; not the byte-level index or a 100 GB authorization.",
+  "verified_intermediate": true,
+  "worker_io_cpu": {
+    "columns-check": {
+      "cpu_s": 48.86,
+      "per_device_io": null,
+      "read_bytes": 28641800192,
+      "write_bytes": 4096
+    },
+    "front": {
+      "cpu_s": 453.3,
+      "per_device_io": null,
+      "read_bytes": 10000003072,
+      "write_bytes": 15426256896
+    },
+    "rank": {
+      "cpu_s": 41.35,
+      "per_device_io": null,
+      "read_bytes": 2545319936,
+      "write_bytes": 2545324032
+    },
+    "ranks-check": {
+      "cpu_s": 12.38,
+      "per_device_io": null,
+      "read_bytes": 5090639872,
+      "write_bytes": 4096
+    }
+  }
+}
