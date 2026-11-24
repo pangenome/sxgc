@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO=$PWD
-case ${1:-narrow} in narrow|wide|wide-handoff|packed-raw|packed-radix-1|packed-radix-2|packed-radix-4) profile=${1:-narrow};; *) echo 'usage: overlap_resident_gate.sh [narrow|wide|wide-handoff|packed-raw|packed-radix-{1,2,4}]' >&2; exit 2;; esac
+case ${1:-narrow} in narrow|wide|wide-handoff|packed-raw|packed-radix-1|packed-radix-2|packed-radix-4|packed-radix-2-batch|packed-radix-4-batch) profile=${1:-narrow};; *) echo 'usage: overlap_resident_gate.sh [narrow|wide|wide-handoff|packed-raw|packed-radix-{1,2,4}|packed-radix-{2,4}-batch]' >&2; exit 2;; esac
 (cd xsa && cargo build --release -p pfp --bin pfp_sort_r --bin overlap_resident)
 if [[ $profile != narrow ]]; then XSA_RESIDENT_WIDE_DICT=1 python3 gates/overlap_resident_test.py; else XSA_RESIDENT_WIDE_DICT=0 python3 gates/overlap_resident_test.py; fi
 ROOT=/mnt/nvme2n1/erikg/TAPEREADER; S=$ROOT/sandbox; R=$ROOT/climb/rung1

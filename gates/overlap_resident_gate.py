@@ -93,7 +93,7 @@ def oracle(d,tools,cfg):
     save(d/'oracle.json',dict(rc=rc,process=stats,sampled_peak_rss=peak,cgroup=cg_info(),wall_including_wait_s=time.monotonic()-start))
     assert rc==0 and f'ORACLE rows={cfg.n+1} independent_final_rank={cfg.n+1} all_adjacent_sa_lcp_bwt_verified=1' in (d/'oracle.log').read_text()
 
-def radix_lanes(profile):return {'packed-radix-1':1,'packed-radix-2':2,'packed-radix-4':4}.get(profile,1)
+def radix_lanes(profile):return {'packed-radix-1':1,'packed-radix-2':2,'packed-radix-4':4}.get(profile.removesuffix('-batch'),1)
 
 def pack_front(d,tools,cfg,lanes=1):
     """Produce *fresh* columns from private cold raw text. The packer itself
@@ -152,7 +152,7 @@ def pack_front(d,tools,cfg,lanes=1):
     save(d/'front-end.json',front); say('PACKED_FRONT',m,k,peak_counted,round(front['wall_s'],3)); return front
 
 def build(d,tools,profile):
-    assert profile in ('narrow','wide','wide-handoff','packed-raw','packed-3g','packed-3g-bitmap','packed-10g-bitmap','packed-radix-1','packed-radix-2','packed-radix-4'); cfg=config(profile); N=cfg.n
+    assert profile in ('narrow','wide','wide-handoff','packed-raw','packed-3g','packed-3g-bitmap','packed-10g-bitmap','packed-radix-1','packed-radix-2','packed-radix-4','packed-radix-2-batch','packed-radix-4-batch'); cfg=config(profile); N=cfg.n
     lanes=radix_lanes(profile);row_queue=lanes*2*65536*12 if lanes>1 else 0
     bitmap=profile in ('packed-3g-bitmap','packed-10g-bitmap') or profile.startswith('packed-radix-')
     assert (CG/'memory.max').read_text().strip()==str(cfg.shared_gib*GIB) and (CG/'memory.swap.max').read_text().strip()=='0'
@@ -224,7 +224,7 @@ def build(d,tools,profile):
                     tape.unlink(); retired=True; say('PACKED_RETIRE bytes='+str(front['columns'][tape.name]))
                 # Don't charge a sort's idle wall to the finish. Frozen data path.
                 launch('sink',[binary_dir/'pfp_sort_r',*common,'--out-prefix',pref,'--bands',bands,'--scratch-budget-bytes',str(2*N-retained)],
-                       env=dict(env,**extra_env,XSA_TEST_RESIDENT_TRIPLES='1'),stdin=w['resident'].stdout,stdout=sp.DEVNULL); w['resident'].stdout.close()
+                       env=dict(env,**extra_env,XSA_TEST_RESIDENT_TRIPLES='1',XSA_BATCH_SXLS_ESCAPES=str(int(profile.endswith('-batch')))),stdin=w['resident'].stdout,stdout=sp.DEVNULL); w['resident'].stdout.close()
                 finish_env=dict(env,LD_PRELOAD=str(tools/'monitor.so'),XSA_GATE_PRIVATE_STOP=str(flag)); fds=()
                 if bitmap:
                     # Only this finish child can create the one mapped file in
@@ -265,6 +265,7 @@ def build(d,tools,profile):
     rc=dict(profile=profile,rc=exitcode,sampled_wall_s=times,phase_sampled_shared=samples,process=proc,sampled_peak_rss=peaks,
             counted_sampled_peak=counted_peak,counted_at_peak=at_peak,individual_sampled_peaks=each,whole_dir_sampled_allocated=disk_peak,
             wall_s=time.monotonic()-start,shared_before=cg0,shared_after=cg_info(),stop=flag.exists())
+    if profile.startswith('packed-radix-'):rc['sxls_batched']=profile.endswith('-batch')
     if packed:
         rc.update(raw_to_product_s=time.monotonic()-raw_start,raw_front_wall_s=front['wall_s'],packed_tape_retired=retired,
                   raw_counted_highwater=max(front['counted_front_peak'],counted_peak),raw_dir_sampled_allocated=max(front['sampled_allocated'],disk_peak),

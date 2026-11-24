@@ -141,6 +141,7 @@ fn main() {
                 die("resident triples: bounded sandbox/rung1 or explicit exact 3 GB product sink only");
             }
         } else if file_n > 101_000_000 || std::env::var_os("TRIE_TAP").is_some(){die("overlap fixture path: <=101 MB, product sink only");}
+        eprintln!("SS_SXLS_WRITER batched_escapes={}", laws::env_u64("XSA_BATCH_SXLS_ESCAPES",0)==1);
         let volatile=std::env::var_os("XSA_GATE_VOLATILE_PIECES");
         assert!(volatile.is_none() || resident_sink,"volatile handoff is a fresh resident-product gate only");
         let mut cutter=unit::PieceCutter::with_piece_target(&out_prefix,file_n+1,laws::env_u64("CROSS_V2_PIECE_WINDOW",1100),volatile.as_deref().map(Path::new));
