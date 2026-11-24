@@ -4,6 +4,7 @@
 use super::*;
 use std::{
     mem::size_of,
+    os::unix::fs::FileTypeExt,
     sync::mpsc::{sync_channel, Receiver, SyncSender},
     thread,
 };
@@ -59,9 +60,10 @@ const CREDITS: usize = 2;
 pub(super) struct Mode {
     lanes: usize,
     step: usize,
+    pub async_audit: bool,
 }
 impl Mode {
-    pub fn from_env(n: usize) -> Self {
+    pub fn from_env(n: usize, audit: Option<&fs::File>) -> Self {
         let number = |var, dflt| {
             std::env::var(var)
                 .map(|x| x.parse::<usize>().expect("radix integer option"))
@@ -75,7 +77,15 @@ impl Mode {
                 && (n <= 1_000_000 || step >= 2048),
             "radix lane/step outside grant"
         );
-        Self { lanes, step }
+        let async_audit = cfg!(all(target_os = "linux", target_arch = "x86_64"))
+            && lanes > 1
+            && std::env::var("XSA_RESIDENT_ASYNC_AUDIT").as_deref() == Ok("1")
+            && audit.is_some_and(|f| f.metadata().expect("audit fd").file_type().is_fifo());
+        Self {
+            lanes,
+            step,
+            async_audit,
+        }
     }
     fn blocks(self) -> usize {
         self.lanes * CREDITS * BLOCK_BYTES
@@ -90,6 +100,7 @@ impl Mode {
             + self.blocks()
             + self.lanes * (3 << 20)
             + (1 << 20)
+            + usize::from(self.async_audit) * audit_tee::RESERVE
     }
 }
 
@@ -292,7 +303,13 @@ impl<C: Coord> Sweep<'_, C> {
             return c;
         }
         let tiles = self.tiles(mode);
-        out.send(); // single global END row
+        // Publish the global END to both branches before starting any data writer.
+        let pipe = if mode.async_audit {
+            Some(audit_tee::send_end(out))
+        } else {
+            out.send();
+            None
+        };
         let mut sum = Counts::default();
         let mut wait = Duration::ZERO;
         let (mut max_rows, mut blocks) = (0, 0u64);
@@ -328,42 +345,48 @@ impl<C: Coord> Sweep<'_, C> {
                     })
                     .expect("radix worker thread");
             }
-            // No per-row decode or comparison here. Per-lane credits mean a
-            // later interval can never consume the earliest interval's buffer.
-            for i in 0..tiles.len() {
-                let j = i % mode.lanes;
-                let (read, credit) = &pipes[j];
-                let mut rows = 0;
-                loop {
-                    let t = Instant::now();
-                    let packet = read.recv().expect("range worker gone");
-                    wait += t.elapsed();
-                    match packet {
-                        Packet::Data(mut bytes) => {
-                            assert!(
-                                bytes.len() % 12 == 0
-                                    && !bytes.is_empty()
-                                    && bytes.len() <= BLOCK_BYTES
-                            );
-                            let n = (bytes.len() / 12) as u64;
-                            rows += n;
-                            out.rows += n;
-                            out.write_block(&bytes);
-                            blocks += 1;
-                            bytes.clear();
-                            let _ = credit.send(bytes);
-                        }
-                        Packet::Done(id, c) => {
-                            assert_eq!(id, i);
-                            assert!(rows > 0);
-                            sum.add(c);
-                            break;
+            audit_tee::ordered(pipe, self.flag, mode.lanes * CREDITS, |mut tee| {
+                // No per-row decode or comparison here. Per-lane credits mean a
+                // later interval can never consume the earliest interval's buffer.
+                for i in 0..tiles.len() {
+                    let j = i % mode.lanes;
+                    let (read, credit) = &pipes[j];
+                    let mut rows = 0;
+                    loop {
+                        let t = Instant::now();
+                        let packet = read.recv().expect("range worker gone");
+                        wait += t.elapsed();
+                        match packet {
+                            Packet::Data(mut bytes) => {
+                                assert!(
+                                    bytes.len() % 12 == 0
+                                        && !bytes.is_empty()
+                                        && bytes.len() <= BLOCK_BYTES
+                                );
+                                let n = (bytes.len() / 12) as u64;
+                                rows += n;
+                                out.rows += n;
+                                if let Some(writer) = tee.as_deref_mut() {
+                                    writer.submit(bytes, credit, out);
+                                } else {
+                                    out.write_block(&bytes);
+                                    bytes.clear();
+                                    let _ = credit.send(bytes);
+                                }
+                                blocks += 1;
+                            }
+                            Packet::Done(id, c) => {
+                                assert_eq!(id, i);
+                                assert!(rows > 0);
+                                sum.add(c);
+                                break;
+                            }
                         }
                     }
+                    max_rows = max_rows.max(rows);
+                    rows_per_lane[j] += rows;
                 }
-                max_rows = max_rows.max(rows);
-                rows_per_lane[j] += rows;
-            }
+            })
         });
         eprintln!("RESIDENT_RADIX_JOIN lanes={} ranges={} blocks={} max_range_rows={} order_wait_s={:.6} lane_rows={:?} serial_row_comparisons=0",mode.lanes,tiles.len(),blocks,max_rows,wait.as_secs_f64(),rows_per_lane);
         sum

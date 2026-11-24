@@ -14,6 +14,8 @@ use std::{
 #[path = "../overlap_min.rs"]
 mod ranges;
 use ranges::{BlockMin, Value};
+#[path = "../overlap_audit.rs"]
+mod audit_tee;
 #[path = "../overlap_radix.rs"]
 mod radix;
 #[path = "../overlap_row43.rs"]
@@ -566,7 +568,12 @@ fn run<C: Coord>(ten: bool, fixture: bool) {
         );
     }
     let dict_bound = d + sa_bytes + retained + (64 << 20) + dict_sort.workspace_bytes(d);
-    let mode = radix::Mode::from_env(n);
+    let audit = std::env::var("XSA_RESIDENT_AUDIT_FD").ok().map(|v| {
+        let fd = v.parse().unwrap();
+        assert!(fd > 2);
+        unsafe { fs::File::from_raw_fd(fd) }
+    });
+    let mode = radix::Mode::from_env(n, audit.as_ref());
     let emit_bound =
         d + sa_bytes + owner_bytes + retained + 40 * k + (8 << 20) + mode.extra_bytes(d);
     eprintln!(
@@ -779,15 +786,10 @@ fn run<C: Coord>(ten: bool, fixture: bool) {
     };
     p.end();
     let p = phase("emit");
-    let audit = std::env::var("XSA_RESIDENT_AUDIT_FD").ok().map(|v| {
-        let fd = v.parse().unwrap();
-        assert!(fd > 2);
-        unsafe { fs::File::from_raw_fd(fd) }
-    });
     let mut out = Output {
         sink: std::io::stdout().lock(),
         audit,
-        bytes: Vec::with_capacity(65536 * 12),
+        bytes: Vec::with_capacity(if mode.async_audit { 12 } else { BLOCK_BYTES }),
         rows: 0,
         sink_time: Duration::ZERO,
         audit_time: Duration::ZERO,
