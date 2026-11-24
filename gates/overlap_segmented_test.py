@@ -14,7 +14,8 @@ from overlap_segmented_gate import baseline, prerequisite, stat_io
 def main(front, verify):
     prerequisite()
     assert baseline('1g')[0]==30.38 and baseline('10g')[0]>350
-    assert stat_io('8:0 rbytes=9 wbytes=4\n8:1 wbytes=2 rbytes=7')==dict(rbytes=16,wbytes=6)
+    assert stat_io('8:0 rbytes=9 wbytes=4\n8:1 wbytes=2 rbytes=7')=={'8:0':dict(rbytes=9,wbytes=4),'8:1':dict(rbytes=7,wbytes=2)}
+    assert stat_io(None) is None
     with tempfile.TemporaryDirectory() as tmp:
         d=Path(tmp); raw=d/'raw'; cols=d/'columns'; cols.mkdir()
         text=random.Random(617).randbytes(4096)*3

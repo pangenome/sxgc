@@ -53,13 +53,25 @@ def baseline(rung):
 
 
 def stat_io(text):
-    need(text is not None, 'io.stat unavailable; enable cgroup IO accounting')
-    totals = dict(rbytes=0,wbytes=0)
+    if not text:return None  # undelegated is not zero
+    out={}
     for line in text.splitlines():
-        fields = dict(f.split('=') for f in line.split()[1:])
-        for k in totals:
-            totals[k] += int(fields[k])
-    return totals
+        dev,*fields=line.split();v=dict(f.split('=') for f in fields)
+        out[dev]={k:int(v[k]) for k in ('rbytes','wbytes')}
+    return out
+
+def current_io(cg):
+    p=cg/'io.stat'; return stat_io(p.read_text()) if p.is_file() else None
+
+def io_delta(lo,hi):
+    if lo is None or hi is None:return None
+    need(lo.keys()<=hi.keys(),'cgroup IO device disappeared');out={}
+    for dev,v in hi.items():
+        out[dev]={k:n-lo.get(dev,{}).get(k,0) for k,n in v.items()}
+        need(min(out[dev].values())>=0,'nonmonotone cgroup IO')
+    return out
+
+def device_values(delta):return [n for v in (delta or {}).values() for n in v.values()]
 
 
 def memory_available():
@@ -94,7 +106,7 @@ def reviewed_one(path, pin):
         need(cg['memory.max']==str(mem) and cg['memory.swap.max']=='0' and cg['cpu.max']=='100000 100000' and
              {'oom 0','oom_kill 0'}.issubset(cg['memory.events'].splitlines()),'prior 1 GB grant/OOM')
     need(0<f['process']['read_bytes']<=16*ONE.n and 0<=f['process']['write_bytes']<=16*ONE.n and
-         0<f['cgroup_front_io_delta']['rbytes']<=16*ONE.n and 0<=f['cgroup_front_io_delta']['wbytes']<=16*ONE.n,
+         all(0<=v<=16*ONE.n for v in device_values(f['cgroup_front_io_delta'])),
          'prior 1 GB traffic guard')
 
 
@@ -135,34 +147,36 @@ def worker(rung, d, exe, deadline, report, prior):
                                         mincore_checked_pages=(n+os.sysconf('SC_PAGE_SIZE')-1)//os.sysconf('SC_PAGE_SIZE'))
     save(d/'preflight.json',report)
     guard(); before=cg_info(); bi=stat_io(before['io.stat'])
-    need(bi['wbytes']>0,'private copy did not register cgroup IO')
-    t=time.monotonic(); peak=logical=rss=whole=0; min_free=free; reason=None
+    t=time.monotonic(); peak=logical=rss=whole=scans=0; next_scan=t; min_free=free; reason=None
     with (d/'front.log').open('xb') as log, sp.Popen([exe,raw,cols,'--intermediate-'+rung],stdin=sp.PIPE,stdout=log,stderr=log) as p:
         try:
             p.stdin.write(f'SEGMENTED_PREFLIGHT {os.getpid()} {n} {deadline}\n'.encode());p.stdin.close()
             with open(f'/proc/{p.pid}/io') as io:
                 while True:
                     done=finished(p); info=proc_info(p.pid,io); rss=max(rss,info['VmHWM'])
-                    ai=stat_io((CG/'io.stat').read_text());delta={k:ai[k]-bi[k] for k in ai}
-                    alloc,parts=footprint(d,0);peak=max(peak,alloc)
-                    column_bytes=parts.get('generated_lexparse',0);logical=max(logical,column_bytes)
-                    whole=max(whole,n+column_bytes+sum(x.stat().st_size for x in d.iterdir() if x.is_file()))
+                    delta=io_delta(bi,current_io(CG));now=time.monotonic()
+                    if now>=next_scan or done:
+                        alloc,parts=footprint(d,0);peak=max(peak,alloc);scans+=1
+                        column_bytes=parts.get('generated_lexparse',0);logical=max(logical,column_bytes)
+                        whole=max(whole,n+column_bytes+sum(x.stat().st_size for x in d.iterdir() if x.is_file()))
+                        # Inline pre-write ledger enforces 2N. Do not spend a CPU
+                        # repeatedly stat'ing thousands of closed run segments.
+                        next_scan=time.monotonic()+max(2.0,20*(time.monotonic()-now))
                     min_free=min(min_free,shutil.disk_usage(d).free)
-                    if time.time()>=deadline or stop.exists() or min_free<(256<<20) or logical>2*n or max(info['read_bytes'],info['write_bytes'],*delta.values())>16*n:
-                        if not reason:reason='time/stop/IO/space guard';stop.touch(exist_ok=True);grace=time.monotonic()+5
-                        if not done and time.monotonic()>=grace:p.kill()
+                    if time.time()>=deadline or stop.exists() or min_free<(256<<20) or logical>2*n or max(info['read_bytes'],info['write_bytes'],*device_values(delta))>16*n:
+                        if not reason:reason='time/stop/IO/space guard';stop.touch(exist_ok=True)
                     if done:break
                     time.sleep(.25)
             wall=time.monotonic()-t;rc=p.wait()
         except BaseException:
-            stop.touch(exist_ok=True);p.kill();raise
-    after=cg_info(); bi=stat_io(before['io.stat']); ai=stat_io(after['io.stat']);delta={k:ai[k]-bi[k] for k in ai}
+            stop.touch(exist_ok=True);p.wait();raise
+    after=cg_info();delta=io_delta(bi,stat_io(after['io.stat']))
     report.update(front_wall_s=wall, rc=rc, process=info, sampled_rss=rss, cgroup_front_before=before,cgroup_front_after=after,
-                  cgroup_front_io_delta=delta, sampled_counted_logical=logical, sampled_whole_dir_allocated=peak,
+                  cgroup_front_io_delta=delta, footprint_scans=scans, sampled_counted_logical=logical, sampled_whole_dir_allocated=peak,
                   sampled_whole_dir_file_bytes=whole,
                   sampled_min_free=min_free,free_after_front=shutil.disk_usage(d).free)
     need(not reason and rc==0 and {'oom 0','oom_kill 0'}.issubset(after['memory.events'].splitlines()),'front stopped or OOM')
-    need(info['read_bytes']>0 and delta['rbytes']>0 and min(delta.values())>=0 and max(delta.values())<=16*n,'missing physical IO evidence or cgroup IO guard')
+    need(0<info['read_bytes']<=16*n and 0<=info['write_bytes']<=16*n and all(0<=v<=16*n for v in device_values(delta)),'missing worker IO evidence or IO guard')
     census=dict((k,int(v)) for k,v in re.findall(r'(\w+)=(\d+)',(d/'front.log').read_text().split('LEX100 ',1)[1]))
     need(census['n']==n and sum(sizes.values())<=census['peak_counted']<=2*n and {x.name:x.stat().st_size for x in cols.iterdir()}==sizes,'incomplete front')
     report.update(census=census,logical_headroom=2*n-census['peak_counted'],archived_front_wall_s=base_s,

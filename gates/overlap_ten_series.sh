@@ -13,12 +13,20 @@ bash gates/overlap_ten_dict_grid.sh "$control" "$pair" "$deadline" |tee "$d/grid
 grid=$(grep '^completed component receipt=' "$d/grid.log");grid=${grid#completed component receipt=}
 order=$(python3 -B gates/overlap_scaling_policy.py order "$pair" "$grid");read -ra profiles <<<"$order"
 (( ${#profiles[@]} == 3 )); echo "TEN_ORDER $order" |tee "$d/order.log"
+# Qualify the candidate external 100 GB *front algorithm* at only 1 GB.
+# It is not a product input, a concurrent timing, nor part of any full-build
+# clock. A refusal/miss is preserved and blocks ITS 10 GB stage, not the
+# independent native-resident product sweep. Never auto-launch 100 GB.
+front_end=$(( $(date +%s)+600 )); ((front_end<=deadline)) || front_end=$deadline
+front_rc=0;bash gates/overlap_segmented_gate.sh 1g "$front_end" >"$d/segmented-1g.log" 2>&1 || front_rc=$?
+printf 'TEN_FRONT_REHEARSAL rung=1g rc=%d log=%s\n' "$front_rc" "$d/segmented-1g.log" |tee "$d/segmented-1g.exit"
 # A fixed worker checkout separate from the pinned harness. A study-only
 # hashing feature must not replace the product binaries between arms.
 tmp=$(mktemp -d /tmp/overlap-ten-series-XXXXXX); src=$tmp/source;tools=$tmp/tools
 git clone --quiet --local --shared --no-checkout "$PWD" "$src";git -C "$src" sparse-checkout set xsa gates
 git -C "$src" checkout --quiet --detach 8513cccb7d0ade1f4917752e3e8be33c3f7e49e3
-bash gates/overlap_ten_product.sh --prepare-tools "$src" "$tools" >"$d/tools.log" 2>&1
+remain=$((deadline-$(date +%s))); ((remain>0)) || exit 75
+timeout --kill-after=5 "$remain" bash gates/overlap_ten_product.sh --prepare-tools "$src" "$tools" >"$d/tools.log" 2>&1
 printf '%s\n' "$src" "$tools" >"$d/tool-paths.txt"
 arms=()
 for profile in "${profiles[@]}";do

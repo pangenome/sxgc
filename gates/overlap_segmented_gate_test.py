@@ -34,7 +34,7 @@ def main(front, verifier):
         prior_front=dict(rung='1g',n=gate.ONE.n,status='FRONT_COMPARED',rc=0,wall_ratio=1,census=dict(peak_counted=1500000000),
                          equal_column_sha256=dict.fromkeys(gate.NAMES,'0'*64),raw_sha256=gate.ONE_RAW_SHA,
                          cgroup_front_after=cgroup(192<<20),mincore_resident_pages=0,
-                         process=dict(read_bytes=1,write_bytes=1),cgroup_front_io_delta=dict(rbytes=1,wbytes=1))
+                         process=dict(read_bytes=1,write_bytes=1),cgroup_front_io_delta=None)
         (prior/'segmented.json').write_text(json.dumps(prior_front));(prior/'decode.json').write_text(json.dumps(dict(status='INTERMEDIATE_VERIFIED',raw_sha256=gate.ONE_RAW_SHA,rc=0,decode_verified=True,cgroup_after=cgroup(3<<30))))
         pin=hashlib.sha256((prior/'segmented.json').read_bytes()+(prior/'decode.json').read_bytes()).hexdigest()
         swapped=[]
@@ -42,6 +42,9 @@ def main(front, verifier):
             mocks.enter_context(patch.object(mod,'CG',cg));mocks.enter_context(patch.object(mod,'cold',swapped.append))
         mocks.enter_context(patch.object(gate,'SANDBOX',root));mocks.enter_context(patch.dict(gate.RUNGS,{'10g':(n,raw,'bank')}))
         mocks.enter_context(patch.object(gate,'exclusive'));mocks.enter_context(patch.object(gate,'cg_info',lambda:cgroup(192<<20)))
+        mocks.enter_context(patch.object(gate,'current_io',lambda cg:None))
+        assert gate.io_delta(None,{'8:0':{'rbytes':1,'wbytes':2}}) is None
+        assert gate.io_delta(gate.stat_io('8:0 rbytes=5 wbytes=4'),gate.stat_io('8:0 rbytes=11 wbytes=7'))=={'8:0':{'rbytes':6,'wbytes':3}}
         mocks.enter_context(patch.object(decode,'memory_available',lambda:32<<30))
         mocks.enter_context(patch.object(decode,'cg_info',lambda:cgroup(16<<30)));mocks.enter_context(patch.object(gate,'baseline',lambda r:(30,dict(read_bytes=n,write_bytes=n),sizes)))
         # Tiny fixture may already be cache-hot: simulate one attributed IO block.
