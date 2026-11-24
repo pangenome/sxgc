@@ -1,0 +1,9 @@
+5e772d966b59354a4ede2746398189806b9344cb
+g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+Copyright (C) 2023 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+PASS 65 complete finite orders incl 11..64 payload bits, partial last bytes, exhaustion/terminal/zero extension, huge common prefixes, bounded refills, equality filters and exact load counters
+PASS 39 byte-identical cached streams, 0 predicted refusals; 9 multi-tile cases, whole 8311-descriptor classes and >9200-row tiles, exact bypass, stalled publication STOP
+DIRECT_PLAN max_bands=2486 bands_if_upper_dimensions=2486 files_if_upper_dimensions=199532024 route_array_upper=247981272 emit_array_upper=161307184 array_upper=247981272

@@ -1,0 +1,47 @@
+{
+  "after": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 384341\nuser_usec 282455\nsystem_usec 101885\ncore_sched.force_idle_usec 0\nnr_periods 5\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "19476480",
+    "memory.swap.max": "0"
+  },
+  "before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 149858\nuser_usec 133873\nsystem_usec 15984\ncore_sched.force_idle_usec 0\nnr_periods 2\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "13443072",
+    "memory.swap.max": "0"
+  },
+  "candidate_stat": [
+    66308,
+    2553338434,
+    165974592,
+    1795545381613427324,
+    1795545381613427324
+  ],
+  "control_stat": [
+    66308,
+    33290845351,
+    165974592,
+    1795544432043493311,
+    1795544432043493311
+  ],
+  "equal_bytes": 165974592,
+  "separate_posting_byte_comparison": {
+    "per_device_io": null,
+    "read_cap": 348726400,
+    "wall_s": 0.25350536219775677,
+    "worker_cpu_s": 0.23312924200000001,
+    "worker_io": {
+      "read_bytes": 4022272,
+      "write_bytes": 0
+    },
+    "write_cap": 4194304
+  },
+  "sha256": "6285d881c12db13a56cee958091a7bb7f42fc8c197e2bd876fee1e3c46d2997c"
+}

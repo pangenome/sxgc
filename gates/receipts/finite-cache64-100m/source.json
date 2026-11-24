@@ -1,0 +1,23 @@
+{
+  "admitted_utc": "2026-11-24T18:35:57+00:00",
+  "artifacts": {
+    "admission.json": "2e409e8cb49d2906669f8ccd251a8d7741199811b84d89021bd68ebdbf72ee8c",
+    "build-and-test.log": "ee1e799a54440f1102a7ac8b600766f927d97695668bb5ef06f6c1d6375dfd3a",
+    "cold4.json": "0dbf34ba437315b24e6165052a4165e19bfa34da6d21414ac00f61fb85b8c6dd",
+    "emit4.json": "0a0e34844c0bed6230b252d699373654536d95ed50c5ec5fff56d5f7431f3b3b",
+    "emit4.log": "24b5818856a0392fe0452de683e9d51ae0942065b0883f8385f1fb77dde9f6c8",
+    "exits.log": "97b41befba679d2134d1b3ab6c6f81f2ae967278a0fc20191d4d6714a49562f5",
+    "identity.json": "7bcb55ae8907842b9e7d3144e80af995662d3b8c44725c0c81b87510170fa481",
+    "oracle4.json": "794f6f9c7ad25cc0f59d88949078eebceaeaf09922639887fe7090a51a89c961",
+    "oracle4.log": "08280269ad6c43f460ba3b80f3d9ed704a4f7294b6a4040199e9a1d81827b684",
+    "pair4.json": "29676e61671822f728c67fafbaed913bf36aac8bd5ee0445218c88d9ffb2f7ce",
+    "pair4.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "score.json": "64e56a1b989dee8a174cd42e3be0dc2583189f1d5a9608a85d116893b5556072",
+    "setup.json": "3f1435f84257c919fecaff2080983ed28f670dae3fe5d65255d0ba3ab0e9d775",
+    "tools.json": "7fd4dc5c607a4f52445f428a2ac3132f37e295ccfe008a0604616dccfb38559f"
+  },
+  "launcher": "proc_c6ea",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-cache64-100m-tATbGc",
+  "rc": 0,
+  "revision": "5e772d966b59354a4ede2746398189806b9344cb"
+}
