@@ -18,6 +18,7 @@ SANDBOX = ROOT/'sandbox'
 RUNGS = {'1g': (ONE.n, ROOT/'climb/rung1/pile-slice1g.bin', 'packed-parse-ORX2dw'),
          '10g': (TEN.n, ROOT.parent/'pf-10gb.txt', 'packed-front-10g-YebiCY')}
 NAMES = ('dictionary.packed', 'parse.u32')
+CUTOFF = 1795531169
 ONE_RAW_SHA = 'c382daa53d0e66fdc921c32d356961b7e8189ceee0a435bb3b66e06b203ebb61'
 
 
@@ -110,6 +111,24 @@ def reviewed_one(path, pin):
          'prior 1 GB traffic guard')
 
 
+def admit_ten(path, pin):
+    """Replay the *published* 1 GB rehearsal, scan/source and serial baseline; no payload reads."""
+    from overlap_published import published_main
+    from overlap_ten_matched_score import metrics
+    from overlap_scanplan_hundred import CALIBRATION_SHA, calibration_clock
+    rev=published_main(Path.home()/'sxgc');repo=RECEIPTS.parents[1]
+    need(sp.check_output(['git','-C',repo,'rev-parse','HEAD'],text=True).strip()==rev and not sp.check_output(['git','-C',repo,'status','--porcelain']), 'source pin drift')
+    need(metrics(RECEIPTS/'packed-serial-10g')['profile']=='packed-10g-bitmap','serial control')
+    reviewed_one(path,pin);bank=RECEIPTS/'segmented-front-1g';p=Path(path)
+    for name in ('segmented.json','decode.json','binaries.log'):
+        need((bank/name).read_bytes()==(p/name).read_bytes(),'unpublished rehearsal: '+name)
+    b=(RECEIPTS/'scanplan-10g/scan.json').read_bytes();need(hashlib.sha256(b).hexdigest()==CALIBRATION_SHA,'changed scan calibration')
+    scan=json.loads(b);calibration_clock(scan,load(RECEIPTS/'packed-front-10g','front-end.json')['census']);return rev,scan['census']['sha256']
+
+def checked_native(d):
+    pins=[line.split()[0] for line in (RECEIPTS/'segmented-front-1g/binaries.log').read_text().splitlines()[1:3]]
+    need(pins==[hashlib.sha256((d/k).read_bytes()).hexdigest() for k in ('front','verify')],'changed front/decoder vs 1 GB rehearsal')
+
 def worker(rung, d, exe, deadline, report, prior):
     n, source, bank_name = RUNGS[rung]
     bank = SANDBOX/bank_name/'columns'
@@ -120,7 +139,8 @@ def worker(rung, d, exe, deadline, report, prior):
         need(not stop.exists(), 'deadline or cooperative stop')
     guard(); prerequisite(); exclusive()
     if rung=='10g':
-        reviewed_one(*prior);report.update(reviewed_one_dir=prior[0],reviewed_one_sha256=prior[1])
+        rev,raw_pin=admit_ten(*prior);report.update(revision=rev,reviewed_one_dir=prior[0],reviewed_one_sha256=prior[1],expected_raw_sha256=raw_pin)
+        checked_native(d)
     else:need(not prior,'unexpected prior receipt')
     need(set(x.name for x in d.iterdir())=={'front','verify','binaries.log'} and exe==d/'front', 'not a fresh gate build')
     cg = cg_info(); need((cg['cpu.max'],cg['memory.max'],cg['memory.swap.max']) ==
@@ -134,18 +154,21 @@ def worker(rung, d, exe, deadline, report, prior):
     need(free >= 3*n+(1<<30), 'insufficient free space')
     report.update(rung=rung, n=n, source_identity=source_identity,bank_identity=bank_identity,immutable_source=str(source), trusted_columns=str(bank),
                   front_io_limit_each=16*n, deadline=deadline, free_before=free, reserved_logical=3*n, cgroup=str(CG), cgroup_before=cg)
+    from overlap_scanplan_gate import Phase, MARGIN
+    copy=Phase(d,report,'copy_cold',deadline,n+MARGIN,n+MARGIN)
     raw.parent.mkdir(); h=hashlib.sha256()
     with source.open('rb') as src, raw.open('xb') as out:
         left=n
         while left:
-            guard(); block=src.read(min(left,1<<20));need(block,'short source');out.write(block);h.update(block);left-=len(block)
+            guard(); copy.guard(); block=src.read(min(left,1<<20));need(block,'short source');out.write(block);h.update(block);left-=len(block)
         need(not src.read(1),'source grew')
     need(identity(source)==source_identity,'source changed during copy')
     raw.chmod(0o400);report.update(private_input_bytes=n,raw_sha256=h.hexdigest())
-    if rung=='1g':need(h.hexdigest()==ONE_RAW_SHA,'rung1 hash')
+    need(h.hexdigest()==(ONE_RAW_SHA if rung=='1g' else raw_pin),'raw SHA mismatch')
     guard(); cold(raw);report.update(cold_private_path=str(raw), mincore_resident_pages=0,
                                         mincore_checked_pages=(n+os.sysconf('SC_PAGE_SIZE')-1)//os.sysconf('SC_PAGE_SIZE'))
-    save(d/'preflight.json',report)
+    copy.guard(True);save(d/'preflight.json',report)
+    if rung=='10g':need(time.time()+1400<=deadline<=CUTOFF,'insufficient post-copy time')
     guard(); before=cg_info(); bi=stat_io(before['io.stat'])
     t=time.monotonic(); peak=logical=rss=whole=scans=0; next_scan=t; min_free=free; reason=None
     with (d/'front.log').open('xb') as log, sp.Popen([exe,raw,cols,'--intermediate-'+rung],stdin=sp.PIPE,stdout=log,stderr=log) as p:
@@ -183,22 +206,24 @@ def worker(rung, d, exe, deadline, report, prior):
                   archived_front_io=base_io,wall_ratio=wall/base_s,
                   attributed_io_ratio={k:info[k]/v if v else None for k,v in base_io.items()})
     # Independent byte comparisons; open the pinned bank only for sequential reads.
+    compare=Phase(d,report,'column_compare',deadline,2*sum(sizes.values())+MARGIN,(192<<20)+MARGIN)  # possible late front writeback in device counters
     hashes={}; start=time.monotonic()
     for name in NAMES:
         digest=hashlib.sha256()
         with (cols/name).open('rb') as new,(bank/name).open('rb') as trusted:
             left=sizes[name]
             while left:
-                guard(); block=new.read(min(left,1<<20));need(block and trusted.read(len(block))==block,'bank mismatch: '+name)
+                guard(); compare.guard(); block=new.read(min(left,1<<20));need(block and trusted.read(len(block))==block,'bank mismatch: '+name)
                 digest.update(block);left-=len(block)
             need(not new.read(1) and not trusted.read(1),'comparison extent')
         hashes[name]=digest.hexdigest()
     need(bank_identity=={k:identity(bank/k) for k in NAMES},'bank identity/metadata changed')
-    guard();report.update(equal_column_sha256=hashes,compare_s=time.monotonic()-start, target_under_2x=wall<2*base_s)
+    compare.guard(True);guard();report.update(equal_column_sha256=hashes,compare_s=time.monotonic()-start, target_under_2x=wall<2*base_s)
     report['front_under_3x']=wall<3*base_s
 
 
 if __name__=='__main__':
+    if len(sys.argv)==4 and sys.argv[1]=='--admit-ten':print('SEGMENTED_10G_PINS',*admit_ten(*sys.argv[2:]));sys.exit(0)
     rung,d,exe,deadline,*prior=sys.argv[1:];d=Path(d); report=dict(status='REFUSED',promotion=False)
     private_dir(d,rung)
     need(not (d/'segmented.json').exists(), 'refuse receipt reuse')

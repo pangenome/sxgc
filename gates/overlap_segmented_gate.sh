@@ -2,11 +2,13 @@
 set -euo pipefail
 [[ ( $# == 2 && $1 == 1g || $# == 4 && $1 == 10g && $4 =~ ^[a-f0-9]{64}$ ) && $2 =~ ^[1-9][0-9]{9}$ ]] || { echo 'usage: overlap_segmented_gate.sh 1g DEADLINE | 10g DEADLINE REVIEWED_1G_DIR REVIEWED_RECEIPTS_SHA256' >&2; exit 64; }
 remaining(){ local s=$(($2-$(date +%s))); ((s>0)) || return 75; echo "$s"; }
-cd "$(dirname "$0")/.."; repo=$PWD
+cd "$(dirname "$0")/.."; source gates/overlap_pin.sh; overlap_pin_series gates/overlap_segmented_gate.sh "$@"; repo=$PWD
+(( $2<=1795531169 )) || { echo 'deadline after study cutoff' >&2;exit 75; }
 reserve=240;[[ $1 != 10g ]] || reserve=1800
 [[ $(remaining "$@") -ge $reserve ]] || { echo 'insufficient remaining time for front + independent decode' >&2;exit 75; }
 exec 9>"${XDG_RUNTIME_DIR:?}/overlap-ten-timing.lock"; flock -n 9 || exit 75
-/usr/bin/python3 -E gates/overlap_timing_idle.py
+/usr/bin/python3 -BE gates/overlap_timing_idle.py
+if [[ $1 == 10g ]];then /usr/bin/python3 -BE gates/overlap_segmented_gate.py --admit-ten "$3" "$4";fi
 s=/mnt/nvme2n1/erikg/TAPEREADER/sandbox; d=$(mktemp -d "$s/segmented-$1-XXXXXX"); echo "intermediate receipt=$d"
 n=$(remaining "$@"); timeout -k 1 "$n" g++ -O2 -std=c++17 -Wall -Wextra -Werror -DSEGMENTED_INTERMEDIATE gates/overlap_lexparse100.cpp -o "$d/front"
 n=$(remaining "$@"); timeout -k 1 "$n" g++ -O2 -std=c++17 -Wall -Wextra -Werror gates/overlap_segmented_verify.cpp -lcrypto -o "$d/verify"

@@ -50,13 +50,17 @@ def main(front, verifier):
         # Tiny fixture may already be cache-hot: simulate one attributed IO block.
         process_info=gate.proc_info
         mocks.enter_context(patch.object(gate,'proc_info',lambda pid,io:dict(process_info(pid,io),read_bytes=4096)))
-        deadline=int(time.time())+30;report={}
+        def publication(path,signature):
+            gate.reviewed_one(path,signature);return 'fixture',hashlib.sha256(text).hexdigest()
+        mocks.enter_context(patch.object(gate,'admit_ten',publication));mocks.enter_context(patch.object(gate,'checked_native'))
+        deadline=int(time.time())+1500;mocks.enter_context(patch.object(gate,'CUTOFF',deadline));report={}
         for bad in [[],[str(prior),'0'*64]]:
             try:gate.worker('10g',run,run/'front',deadline,report,bad)
             except (TypeError,RuntimeError):pass
             else:raise AssertionError('accepted absent/unreviewed prior')
             assert not (run/'in').exists()
         gate.worker('10g',run,run/'front',deadline,report,[str(prior),pin]);report['status']='FRONT_COMPARED';gate.save(run/'segmented.json',report)
+        assert all(report[phase]['wall_s']>0 and report[phase]['worker_io']['read_bytes']>=0 for phase in ('copy_cold','column_compare'))
         result={};decode.decode('10g',run,deadline,result);assert result['decode_verified']
         assert swapped==[run/'in/corpus',*(run/'columns'/k for k in gate.NAMES)]
         assert all((bank/k).read_bytes()==(run/'columns'/k).read_bytes() for k in gate.NAMES)
