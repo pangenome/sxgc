@@ -44,7 +44,7 @@ def tagged_record_fixture(d):
     helper = d/'tag_test.cpp'
     helper.write_text(f'#define main census_entry\n#include "{src}"\n#undef main\n' + r'''
 int main(){
-    Census c; c.n=120; c.m=4; c.seg=64; c.deadline=UINT64_MAX; c.ioLimit=24*c.n;
+    Census c; c.n=136; c.m=4; c.seg=64; c.deadline=UINT64_MAX; c.ioLimit=24*c.n;
     fs::create_directory("vocab.tmp"); Run r;
     Byte word[40]={};
     {Census::Writer w(c,r); for(unsigned h : {80,80,80,81}) w.put(h,word,0); w.close();}
