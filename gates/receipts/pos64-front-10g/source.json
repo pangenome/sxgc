@@ -1,0 +1,20 @@
+{
+  "artifacts": {
+    "admission.json": "1b35949ebbc8bb67973c1d62f90a18fc7863e856c8d386905233999cb46fabb1",
+    "build-and-test.log": "20112fbe21286c6f0d6b6fb280b80159acf9ec534577122a3149d3f25e637287",
+    "columns-check.json": "5fec01e0537203cf10203e0ec0239d06359bac7088de672b32adb2fdda6b5cbb",
+    "columns-check.log": "5966b1eef914d662df6120ad14241fc6bef1aeef0d57b9e148551b30b184b806",
+    "copy.json": "8bd2d78e70c894500396c613084b116b23d54142bcdc0885262bd6889064b040",
+    "exits.log": "fbf724c7053bcaf2dbfa7cfa43bf59d88421968d92d4fbbf7c74df0d5f9a32f9",
+    "front.json": "d18afd9a0d840f33b40dce91561e5f0b73ece44076dbce5bec3939dc18e6d521",
+    "front.log": "84317adc441ae2a96d371fb7f2707703a80e44e4fff096bfd5f4c53b6dffa1ea",
+    "identity.json": "76fcfa027dfb5289648cb4c50673377196f176b7b854ced784bb45711832f6e8",
+    "outputs.json": "2b53ce840fbf2bbc66f28c110c7225ee6501b4724d7b73cc0ccc18e77b957fd7",
+    "score.json": "c6b8b58ee87c0bbb3ce98c079358ce3f08034d78d59f792b4a625b9459474edd",
+    "tools.json": "5a1a9f72d4fc024b9171277cf74867c6eee6259d21bf445063e6dff84930b7bb"
+  },
+  "launcher": "proc_2a7d",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pos64-front-10g-XTNbSv",
+  "rc": 0,
+  "revision": "fdfb5104a535003e9cdc92bcbfd767d770fdcf04"
+}

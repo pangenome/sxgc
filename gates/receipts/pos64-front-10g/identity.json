@@ -1,0 +1,14 @@
+{
+  "all_records_and_occurrences": true,
+  "columns": {
+    "descriptors": "9129290112",
+    "k": "234472723",
+    "keys_above_u32": "211844700",
+    "keys_sha256": "fb6e41baeae24a0d0a253a1e647262229d5f5ba14c27bccdd1b2be60e44a2274",
+    "legacy_ids_sha256": "a56741994089e273fe11d27dd51ef09b68c04194f23c1bd70a1845a78e677092",
+    "legacy_tape_sha256": "2e68e3f5729b3c2d5c6665e5798af447194cb55514c2c9f2f6cfb71ec774fadd",
+    "lex64_sha256": "5d8008a9d84aa9113a62a84ec92abc045409d4ae5f1d71860cbc51d0de112e07",
+    "m": "318164488"
+  },
+  "private_column_cold_resident_pages": 0
+}

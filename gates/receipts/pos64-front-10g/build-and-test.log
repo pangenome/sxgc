@@ -1,0 +1,8 @@
+fdfb5104a535003e9cdc92bcbfd767d770fdcf04
+g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+Copyright (C) 2023 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+PASS real projection at u32+1, 100 GB and off_t ceiling; bitmap exclusive rank and successor across empty stripes
+PASS 28 complete position-front column pairs, 6 dense cap refusals, bitmap seams, long holes, grants, fresh outputs, STOP and wide extents

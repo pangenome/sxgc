@@ -1,0 +1,95 @@
+{
+  "bin_balance": {
+    "order": {
+      "active_fraction": 0.9432138157509022,
+      "active_lane_s": 336.546256804,
+      "label_lane_s": 46.185871911,
+      "lane_active_s": [
+        89.200642098,
+        82.349069461,
+        82.34604872,
+        82.650496525
+      ],
+      "lane_rows": [
+        73174179,
+        72432889,
+        88025685,
+        84531735
+      ],
+      "longest_bin": 518,
+      "longest_bin_fraction": 0.3560754003863552,
+      "longest_bin_rows": 22553017,
+      "longest_bin_s": 31.762639907,
+      "sort_lane_s": 290.360384893,
+      "wall_s": 89.202005734
+    },
+    "publish": {
+      "active_fraction": 0.9967702080301485,
+      "active_lane_s": 41.10940168,
+      "label_lane_s": 0.0,
+      "lane_active_s": [
+        10.307023446,
+        10.266125091,
+        10.267779676,
+        10.268473466
+      ],
+      "lane_rows": [
+        80304309,
+        59687712,
+        89296618,
+        88875849
+      ],
+      "longest_bin": 518,
+      "longest_bin_fraction": 0.2569523209807433,
+      "longest_bin_rows": 22553017,
+      "longest_bin_s": 2.64934588,
+      "sort_lane_s": 0.0,
+      "wall_s": 10.31065168
+    }
+  },
+  "front": {
+    "arrays": "14003919392",
+    "descriptors": "9129290112",
+    "dictionary_bytes": "12880853672",
+    "k": "234472723",
+    "key_bytes": "2545315904",
+    "keys_above_u32": "211844700",
+    "m": "318164488",
+    "max_bin": "22553017",
+    "max_phrase": "88468",
+    "n": "10000000000",
+    "nonempty_bins": "2380",
+    "partition_s": "1.236553",
+    "publish_dict_s": "11.620854",
+    "publish_keys_s": "24.466325",
+    "raw_s": "143.016101",
+    "scan_s": "16.490085",
+    "sort_dedup_s": "89.202284",
+    "starts_above_u32": "181581998",
+    "team": "4"
+  },
+  "layout": {
+    "entry_bytes": "2545315904",
+    "head_bytes": "39781128",
+    "position_bits": "34",
+    "projected_prefix_bits": "30",
+    "rank_anchor_bytes": "156250008",
+    "start_bytes": "1250000000"
+  },
+  "layout_goal_met": true,
+  "modeled_front_arrays_100gb": 139923425640,
+  "oracle_s": 53.144955433905125,
+  "position_over_reference": {
+    "array_bound": 0.7934892532417597,
+    "cgroup_peak": 0.9615539668762552,
+    "cpu": 1.1193028899183763,
+    "read_bytes": 1.0,
+    "sampled_rss": 0.7933952994191609,
+    "wall": 1.1723512921809967,
+    "write_bytes": 1.0000018586491974
+  },
+  "raw_to_columns_s": 143.35685620456934,
+  "reference_s": 122.28148436453193,
+  "scope": "one 10 GB raw\u2192canonical columns comparison; no product, new rank time, or 100 GB grant",
+  "verified_columns": true
+}

@@ -1,0 +1,38 @@
+{
+  "admitted_unix": 1795535770,
+  "cores": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "counted_upper": 15430363880,
+  "deadline": 1795537219,
+  "parent": 2183683,
+  "prior_score": "518e22ba6052a15607e0b3961448881d67a3946cfccb51c7860f8066d9ccf25c",
+  "raw_stat": [
+    66308,
+    31764165843,
+    10000000000,
+    1792357584906949472,
+    1792357584906949472
+  ],
+  "reference_stats": {
+    "dictionary.packed": [
+      66308,
+      8622678848,
+      11942962780,
+      1795486824470496500,
+      1795486824470496500
+    ],
+    "parse.u32": [
+      66308,
+      8592385746,
+      1272657952,
+      1795486831560496007,
+      1795486831560496007
+    ]
+  },
+  "rev": "fdfb5104a535003e9cdc92bcbfd767d770fdcf04",
+  "scope": "single 10 GB position-front raw\u2192wide columns; no rank rerun or 100 GB dispatch"
+}
