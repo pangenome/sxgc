@@ -1,0 +1,29 @@
+{
+  "artifacts": {
+    "admission.json": "10b18f61fbaef214ae0563ec7ba37c4327753faa7fadac4090975194a47ab92d",
+    "build-and-test.log": "1f6f1b8979719d3a3fc80a08543ee1121a17940a44286dfcefcc4c41f5d707ea",
+    "cold1.json": "a19a353fe4d382a370fb3e44e12c42b0e33a85bc8694e5bf8b0e768cbde34025",
+    "cold4.json": "783983ee5cb6dd15968b82854f632c9dd8eb9f5c2da54b37717aafc6ca5bc6d6",
+    "emit1.json": "ae9a063ac4092b0804359bcf2d6f33b8187a8154e097a90a89aa99d3d64a32ed",
+    "emit1.log": "198b48bd032a3d89cd6e8a537ff84ce1cdf4879f7c807dc22ae17cf346be1844",
+    "emit4.json": "e0c3d8a274db09fc8b49fa6946ab761307fdfc20429baf43ed098f904a83bc74",
+    "emit4.log": "bc859c792a10e6d858d26ecf13c5a1e5fcf5b3c94112b34c2440db08b3932cca",
+    "exits.log": "8f7abd2372c892350c5e843fa50ced40602cf518d7f534ce641b61752c768140",
+    "oracle1.json": "6bdbf953fab91730afec8613e366da5d420f01a87d0ee2224577fd5ef19d9959",
+    "oracle1.log": "08280269ad6c43f460ba3b80f3d9ed704a4f7294b6a4040199e9a1d81827b684",
+    "oracle4.json": "bb56f87bd7ff94d9dc45405df1568332de6094ecf5797634565d01b3b69c14cf",
+    "oracle4.log": "08280269ad6c43f460ba3b80f3d9ed704a4f7294b6a4040199e9a1d81827b684",
+    "pair1.json": "82eb16963156d625240a16b623416a3646a30108d415dc964e4a8aa6632dd26b",
+    "pair1.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "pair4.json": "487c1612cf38a7b24a9570c5f1de6294fceca6123ca3e8e3f7f04bd38a7ee00d",
+    "pair4.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "rank-proof.log": "d30aab2af32306d0aa9336c9c195d354b020e615ea977519c79ab43442397d7c",
+    "score.json": "45ceab98f853e3194280fb24a2fd7a9cdb5df8f2b6d47601251e233018f6c861",
+    "setup.json": "ffbb46a752013e9bb18e50b63c9a4252f626894e63f2bade8aaf4e0c53adab7b",
+    "tools.json": "16380c7c5c53e0eb8d374c326a856cc02778edaa2b12a269f43c007c3b6499fb"
+  },
+  "launcher": "proc_f7b8",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-emit64-100m-RZtfVB",
+  "rc": 0,
+  "revision": "1563640503aac0fd2636170567a7b225c916c259"
+}

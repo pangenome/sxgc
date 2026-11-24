@@ -1,0 +1,71 @@
+{
+  "after": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 922381\nuser_usec 639035\nsystem_usec 283346\ncore_sched.force_idle_usec 0\nnr_periods 12\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 19\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "201089024",
+    "memory.swap.max": "0"
+  },
+  "before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 391858\nuser_usec 226917\nsystem_usec 164940\ncore_sched.force_idle_usec 0\nnr_periods 4\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "14454784",
+    "memory.swap.max": "0"
+  },
+  "private_copies_and_adapter": {
+    "per_device_io": null,
+    "read_cap": 400002012,
+    "wall_s": 0.5943210907280445,
+    "worker_cpu_s": 0.398852076,
+    "worker_io": {
+      "read_bytes": 109965312,
+      "write_bytes": 238059520
+    },
+    "write_cap": 400002012
+  },
+  "private_stats": {
+    "inverse.u64": [
+      66308,
+      22627778155,
+      25364248,
+      1795541223842716251,
+      1795541223843716251
+    ],
+    "oracle-raw": [
+      66308,
+      22627778153,
+      100000503,
+      1795541223663716263,
+      1795541223665716263
+    ],
+    "raw": [
+      66308,
+      22627778152,
+      100000503,
+      1795541223473716276,
+      1795541223475716276
+    ]
+  },
+  "rank_sha256": "afc938c0a1e96a62a2a6159fa119546a919b3042f8820847c207890bc9cafe67",
+  "separate_rank_proof_and_readback": {
+    "per_device_io": null,
+    "read_cap": 71799228,
+    "wall_s": 0.13587675336748362,
+    "worker_cpu_s": 0.02215319300000007,
+    "worker_io": {
+      "read_bytes": 38051840,
+      "write_bytes": 4096
+    },
+    "write_cap": 8388608
+  },
+  "source_hashes": {
+    "old-inverse": "700c61993bf5e8c979c8fb6c1bb42332453a7c73c0b4699cb9f6ed2a06c7ee37",
+    "parse.u32": "603e39e31da8fb51ad8838a114ee432dc03bb483e3e9f95f523b072d82e7f418",
+    "raw": "3c965f581b46ba72abfd7fee7a0ce2efac5a61cd4dc5725e9253dcebcccc2383"
+  }
+}

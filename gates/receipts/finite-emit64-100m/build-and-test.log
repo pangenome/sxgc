@@ -1,0 +1,8 @@
+1563640503aac0fd2636170567a7b225c916c259
+g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+Copyright (C) 2023 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+PASS 57 complete independent byte-SA row43 streams; 1/2/4 ordered lanes, 3 predicted scratch refusals, 3 actual 8311-word ties beyond old cursor limit, synthetic wire/seam/backpressure/STOP and no-row-file checks
+EMIT_PLAN pages_upper=6068813 bands=2049 slots=192001 per_team_marks=1610528 route_arrays_upper=225053032 emit_arrays_upper=160910512 array_upper=225053032

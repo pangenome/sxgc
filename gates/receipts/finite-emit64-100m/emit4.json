@@ -1,0 +1,71 @@
+{
+  "affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "after": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 335739440\nuser_usec 326162613\nsystem_usec 9576826\ncore_sched.force_idle_usec 0\nnr_periods 2764\nnr_throttled 7\nthrottled_usec 5870\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "536870912",
+    "memory.peak": "323260416",
+    "memory.swap.max": "0"
+  },
+  "allocated_including_raw_copies": 356118528,
+  "argv": [
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-emit64-100m-RZtfVB/emit",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-emit64-100m-RZtfVB/raw",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-emit64-100m-RZtfVB/inverse.u64",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-emit64-100m-RZtfVB/route4.ef",
+    "4",
+    "335544320",
+    "29558552",
+    "97657",
+    "192001",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-emit64-100m-RZtfVB/stop.requested",
+    "1795541614"
+  ],
+  "before": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 117883\nuser_usec 100900\nsystem_usec 16983\ncore_sched.force_idle_usec 0\nnr_periods 2\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "536870912",
+    "memory.peak": "13668352",
+    "memory.swap.max": "0"
+  },
+  "counted_sampled": 156018550,
+  "io_caps": [
+    1200006036,
+    205302783
+  ],
+  "per_device_io": null,
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 0,
+    "cpu_s": 333.4,
+    "rchar": 1493943082,
+    "read_bytes": 125370368,
+    "syscr": 365705,
+    "syscw": 84089,
+    "wchar": 1330480090,
+    "write_bytes": 165978112
+  },
+  "rc": 0,
+  "route_stat": [
+    66308,
+    22627778162,
+    130474848,
+    1795541226293716080,
+    1795541226293716080
+  ],
+  "sampled_rss": 160870400,
+  "status": "COMPLETED",
+  "stop": null,
+  "wall_s": 276.2875797925517
+}

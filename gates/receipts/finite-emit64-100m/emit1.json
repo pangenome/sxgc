@@ -1,0 +1,71 @@
+{
+  "affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "after": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 320073924\nuser_usec 311273234\nsystem_usec 8800689\ncore_sched.force_idle_usec 0\nnr_periods 3169\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "536870912",
+    "memory.peak": "313421824",
+    "memory.swap.max": "0"
+  },
+  "allocated_including_raw_copies": 356380672,
+  "argv": [
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-emit64-100m-RZtfVB/emit",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-emit64-100m-RZtfVB/raw",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-emit64-100m-RZtfVB/inverse.u64",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-emit64-100m-RZtfVB/route1.ef",
+    "1",
+    "335544320",
+    "29558552",
+    "97657",
+    "192001",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-emit64-100m-RZtfVB/stop.requested",
+    "1795542061"
+  ],
+  "before": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 115831\nuser_usec 93863\nsystem_usec 21968\ncore_sched.force_idle_usec 0\nnr_periods 1\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "536870912",
+    "memory.peak": "13676544",
+    "memory.swap.max": "0"
+  },
+  "counted_sampled": 156311199,
+  "io_caps": [
+    1200006036,
+    205302783
+  ],
+  "per_device_io": null,
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 0,
+    "cpu_s": 317.56,
+    "rchar": 1518385818,
+    "read_bytes": 125374464,
+    "syscr": 366272,
+    "syscw": 82209,
+    "wchar": 1330768602,
+    "write_bytes": 136753152
+  },
+  "rc": 0,
+  "route_stat": [
+    66308,
+    22627778169,
+    130762680,
+    1795541506553696605,
+    1795541506553696605
+  ],
+  "sampled_rss": 146120704,
+  "status": "COMPLETED",
+  "stop": null,
+  "wall_s": 316.79924948420376
+}

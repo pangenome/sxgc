@@ -1,0 +1,46 @@
+{
+  "cores": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "counted_upper": 196914175,
+  "deadline": 1795542473,
+  "parent": 1229067,
+  "prior": "27d05a8912317bfb29f6b8892886e44717b843b5005284aebb38bfeb4a39101a",
+  "profile": "100 MB prepared raw + widened certified legacy inverse -> row43 -> concurrent independent raw checker. No raw-only clock or index.",
+  "rev": "1563640503aac0fd2636170567a7b225c916c259",
+  "row_target": 97657,
+  "slots": 192001,
+  "source_hashes": {
+    "old-inverse": "700c61993bf5e8c979c8fb6c1bb42332453a7c73c0b4699cb9f6ed2a06c7ee37",
+    "parse.u32": "603e39e31da8fb51ad8838a114ee432dc03bb483e3e9f95f523b072d82e7f418",
+    "raw": "3c965f581b46ba72abfd7fee7a0ce2efac5a61cd4dc5725e9253dcebcccc2383"
+  },
+  "source_stats": {
+    "old-inverse": [
+      66308,
+      8637840820,
+      12682124,
+      1795456015182637458,
+      1795456015182637458
+    ],
+    "parse.u32": [
+      66308,
+      8637840817,
+      12682124,
+      1795456009606637846,
+      1795456009606637846
+    ],
+    "raw": [
+      66308,
+      25771846551,
+      100000503,
+      1795211702184614933,
+      1795211702184614933
+    ]
+  },
+  "start_unix": 1795541213
+}
