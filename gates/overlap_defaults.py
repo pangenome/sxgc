@@ -79,8 +79,16 @@ def run(v,deadline):
         if deadline-time.time()<required:raise ValueError('not enough time for measured 10 GB default')
         worker=tmp/'worker';tools=tmp/'tools';checkout(worker,v['worker_revision'])
         sp.run(['bash','gates/overlap_ten_product.sh','--prepare-tools',worker,tools],cwd=h,check=True,env=env,timeout=max(1,deadline-time.time()-required+300))
-    # The profile launcher rechecks idleness and takes the same nonblocking lease.
-    return sp.call(['bash','gates/overlap_ten_product.sh','--profile',v['profile'],worker,tools,str(deadline)],cwd=h,env=env)
+        from overlap_ten_resume import observed_profile, sha
+        # Do not silently run an unmeasured worker after a compiler/toolchain change.
+        for name in ('overlap_resident','pfp_sort_r','lexparse','oracle','monitor.so','bitmap.so'):
+            if sha(tools/name)!=v['worker_sha256'][name]:raise ValueError('rebuilt tool differs from measured default: '+name)
+    # Same measured profile launcher takes the nonblocking lease. Retain its exit
+    # even if its instant /proc read raced exec; require an actual independent
+    # stable child-env observation and *all* product/resource checks on this run.
+    if published_main(REPO)!=rev:raise ValueError('published selection moved during preparation')
+    out=tmp/'postcheck';out.mkdir();arm=observed_profile(h,worker,tools,v['profile'],deadline,out,required,env)
+    print('DEFAULT_REPLAY_VERIFIED',arm,flush=True);return 0
 
 if __name__=='__main__':
     a=argparse.ArgumentParser(description=__doc__);a.add_argument('action',choices=['plan','run','record']);a.add_argument('rung',choices=['1g','10g','100g']);a.add_argument('--deadline',type=int);args=a.parse_args()

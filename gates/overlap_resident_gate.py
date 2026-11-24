@@ -257,12 +257,12 @@ def build(d,tools,profile,deadline=None):
             assert settings.get('XSA_PRIVATE_SXLS_RECLAIM')==('1' if name=='sink' and reclaim else None)
         logs[name]=(d/(name+'.log')).open('xb'); started[name]=time.monotonic()
         kwargs.setdefault('stdout',logs[name]); w[name]=sp.Popen(cmd,stderr=logs[name],**kwargs); peaks[name]=0
+        iofiles[name]=open(f'/proc/{w[name].pid}/io')  # pin before any retry/wait at the exec boundary
         if matched:
             from overlap_ten_controls import stable_read
             requested={k:v for k,v in kwargs['env'].items() if k in CONTROL_KEYS}
             controls[name]=stable_read(w[name].pid,requested)
             if controls[name]!=requested:request('child environment mismatch or unavailable: '+name)
-        iofiles[name]=open(f'/proc/{w[name].pid}/io')
     def request(reason):
         if not flag.exists():say('STOP_REQUEST',reason); flag.write_text(reason+'\n')
         md=d/'merged/modeb';

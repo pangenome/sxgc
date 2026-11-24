@@ -1,0 +1,110 @@
+{
+  "finish_phase_seconds": {
+    "fingerprints": {
+      "cumulative": 28.02,
+      "wall": 0.003
+    },
+    "m1-runs": {
+      "cumulative": 8696.891,
+      "wall": 22.686
+    },
+    "m5-ef": {
+      "cumulative": 8674.205,
+      "wall": 77.361
+    },
+    "publish": {
+      "cumulative": 8736.346,
+      "wall": 39.455
+    },
+    "readiness-pfck": {
+      "cumulative": 28.016,
+      "wall": 28.014
+    },
+    "seam-classes": {
+      "cumulative": 28.02,
+      "wall": 0.0
+    },
+    "sweep": {
+      "cumulative": 8596.844,
+      "wall": 8568.825
+    }
+  },
+  "finish_process": {
+    "cancelled_write_bytes": 211423232,
+    "cpu_s": 4330.14,
+    "read_bytes": 10638049280,
+    "syscw": 16769843,
+    "wchar": 20662803471,
+    "write_bytes": 17748029440
+  },
+  "interpretation": "Native spans overlap. Sum of logical unsynced m1 bytes is payload coverage, not physical traffic/seek count. Process write_bytes is used unchanged by the promotion gate; cancellation is separate, not a discount.",
+  "m1_sync": {
+    "piece-release": {
+      "count": 829,
+      "logical_unsynced_bytes": 3251644736
+    },
+    "pre-close": {
+      "count": 1,
+      "logical_unsynced_bytes": 3223976
+    }
+  },
+  "native_measurements": {
+    "LCP_SLICE_CONSUMER": {
+      "bytes_per_rank": 1.000005,
+      "empty_slices": 0,
+      "escapes": 211928439,
+      "max_live_bytes": 122336199,
+      "max_slice_bytes": 4456448,
+      "peak_over_n": 0.012234,
+      "retired": 38147,
+      "slices": 38147,
+      "staged_bytes": 10000053024,
+      "wait_ms": 2194323
+    },
+    "SWEEP_PHASE_WALLS": {
+      "advance_witness": 621.166416,
+      "lce": 8565.465788,
+      "lce_threads": 2,
+      "repair": 7338.303803
+    },
+    "SWEEP_STATS": {
+      "advances": 3474883890,
+      "char_changes": 3474883890,
+      "chi": 2676925006,
+      "emits": 2676925006,
+      "fired": 0,
+      "max_fired": 0,
+      "mean_fired": 0.0,
+      "scans": 0
+    },
+    "XSA_FINISH_M1_STREAM": {
+      "block_runs": 1024,
+      "blocks": 3393442,
+      "codec": 116,
+      "dir_bytes": 54295072,
+      "m1_bytes": 3254868712,
+      "payload_bytes": 3200571304,
+      "runs": 3474883891,
+      "trailing_directory": 1
+    },
+    "XSA_FINISH_OVERLAP": {
+      "exposed_lce": 581.904,
+      "feed_spans": 7338.312,
+      "lce_spans": 8565.466,
+      "serial_fold": 1666.977
+    },
+    "XSA_FINISH_SWEEP_ANATOMY": {
+      "bands": 53023,
+      "feed": 404.422,
+      "ns_per_raw_run": 116.38,
+      "piecewait": 6868.213,
+      "raw_runs": 3474883891,
+      "readband": 59.484,
+      "repair_total": 7338.304,
+      "rlebwt_wait": 0.0
+    }
+  },
+  "profile": "packed-10g-bitmap",
+  "progress_lines": 829,
+  "source_log_sha256": "044cf6c438251dae9e8425aa73e7fb55edc9cf69b860a4b0b541523a7f2f1b94"
+}

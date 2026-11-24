@@ -31,6 +31,12 @@ class Controls(unittest.TestCase):
                     self.assertEqual(s['controls'],v);self.assertTrue(s['same_executable_inode']);self.assertEqual(s['pid'],p.pid)
                     with self.assertRaises(RuntimeError):r.sample(os.getpid(),d,'test',py,{'PFCK_SPACING':'11'})
                 finally:p.stdin.write(b'x');p.stdin.flush()
+    def test_empty_at_exec_is_not_a_measurement(self):
+        v={'PFCK_SPACING':'22'}
+        with patch.object(Path,'read_bytes',side_effect=[b'',b'PFCK_SPACING=22\0']):self.assertEqual(c.stable_read(3,v),v)
+        with patch.object(Path,'read_bytes',return_value=b''):self.assertEqual(c.stable_read(3,v,0),{})
+        with patch.object(Path,'read_bytes',side_effect=FileNotFoundError):self.assertEqual(c.stable_read(3,v),{})
+        with patch.object(Path,'read_bytes',return_value=b'PFCK_SPACING=13\0'):self.assertNotEqual(c.stable_read(3,v),v)
     def test_bad_evidence_or_unrelated_variables(self):
         self.assertEqual(c.environ(b'TOKEN=secret\x00XSA_RESIDENT_DICT_THREADS=4\x00'),{'XSA_RESIDENT_DICT_THREADS':'4'})
         with self.assertRaises(RuntimeError):c.environ(b'PFCK_SPACING=22\x00PFCK_SPACING=22\x00')

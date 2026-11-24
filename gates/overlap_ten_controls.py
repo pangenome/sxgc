@@ -27,9 +27,13 @@ def environ(blob):
 
 def evidence(d,b,expected):
     actual=b['worker_controls'];assert set(actual)==set(expected) and all(actual[k] in ({},v) for k,v in expected.items()),'nonempty child control mismatch'
-    if actual==expected and not (d/STABLE).exists():return 'native /proc'
+    exception=(d/MISSING).is_file();stable=(d/STABLE).is_file()
+    assert not (stable and exception),'ambiguous provenance'
+    if not (stable or exception):
+        assert actual==expected,'no observed stable controls for missing startup snapshot'
+        return 'native /proc'
     assert (d/'binaries.sha').read_text().splitlines()[0]==PIN,'unexpected harness for out-of-process evidence'
-    if (d/STABLE).exists():
+    if stable:
         s=json.loads((d/STABLE).read_text());assert s['profile']==b['profile'] and s['binaries_sha256']==sha(d/'binaries.sha')
         source=json.loads((d/'source.json').read_text())['source'] if (d/'source.json').is_file() else str(d.resolve());assert s['original']==source
         assert set(s['observed'])==set(expected);names={'resident':'overlap_resident','sink':'pfp_sort_r','finish':'xsa_finish_cur'}
@@ -52,6 +56,7 @@ def stable_read(pid,expected,seconds=1):
     """Use for future *new* harnesses, not retroactive receipt repair. Empty at exec can be transient."""
     end=time.monotonic()+seconds;p=Path('/proc')/str(pid)/'environ'
     while True:
-        actual=environ(p.read_bytes())
+        try:actual=environ(p.read_bytes())
+        except (FileNotFoundError,ProcessLookupError,PermissionError):return {}  # caller requests private STOP
         if actual==expected or actual or time.monotonic()>=end:return actual
         time.sleep(.005)

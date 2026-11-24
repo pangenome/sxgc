@@ -73,11 +73,11 @@ def sample(parent,d,name,exe,expect):
         except (ProcessLookupError,FileNotFoundError):continue
     return None
 
-def observe(d,profile,out,done,script,tools):
+def observe(d,profile,out,done,script,tools,deadline):
     obs={};parent=None;err=None
     try:
         for name,binary in [('resident',tools/'overlap_resident'),('sink',tools/'pfp_sort_r'),('finish',Path('/tmp/xsa_finish_cur'))]:
-            while not (d/(name+'.log')).exists():need(not done.wait(.4) and time.time()<CUTOFF and not (d/'stop.requested').exists(),'worker not started')
+            while not (d/(name+'.log')).exists():need(not done.wait(.4) and time.time()<deadline and not (d/'stop.requested').exists(),'worker not started')
             end=time.monotonic()+12
             while True:
                 parent=parent or controller(d,script);r=sample(parent,d,name,binary,wanted(profile)[name]) if parent else None
@@ -92,32 +92,40 @@ def observe(d,profile,out,done,script,tools):
         # Never signal a timed worker or fabricate evidence; this is the private cooperative boundary.
         (d/'stop.requested').touch(exist_ok=True)
 
-def original_postscore(code,log,d):
+def original_postscore(code,log,d,harness=H):
     if code==0:return ('certified receipt='+str(d)) in log.splitlines()
-    return (code==1 and log.rstrip().endswith('AssertionError') and
-        'assert b[\'worker_controls\']==dict(resident=dict(base,**b[\'omp_settings\']' in log and
-        f'File "{H}/gates/overlap_ten_score.py", line 58, in verified_arm' in log and
-        'PASS resident ranks, all raw SA/LCP/BWT rows, exact nine-member SHA ' in log)
+    before,tag,trace=log.rpartition('Traceback (most recent call last):');lines=[l for l in trace.strip().splitlines() if not re.fullmatch(r'\s*[\^~]+\s*',l)]
+    return (code==1 and bool(tag) and len(lines)>=3 and lines[-1]=='AssertionError' and
+        lines[-2].strip()=="assert b['worker_controls']==dict(resident=dict(base,**b['omp_settings'],XSA_RESIDENT_PACKED='1',XSA_RESIDENT_WIDE_DICT='1'),sink=sink_controls,finish=base)" and
+        lines[-3].strip()==f'File "{harness}/gates/overlap_ten_score.py", line 58, in verified_arm' and
+        'PASS resident ranks, all raw SA/LCP/BWT rows, exact nine-member SHA ' in before)
 
 def run(profile,out,prior):
     confirm_pin();exclusive();need(not list(S.glob(profile+'-??????')),'an arm already exists; no duplicate attempts')
     secs=[load(x/'build.json')['raw_to_product_s'] for x in [BANK/'packed-serial-10g',*prior]]
     reserve=min(secs[0],1.4*max(secs[1:]))*1.08+480;need(time.time()+reserve<CUTOFF,'insufficient measured ETA headroom');print('TEN_ADMISSION remaining_s=',int(CUTOFF-time.time()),'need_s=',round(reserve),flush=True)
-    cmd=['bash','gates/overlap_ten_product.sh','--profile',profile,str(SRC),str(TOOLS),str(CUTOFF)];save(out/'launch.json',dict(argv=cmd,cwd=str(H),harness=PIN,worker=WORKER,required_s=reserve,deadline=CUTOFF))
+    return observed_profile(H,SRC,TOOLS,profile,CUTOFF,out,reserve)
+
+def observed_profile(harness,src,tools,profile,deadline,out,reserve,env=None):
+    """Same frozen executable launch. Observer is outside the timed services. Not a rung/CPU selector."""
+    need(all(sha(harness/'gates'/k)==v for k,v in AUDITED.items()) and git(harness,'rev-parse','HEAD')==PIN and
+         git(src,'rev-parse','HEAD')==WORKER and not git(harness,'status','--porcelain'),'unsupported measured source')
+    need(__debug__ and profile in TEN_ARMS and reserve>0 and time.time()+reserve<deadline and not list(out.iterdir()),'insufficient time/fresh observer directory required')
+    cmd=['bash','gates/overlap_ten_product.sh','--profile',profile,str(src),str(tools),str(deadline)];save(out/'launch.json',dict(argv=cmd,cwd=str(harness),harness=PIN,worker=WORKER,required_s=reserve,deadline=deadline))
     d=t=None;done=threading.Event();print('TEN_ARM_START profile='+profile,flush=True)
-    with (out/'launcher.log').open('x') as log,sp.Popen(cmd,cwd=H,stdout=sp.PIPE,stderr=sp.STDOUT,text=True,bufsize=1) as p:
+    with (out/'launcher.log').open('x') as log,sp.Popen(cmd,cwd=harness,env=env,stdout=sp.PIPE,stderr=sp.STDOUT,text=True,bufsize=1) as p:
         try:
             for l in p.stdout:
                 log.write(l);log.flush()
                 if l.startswith('receipt='):
-                    m=re.fullmatch('receipt=(.*) tools=(.*)\n',l);need(m and Path(m[2])==TOOLS and d is None,'ambiguous launcher receipt')
+                    m=re.fullmatch('receipt=(.*) tools=(.*)\n',l);need(m and Path(m[2])==tools and d is None,'ambiguous launcher receipt')
                     d=Path(m[1]);need(d.resolve()==d and d.parent==S and re.fullmatch(profile+r'-[a-zA-Z0-9]{6}',d.name),'unexpected receipt path');print('RUN_DIRECTORY',d,flush=True)
-                    t=threading.Thread(target=observe,args=(d,profile,out,done,H/'gates/overlap_resident_gate.py',TOOLS));t.start()
+                    t=threading.Thread(target=observe,args=(d,profile,out,done,harness/'gates/overlap_resident_gate.py',tools,deadline));t.start()
                 if l.startswith(('STOP','RESIDENT_RADIX_JOIN','RESIDENT_STREAM','TEN_PRODUCT_SCORE','PASS resident ranks','Traceback','AssertionError')):print(l,end='',flush=True)
         finally:
             rc=p.wait();done.set()
             if t:t.join()
-    save(out/'exit.json',dict(original_launcher_rc=rc));need(d is not None and original_postscore(rc,(out/'launcher.log').read_text(),d),'unexpected launcher exit or score failure')
+    save(out/'exit.json',dict(original_launcher_rc=rc));need(d is not None and original_postscore(rc,(out/'launcher.log').read_text(),d,harness),'unexpected launcher exit or score failure')
     need((out/STABLE).is_file() and not (d/'stop.requested').exists(),'missing actual env or stopped')
     b=out/profile;bank(d,b);(b/STABLE).write_bytes((out/STABLE).read_bytes());save(b/'postcheck.json',dict(original_launcher_rc=rc,original_launcher_log_sha256=sha(out/'launcher.log'),recovery_revision=git(REPO,'rev-parse','HEAD')))
     g=measured_goals(b)
