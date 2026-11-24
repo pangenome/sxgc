@@ -1,0 +1,24 @@
+{
+  "all_rows_raw_verified": true,
+  "cpus": 2,
+  "epochs": 3,
+  "exits": [
+    0,
+    0,
+    0
+  ],
+  "front_plus_keys_bytes": 11177197,
+  "m20_bytes": 34608,
+  "m20_sha256": "926ccda7666fbf16bf424b7541bc616e3fb260e6c53de66fecf35dab1add0261",
+  "new_position_file_bytes": 0,
+  "old_band_file_bytes_each_direction": 50491568,
+  "posting_cap": 3155722,
+  "reference_sha256": "55eea26f9d735664204fb58f33f7c601477bfbecfb8f34d298e6425ce92bcb07",
+  "retained_key_and_inverse_bytes": 3243840,
+  "rows": 6311446,
+  "scope": "Generated raw -> forwarded row43 and v10 member 20, not a container or a performance run.",
+  "shared_limit": 268435456,
+  "shared_peak": 48168960,
+  "swap_limit": 0,
+  "tagged_pipe_bytes_each_direction": 75737352
+}

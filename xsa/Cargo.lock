@@ -442,6 +442,7 @@ name = "xsa"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "libc",
  "memmap2",
  "rayon",
  "serde_json",

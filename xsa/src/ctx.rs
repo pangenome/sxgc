@@ -2008,8 +2008,12 @@ fn tap_feed_band(
     (fed, reads)
 }
 
-/// The whole tap: the band stream -> one m20 payload.
-pub fn tap(a: &TapArgs) {
+#[path = "ctx_row43_pipe.rs"]
+mod row_pipe;
+
+/// The existing band/SA callers keep their original transport.
+pub fn tap(a: &TapArgs) { tap_input(a, None); }
+fn tap_input(a: &TapArgs, pipe: Option<row_pipe::Pipe>) {
     let t_all = std::time::Instant::now();
     let tfile = std::fs::File::open(&a.corpus)
         .unwrap_or_else(|e| die(&format!("ctx-tap: open {}: {e}", a.corpus)));
@@ -2056,6 +2060,20 @@ pub fn tap(a: &TapArgs) {
     let mut docs_buf: Vec<u32> = Vec::new();
     let mut ms: Vec<u8> = Vec::new();
     let mut rems: Vec<u64> = Vec::new();
+    if let Some(pipe) = pipe {
+        // Same boundary oracle, rank-order prefix feed, provenance and encoder as --bands.
+        // No producer.done, position bands, acknowledgement files or extra pass over the corpus.
+        need(matches!(&starts, OwnedStarts::Table(t) if t.corpus_bytes == flen), "row43 tap needs an exact-length XSEP map");
+        pipe.relay(flen, |positions| {
+            let (fed, _) = tap_feed_band(&mut b, positions, &text, &ranks, &starts, flen, a.depth, true,
+                a.threads, doc_stride, &mut pfx, &mut docs_buf, &mut ms, &mut rems);
+            need(fed == positions.len() as u64, "short row43 trie feed");
+        }).unwrap_or_else(|e| die(&format!("ctx-tap row43: {e}")));
+        let (payload, _) = b.finish(a.n, flen);
+        pipe.publish(&a.out, &payload).unwrap_or_else(|e| die(&format!("ctx-tap row43 output: {e}")));
+        eprintln!("CONTEXT_TRIE_ROW_PIPE rows={} position_file_bytes=0 m20_bytes={} source=in-build boundary_aware=1", a.n, payload.len());
+        return;
+    }
     if !a.sa.is_empty() {
         // THE MEASUREMENT ARM: the same rows, from a u40 suffix array instead of
         // the band stream. Same prefix reads, same builder, same member - so the
@@ -2671,6 +2689,8 @@ pub fn command(cmd: &str, args: &[String]) {
                 rows: 0,
                 doc_starts: String::new(),
             };
+            let mut pipe_stop = None;
+            let mut until = None;
             let mut i = 0;
             while i < args.len() {
                 let f = args[i].as_str();
@@ -2679,6 +2699,8 @@ pub fn command(cmd: &str, args: &[String]) {
                     args.get(i).cloned().unwrap_or_else(|| die(&format!("{what} needs a value")))
                 };
                 match f {
+                    "--row43-pipe" => pipe_stop = Some(val("--row43-pipe")),
+                    "--deadline" => until = Some(val("--deadline").parse::<u64>().unwrap_or_else(|_| die("--deadline: Unix seconds"))),
                     "--bands" => a.bands = val("--bands"),
                     "--corpus" => a.corpus = val("--corpus"),
                     "-o" | "--out" => a.out = val("--out"),
@@ -2694,6 +2716,18 @@ pub fn command(cmd: &str, args: &[String]) {
                 }
                 i += 1;
             }
+            if let Some(stop) = pipe_stop {
+                need(a.bands.is_empty() && a.sa.is_empty() && a.rows == 0 && !stop.is_empty() &&
+                    !a.corpus.is_empty() && !a.out.is_empty() && std::path::Path::new(&a.doc_starts).is_dir() &&
+                    a.n > 1 && a.n <= row_pipe::LIMIT && (1..=64).contains(&a.threads),
+                    "ctx-tap --row43-pipe STOP --deadline UNIX --corpus RAW --n ROWS --doc-starts EXACT_MAP --out NEW_PAYLOAD (pipe to pipe only)");
+                need(!exists(&a.out) && !exists(&format!("{}.partial", a.out)), "row43 tap output already exists");
+                let pipe = row_pipe::Pipe::open(stop, until.unwrap_or_else(|| die("row43 pipe requires --deadline")))
+                    .unwrap_or_else(|e| die(&format!("ctx-tap row43 setup: {e}")));
+                tap_input(&a, Some(pipe));
+                return;
+            }
+            need(until.is_none(), "--deadline needs --row43-pipe STOP");
             need((!a.bands.is_empty() || !a.sa.is_empty()) && !a.corpus.is_empty() && !a.out.is_empty() && a.n > 0,
                 "usage: xsa ctx-tap --bands <dir> --corpus <file> --out <payload> --n <rows> \
                  [--depth D] [--min-support K] [--docs-min-support M] [--threads N] \

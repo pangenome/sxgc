@@ -7,7 +7,23 @@ exact-corpus XSEP map and the banked native finish. This establishes the
 product interface on one 6,311,445-byte synthetic input; not throughput,
 physical I/O savings, width qualification or a larger-rung authorization.
 
-## Reproduce
+## Direct row pipe: the rolling producer now feeds the Rust m20 builder
+
+On the same generated raw corpus and exact XSEP map, `proc_b7c2` ran **front64 pos → parse64 rank → finite_emit64 staged-epochs → xsa ctx-tap → independent raw checker**. The front and ranker generated the inverse afresh; the archived product was a comparison target, never a source of rows or trie bytes. All **6,311,446** forwarded suffix positions, adjacent LCPs and predecessors passed, including the independent final rank. Through three posting-file epochs, the Rust tap built the exact **34,608-byte member 20**, SHA-256 `926ccda7666fbf16bf424b7541bc616e3fb260e6c53de66fecf35dab1add0261`. No position band was written or read (the directory relay used 50,491,568 B each way). This compares actual bytes with a target consumer, not just wire geometry. The new run did **not** rebuild the other nine members or do the final joins. No timing or physical IO comparison. [Result and executable pins](gates/receipts/v10-rowpipe-m20/).
+
+New opt-in Rust CLI (Linux; existing `--bands` / `--sa` modes unchanged):
+
+```text
+... row43 producer ... | xsa ctx-tap --row43-pipe STOP --deadline UNIX_SECONDS \
+    --corpus RAW --n ROWS --doc-starts EXACT_XSEP_MAP --out NEW_M20 \
+    --depth 8 --min-support 1000 --docs-min-support 1000 --threads 1 | ... row43 consumer ...
+```
+
+Both ends must be bounded pipes. One 32,768-row packet supplies positions to the **existing** prefix/document lookup and trie encoder and passes the **unchanged** 12-byte rows down the line. Slow consumers backpressure the producer; a separate undrained-pipe test stopped with exit 75 and no m20. The driver must authenticate the exact corpus and map (equal length alone is not identity), run a raw-row witness, and require every exit before using the side payload in a join. Neither passing rows nor publishing m20 publishes an index. This transport removes the separate position files, not the corpus lookups, pipe traffic, builder memory or final payload. It is not wired into default builds.
+
+Fixture: `bash gates/overlap_v10_pipe_fixture.sh` on the rehearsal host with its pinned tools. Shared fixture service: two CPU equivalents, 256 MiB, zero swap; compile separate. No large corpus input or dispatch. The largest finite tie here is just two descriptors, and no coordinate crosses u32: use this for **integration**, not scale claims.
+
+## Reproduce the earlier full v10 reference and band-relay fixture
 
 On the rehearsal host (offline Cargo registry, Linux user systemd, banked
 bundle cache required), from an isolated checkout with both git objects:
