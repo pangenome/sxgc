@@ -1,0 +1,37 @@
+{
+  "arms": {
+    "candidate": {
+      "native_by_stage": {
+        "candidate": {
+          "cgroup_peak": 516440064,
+          "cpu_s": 99.33,
+          "read_bytes": 140394496,
+          "sampled_hwm": 364265472,
+          "write_bytes": 0
+        },
+        "oracle": {
+          "cgroup_peak": 113270784,
+          "cpu_s": 5.69,
+          "read_bytes": 100003840,
+          "sampled_hwm": 107495424,
+          "write_bytes": 0
+        },
+        "prep": {
+          "cgroup_peak": 201326592,
+          "cpu_s": 2.67,
+          "read_bytes": 100225024,
+          "sampled_hwm": 109117440,
+          "write_bytes": 335495168
+        }
+      },
+      "prep_counted_peak": 167605419,
+      "prep_s": 3.0757563803344965,
+      "prepared_bound": 144584540,
+      "prepared_to_verified_EOF_s": 105.23159895464778,
+      "raw_phase_sum_s": 108.30735533498228,
+      "raw_to_verified_EOF_s": 108.66046077013016,
+      "row_pipe_bytes": 65536
+    }
+  },
+  "scope": "new shortest-tail candidate only; compare to archived component, not to a product"
+}

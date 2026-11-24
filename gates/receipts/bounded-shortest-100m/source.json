@@ -1,0 +1,32 @@
+{
+  "artifacts": {
+    "binaries.json": "65921e98fdc82b2f4369a67a0a5a8b078f19b7bec790885eb11f91aa03af3e4a",
+    "build.log": "798b9ba5abe0facfb5205d8e100ce1f329ad86268f6a856bad1d4f0bbc9f4ff3",
+    "candidate/candidate.json": "996f7e52ec7a0f69f38c775345a0474b6240aa51f6aefb0597726b5fc4d80bab",
+    "candidate/cold-columns.json": "05a0e3f11f66e3cf59b5f250c4fa6d7e30d3d958c620abb5d596949ead6f57cb",
+    "candidate/cold-raw.json": "6cc06f7c79115fd0ca1c2b18e0ca1dc8ba90735dd0314ed822e085b3414a7da4",
+    "candidate/exits.json": "490ea0388e637dac99a0f2cf11e66581874cc5e4ad98925a6239b176cd158e09",
+    "candidate/oracle.json": "f5ae8a31daeb4d271ee34553025dafa73f0ec11306076a11519d78f997288c3d",
+    "candidate/oracle.log": "08280269ad6c43f460ba3b80f3d9ed704a4f7294b6a4040199e9a1d81827b684",
+    "candidate/prep.json": "1edd1776f392e546252244b70e5f1fbbd1781e00200889b9e2c1893f8fa8885c",
+    "candidate/prep.log": "570d95aeb5624abfef7f37289dc9cd4f2c47d9144bc34b82078757e48ab811a5",
+    "candidate/producer.log": "ab4851f5916d1e885fbc728f87c76f4bfb0cb8b9c170c2e0c4be1201a173369b",
+    "candidate/result.json": "1a1a14e9781879c977aa74290da2c00570054a2a5be4491f1b0ed210b9d8a8fc",
+    "comparison.json": "0827609e682d72d1e3e2ae4ce2ea5f564414f7691edc38f99072c0c0f5a2b8c4",
+    "inputs.json": "e94b43652dbe6512d3a3e657689c4b3798cbbc8708fc16e6dadfe40b020e1eea",
+    "lease.json": "cc2587850e4bfb861725b4cfab6040b23408c3e8844def28244899928eb9d700",
+    "reference.json": "06da855407ae5561bac9c1d187d2f19294da6880aaf1b1a1058a408948ade780",
+    "result.json": "0b4308d8a7b9cdfdf0e136278a62b4dd305a3303e2f7e8bffd1f22d43151f919",
+    "status.json": "140a633802f3c7f753886b56aef8091bab5d9e6e0585fa2fc15da0360ca6542d"
+  },
+  "exit_code": 0,
+  "launcher": "proc_3478",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/bounded-shortest-100m-ttrqr7ha",
+  "revision": "c4fe77d5baae1abc0bf3dfebcda529e71f68e97c",
+  "worker_sha256": {
+    "lexparse": "b3e06429708567a17f6ede3e0e6dac1891d252a3a495eb2177da025101f62544",
+    "oracle": "1d0f8261980a6932c39b91bfa7e0612bc914baa08cc2d19df2c52f5d90a9165e",
+    "overlap_bounded_packed": "6cd22fe90c6d1d6bfc86f4c559c51bf4882f9ebf0af274100e2017066807f9a1",
+    "overlap_resident": "3fc9b5b2558906ac4613cdacc4eef9eae73bb4febffb6e07e8e97887db360087"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "columns": {
+    "dictionary.packed": "3fc7fa235da0b0f355bf928e69400c9ad8ab9033b98dba80f2d8583e9994dd36",
+    "parse.u32": "603e39e31da8fb51ad8838a114ee432dc03bb483e3e9f95f523b072d82e7f418"
+  },
+  "expected_peak": 6545,
+  "expected_shortest_payload": 24205194,
+  "gates": "exact rows; measure both endpoint ratios <3 and preferred <2 vs archived resident. No product or scale promotion.",
+  "pair_review_sha256": "ec0ef8ceba20fa6f705cc87a812be891e2c80354070284a037838916d515e4fc",
+  "pair_revision": "e2f0c54aa364e71056366400f6fbaebb4d38e5a5",
+  "pair_source_sha256": "b8c5abfce4bffec96cc14d3abc2a8d3eb4f4a6a078bc85ec2387c000d1fb9b7b",
+  "prior_classifications": 3435642576,
+  "prior_digit_reads": 23541830668,
+  "profile": "--component-shortest-100m"
+}

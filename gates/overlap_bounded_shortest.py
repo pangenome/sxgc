@@ -58,8 +58,17 @@ def compare(d):
         avoided_full_classifications=r['prior_classifications']-passes*U,avoided_full_passes=r['prior_classifications']//U-passes,avoided_radix_digit_reads=r['prior_digit_reads']-int(emit[3]),emitting_order_counter_prediction_matched=lines[2:]==prior[2:],
         wall={k:v[k] for k in (*CLOCKS,'prep_s','raw_phase_sum_s')},native_by_stage=z,per_device_io=io,compared_to_archived=comparisons,product_promotion=False)
 
+def archived(d):
+    src=load(d/'source.json'); inp=load(d/'inputs.json'); a=d/'candidate'
+    files='binaries.json build.log comparison.json inputs.json lease.json reference.json result.json status.json'.split()
+    files+=['candidate/'+f for f in ('candidate.json','cold-raw.json','cold-columns.json','prep.json','prep.log','producer.log','oracle.json','oracle.log','exits.json','result.json')]
+    need(src['artifacts'].keys()==set(files) and all(sha(d/f)==src['artifacts'][f] for f in files),'archived receipt digest')
+    parent=Path(src['original_directory']); need(src['exit_code']==0 and src['revision']==inp['revision']=='c4fe77d5baae1abc0bf3dfebcda529e71f68e97c' and src['worker_sha256']==load(d/'binaries.json') and parent.name.startswith(PREFIX) and load(d/'lease.json')['directory']==str(parent) and all(Path(load(a/(role+'.json'))['argv'][0]).parent==parent/'tools' for role in ('prep','candidate','oracle')),'launch pin')
+    result=compare(d);need(result==load(d/'comparison.json') and load(d/'status.json')==dict(deadline=inp['deadline'],qualified=True),'not a closed, scored attempt');return result
+
 if __name__=='__main__':
     if len(sys.argv)==2 and sys.argv[1]=='--reference': value=reference()
+    elif len(sys.argv)==3 and sys.argv[1]=='--archived':value=archived(Path(sys.argv[2]))
     elif len(sys.argv)==2:value=compare(Path(sys.argv[1]))
-    else:raise SystemExit('expected --reference or a measured single arm parent directory')
+    else:raise SystemExit('expected --reference, --archived BANK, or a measured single arm directory')
     print(json.dumps(value,indent=2,sort_keys=True))

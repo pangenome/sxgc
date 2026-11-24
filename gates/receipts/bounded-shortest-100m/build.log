@@ -1,0 +1,26 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /tmp/overlap-study-src-7nKje1/xsa/pfp/Cargo.toml
+workspace: /tmp/overlap-study-src-7nKje1/xsa/Cargo.toml
+   Compiling crossbeam-utils v0.8.23
+   Compiling crossbeam-epoch v0.9.21
+   Compiling crossbeam-deque v0.8.8
+   Compiling find-msvc-tools v0.1.15
+   Compiling libc v0.2.189
+   Compiling rayon-core v1.13.0
+   Compiling shlex v2.0.1
+   Compiling cc v1.11.3
+   Compiling pfp v0.1.0 (/tmp/overlap-study-src-7nKje1/xsa/pfp)
+   Compiling either v1.18.0
+   Compiling rayon v1.12.0
+   Compiling memmap2 v0.9.11
+warning: function `decode` is never used
+  --> pfp/src/bin/../overlap_row43.rs:18:8
+   |
+18 | pub fn decode(row: &[u8; 12]) -> (u64, u64, u32) {
+   |        ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pfp` (bin "overlap_resident") generated 1 warning
+warning: `pfp` (bin "overlap_bounded_packed") generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 14.83s

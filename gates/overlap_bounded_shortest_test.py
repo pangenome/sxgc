@@ -4,13 +4,20 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
-from overlap_bounded_shortest import K, PREFIX, RUNG, compare, load, reference
+from overlap_bounded_shortest import K, PREFIX, RUNG, archived, compare, load, reference, sha
 
 
 def put(f,x):f.write_text(json.dumps(x))
 
 
 class SeparateArm(unittest.TestCase):
+    def test_archived_completion(self):
+        bank=RUNG.with_name('bounded-shortest-100m'); self.assertEqual(archived(bank),load(bank/'comparison.json'))
+        with tempfile.TemporaryDirectory() as tmp:
+            d=Path(tmp)/'bank';shutil.copytree(bank,d); f=d/'status.json';v=load(f);v['qualified']=False;put(f,v)
+            s=load(d/'source.json');s['artifacts']['status.json']=sha(f);put(d/'source.json',s)
+            with self.assertRaises(ValueError):archived(d)
+
     def test_closed_shape(self):
         with tempfile.TemporaryDirectory() as tmp:
             d=Path(tmp)/(PREFIX+'synthetic'); a=d/'candidate'; shutil.copytree(RUNG/'candidate',a)

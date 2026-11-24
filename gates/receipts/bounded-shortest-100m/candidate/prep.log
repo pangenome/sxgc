@@ -1,0 +1,2 @@
+PACKED dictionary_bytes=127708112 parse_bytes=12682124 refs_written=0
+LEXPARSE n=100000503 phrases=3170531 distinct=2689467 descriptors=95434516 max_bucket=809062 peak_counted=163411115 final_columns=140390236 reads=100225024 decode_verified=0

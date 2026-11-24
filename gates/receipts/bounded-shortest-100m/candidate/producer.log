@@ -1,0 +1,4 @@
+bounded arrays parse=192505036 PhaseBytes { aligned: 259514468, lists: 301977663, emit: 318358023 } arena=67108864
+shortest entries=2689466 payload_bytes=24205194 exact_peak=6545 heap_cap=8192 dry_order_needed=false seconds=0.233370
+compact passes=2+16 digit_reads=11770915334 heap_cap=8192
+bounded rows=100000504 max_ties=6545 ranges=16

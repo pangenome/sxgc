@@ -1,0 +1,77 @@
+{
+  "actual_largest_class": 6545,
+  "avoided_full_classifications": 1717821288,
+  "avoided_full_passes": 18,
+  "avoided_radix_digit_reads": 11770915334,
+  "compared_to_archived": {
+    "candidate": {
+      "both_under_2x": true,
+      "both_under_3x": true,
+      "prepared_producer_io_delta": {
+        "read_bytes": 0,
+        "write_bytes": 0
+      },
+      "producer_cpu_ratio": 0.5907577019150708,
+      "producer_peak_ratio": 0.9995877465592694,
+      "wall": {
+        "prepared_to_verified_EOF_s": 0.5919554117965804,
+        "raw_to_verified_EOF_s": 0.5989767442917263
+      }
+    },
+    "control": {
+      "both_under_2x": false,
+      "both_under_3x": true,
+      "prepared_producer_io_delta": {
+        "read_bytes": 0,
+        "write_bytes": 0
+      },
+      "producer_cpu_ratio": 3.3076923076923075,
+      "producer_peak_ratio": 0.37471914787384536,
+      "wall": {
+        "prepared_to_verified_EOF_s": 2.9168725632361547,
+        "raw_to_verified_EOF_s": 2.725667397999758
+      }
+    }
+  },
+  "emitting_order_counter_prediction_matched": true,
+  "narrow_sha256": "82747f11a9925bb4d89cc812410d98e411ce80b1767ee1ff4dc22e94e2cd874e",
+  "native_by_stage": {
+    "candidate": {
+      "cgroup_peak": 516440064,
+      "cpu_s": 99.33,
+      "read_bytes": 140394496,
+      "sampled_hwm": 364265472,
+      "write_bytes": 0
+    },
+    "oracle": {
+      "cgroup_peak": 113270784,
+      "cpu_s": 5.69,
+      "read_bytes": 100003840,
+      "sampled_hwm": 107495424,
+      "write_bytes": 0
+    },
+    "prep": {
+      "cgroup_peak": 201326592,
+      "cpu_s": 2.67,
+      "read_bytes": 100225024,
+      "sampled_hwm": 109117440,
+      "write_bytes": 335495168
+    }
+  },
+  "per_device_io": {
+    "candidate": null,
+    "oracle": null,
+    "prep": null
+  },
+  "product_promotion": false,
+  "rows": 100000504,
+  "scope": "one new 100 MB stream; separately timed archived controls, unequal RAM vs resident; no reruns or product promotion",
+  "shortest_census_s": 0.23337,
+  "shortest_payload_bytes": 24205194,
+  "wall": {
+    "prep_s": 3.0757563803344965,
+    "prepared_to_verified_EOF_s": 105.23159895464778,
+    "raw_phase_sum_s": 108.30735533498228,
+    "raw_to_verified_EOF_s": 108.66046077013016
+  }
+}
