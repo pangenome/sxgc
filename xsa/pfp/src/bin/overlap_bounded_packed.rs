@@ -181,7 +181,14 @@ fn main() {
         .get(1)
         .is_some_and(|s| s == "--component-shortest-100m");
     let component = fixed_shortest || args.get(1).is_some_and(|s| s == "--component-100m");
-    let shortest = fixed_shortest || args.get(1).is_some_and(|s| s == "--fixture-shortest");
+    let byte_msd = args.get(1).is_some_and(|s| s == "--fixture-byte-msd");
+    let local = if byte_msd {
+        compact::LocalOrder::Bytes
+    } else {
+        compact::LocalOrder::Bits
+    };
+    let shortest =
+        fixed_shortest || byte_msd || args.get(1).is_some_and(|s| s == "--fixture-shortest");
     let compact = component || shortest || args.get(1).is_some_and(|s| s == "--fixture-compact");
     let required = if compact { 7 } else { 6 };
     if component {
@@ -189,7 +196,7 @@ fn main() {
     } else {
         assert!(
         (required..=required + 1).contains(&args.len()) && (compact || args[1] == "--fixture"),
-        "--fixture COLUMNS STOP ARRAY_BYTES ARENA_BYTES [EXPECTED_RANKS] or --fixture-compact|--fixture-shortest COLUMNS STOP ARRAY_BYTES ARENA_BYTES CURSOR_CAP [EXPECTED_RANKS]");
+        "--fixture COLUMNS STOP ARRAY_BYTES ARENA_BYTES [EXPECTED_RANKS] or --fixture-compact|--fixture-shortest|--fixture-byte-msd COLUMNS STOP ARRAY_BYTES ARENA_BYTES CURSOR_CAP [EXPECTED_RANKS]");
     }
     let dir = Path::new(&args[2]);
     let flag = Path::new(&args[3]);
@@ -416,13 +423,14 @@ fn main() {
                     "fixed shortest certificate did not suffice; no fallback timing"
                 );
                 let mut probes = 0u128;
-                let c = compact::order_checked(
+                let c = compact::order_checked_with(
                     &d,
                     compact::Limits {
                         workspace_bytes: workspace,
                         rows_per_range: n,
                         passes,
                     },
+                    local,
                     || stop(flag),
                     |ties, _| {
                         if ties.len() > cap {
@@ -508,13 +516,14 @@ fn main() {
         }
     };
     let (total, ranges) = if compact {
-        let c = compact::order_checked(
+        let c = compact::order_checked_with(
             &d,
             compact::Limits {
                 workspace_bytes: workspace,
                 rows_per_range: n,
                 passes,
             },
+            local,
             || stop(flag),
             |ties, h| emit(ties.len(), &|i| ties[i].into(), h),
         )
@@ -523,6 +532,9 @@ fn main() {
             "compact passes={}+{} digit_reads={} heap_cap={cap}",
             c.census_passes, c.distributions, c.radix_digit_reads
         );
+        if byte_msd {
+            eprintln!("byte_msd partitions={} stack_reserved={} frames_peak={} leaf_comparisons={} shifted_slots={}",c.byte_partitions,c.byte_stack_reserved,c.byte_frames_peak,c.leaf_comparisons,c.leaf_shifted_slots);
+        }
         (c.total, c.distributions)
     } else {
         let c = range::order(

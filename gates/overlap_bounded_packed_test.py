@@ -53,8 +53,8 @@ def main():
             args = [PRODUCER, '--fixture', cols, flag, str(grant), str(arena)]
             return subprocess.run(args + ([d/'expected'] if oracle else []), capture_output=True)
 
-        def compact(cap, arena=100_000):
-            return subprocess.run([PRODUCER, '--fixture-compact', cols, flag, '2000000',
+        def compact(cap, arena=100_000, mode='--fixture-compact'):
+            return subprocess.run([PRODUCER, mode, cols, flag, '2000000',
                                    str(arena), str(cap), d/'expected'], capture_output=True)
 
         def check(text, arena):
@@ -65,6 +65,8 @@ def main():
             for cap in (1, 2):
                 c = compact(cap)
                 assert c.returncode == 0 and c.stdout == a.stdout, c.stderr
+                byte = compact(cap, mode='--fixture-byte-msd')
+                assert byte.returncode == 0 and byte.stdout == a.stdout and b'byte_msd partitions=' in byte.stderr, byte.stderr
             narrow = subprocess.run([BIN, cols, flag, '200000000', d/'expected'],
                                     env=dict(os.environ, XSA_RESIDENT_PACKED='1'), capture_output=True)
             assert narrow.returncode == 0 and b'RESIDENT_CHECK inverse_ranks=' in narrow.stderr
@@ -95,6 +97,7 @@ def main():
         assert int(re.search(rb'ranges=(\d+)', c.stderr)[1]) > 1
         refuse(compact(0), b'empty cursor cap')
         refuse(compact(2, arena=39), b'cursor budget')
+        refuse(compact(2, arena=39, mode='--fixture-byte-msd'), b'cursor budget')
         refuse(compact(1, arena=14_336+20+7*8), b'ExactClass')
         # Many short lists / windows: admission refuses before even the END row.
         (cols/'parse.u32').write_bytes(struct.pack('<8I', *range(8))*1000 + struct.pack('<I',8))
@@ -165,7 +168,7 @@ def main():
             flag.touch()
             proc.communicate(timeout=15)
             assert proc.returncode == 75
-        for a in (run(), compact(1)):
+        for a in (run(), compact(1), compact(1, mode='--fixture-byte-msd')):
             assert a.returncode == 75 and not a.stdout
     print('PASS full row43 streams, inverse ranks, multi-range ties, cap/input/rank/stop refusals')
 

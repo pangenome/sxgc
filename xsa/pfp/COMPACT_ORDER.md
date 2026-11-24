@@ -8,6 +8,8 @@ Compile `overlap_compact_order` alongside `overlap_range_order`. Pass the existi
 
 **Operations.** One validation scan of input, then exactly `U*(census_passes+distributions)` logical tail classifications, with `k` word visits per scan. `distributions >= max(ceil(U/slots), ceil(total.rows/rows_per_range))`. Prefix filtering/census LCP can cost O(L) bytes per visit for maximum finite length `L`; no assumption that shared prefix comparisons are cache hits. Planning clears 256 bins per census; plan shifts cost O(P²) records overall (every inserted band eventually costs a pass). MSD's actual digit reads are counted: per descriptor per byte depth at most eight varying-bit partitions (two reads apiece) plus a uniform-byte check. Hence at most `17U(L+1)` even on tied/long keys, rather than an L-length comparator per sort comparison. Adjacent equality and incoming LCP checks separately cost O(UL) bytes. Neither digit reads nor descriptor visits are physical IO or CPU time.
 
+**Alternative local order (fixture only):** [byte MSD](BYTE_MSD.md) replaces binary partitioning *within* each charged band. Its recursion frames cost extra slots under a fixed workspace; small-leaf slice comparisons are counted separately from byte probes. No change to the default order or the archived real-rung timings.
+
 **Checked fixture.** Reproduce single-threaded without the rest of the producer:
 
 ```

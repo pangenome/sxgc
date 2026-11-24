@@ -63,25 +63,37 @@ impl Input {
             })
             .collect();
         let budget = compact::fixed_bytes(passes).unwrap() + 8 * slots;
-        let mut it = expected.iter();
-        let c = compact::order(
-            &d,
-            compact::Limits {
-                workspace_bytes: budget,
-                passes,
-                rows_per_range: rows,
-            },
-            |g, h| {
-                let mut ids: Vec<_> = g
-                    .iter()
-                    .map(|t| (t.word as usize, t.offset as usize))
-                    .collect();
-                ids.sort_unstable();
-                assert_eq!(&(h, ids), it.next().unwrap());
-            },
-        )
-        .unwrap();
-        assert!(it.next().is_none());
+        let verify = |how| {
+            let mut it = expected.iter();
+            let c = compact::order_checked_with(
+                &d,
+                compact::Limits {
+                    workspace_bytes: compact::workspace_for(passes, slots, how).unwrap(),
+                    passes,
+                    rows_per_range: rows,
+                },
+                how,
+                || {},
+                |g, h| {
+                    let mut ids: Vec<_> = g
+                        .iter()
+                        .map(|t| (t.word as usize, t.offset as usize))
+                        .collect();
+                    ids.sort_unstable();
+                    assert_eq!(&(h, ids), it.next().unwrap());
+                },
+            )
+            .unwrap();
+            assert!(it.next().is_none());
+            c
+        };
+        let c = verify(compact::LocalOrder::Bits);
+        let byte = verify(compact::LocalOrder::Bytes);
+        assert_eq!(
+            (c.total, c.groups, c.peak, c.distributions),
+            (byte.total, byte.groups, byte.peak, byte.distributions)
+        );
+        assert!(byte.byte_frames_peak * 2 * 256 * size_of::<usize>() <= byte.byte_stack_reserved);
         assert_eq!(c.total, total);
         assert!(c.census_passes + c.distributions <= passes);
         assert!(c.peak.rows <= rows && c.peak.descriptors <= slots);
@@ -133,6 +145,21 @@ fn adaptive_skew_ties_and_long_prefix() {
     words.push(vec![64; 32]);
     let c = Input::new(words).verify(50, 256, 180);
     assert!(c.census_passes > 1 && c.distributions > 1 && c.groups < c.total.descriptors);
+}
+#[test]
+fn byte_children_and_virtual_ends_share_the_band() {
+    let mut v = Vec::new();
+    for i in 0..512 {
+        let mut w = vec![50 + i as u8 % 2, 30 + ((i / 2) % 11) as u8];
+        w.extend([55; 9]);
+        if i % 3 != 0 {
+            w.extend([15 + (i % 97) as u8, 200]);
+        }
+        v.push(w);
+    }
+    v.push(vec![50; 1]);
+    Input::new(v).verify(4096, 32, u64::MAX);
+    assert!(compact::workspace_for(usize::MAX, 42, compact::LocalOrder::Bytes).is_none());
 }
 #[test]
 fn shortest_counts_the_ninth_byte_not_trigger_or_occurrence_mass() {

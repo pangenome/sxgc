@@ -2,6 +2,15 @@
 use super::overlap_range_order::{Dictionary, Load, Tail};
 use std::mem::size_of;
 
+#[path = "overlap_byte_msd.rs"]
+mod byte_msd;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalOrder {
+    Bits,
+    Bytes,
+}
+
 #[repr(C)]
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PackedTail {
@@ -43,6 +52,11 @@ pub struct Counts {
     pub total: Load,
     pub radix_digit_reads: u128,
     pub groups: usize,
+    pub byte_partitions: usize,
+    pub byte_frames_peak: usize,
+    pub byte_stack_reserved: usize,
+    pub leaf_comparisons: u128,
+    pub leaf_shifted_slots: u128,
 }
 fn add(a: Load, b: Load) -> Result<Load, Refusal> {
     Ok(Load {
@@ -255,6 +269,39 @@ pub fn fixed_bytes(passes: usize) -> Option<usize> {
         .checked_add(size_of::<Pending>())
 }
 
+/// Complete charged payload, including explicit byte histograms on every live
+/// recursive frame. Their size and 8-byte slots compete in the *same* arena.
+/// Count conservatively in addition to the original fixed plan/binary stack.
+pub fn workspace_for(passes: usize, slots: usize, how: LocalOrder) -> Option<usize> {
+    fixed_bytes(passes)?
+        .checked_add(slots.checked_mul(size_of::<PackedTail>())?)?
+        .checked_add(if how == LocalOrder::Bytes {
+            byte_msd::stack_payload(slots)
+        } else {
+            0
+        })
+}
+fn capacity(lim: &Limits, how: LocalOrder) -> Result<usize, Refusal> {
+    let basic = lim
+        .workspace_bytes
+        .checked_sub(fixed_bytes(lim.passes).ok_or(Refusal::Budget)?)
+        .ok_or(Refusal::Budget)?;
+    let mut hi = basic / size_of::<PackedTail>();
+    if how == LocalOrder::Bits {
+        return Ok(hi);
+    }
+    let mut lo = 0;
+    while lo < hi {
+        let mid = lo + (hi - lo).div_ceil(2);
+        if workspace_for(lim.passes, mid, how).is_some_and(|n| n <= lim.workspace_bytes) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    Ok(lo)
+}
+
 /// No callback before complete admission. A group is one finite key; its members
 /// are deterministic but not ordered by continuation. `head` spans range seams.
 pub fn order(
@@ -268,16 +315,22 @@ pub fn order(
 pub fn order_checked(
     d: &Dictionary<'_>,
     lim: Limits,
+    boundary: impl FnMut(),
+    group: impl FnMut(&[PackedTail], usize),
+) -> Result<Counts, Refusal> {
+    order_checked_with(d, lim, LocalOrder::Bits, boundary, group)
+}
+
+pub fn order_checked_with(
+    d: &Dictionary<'_>,
+    lim: Limits,
+    how: LocalOrder,
     mut boundary: impl FnMut(),
     mut group: impl FnMut(&[PackedTail], usize),
 ) -> Result<Counts, Refusal> {
     validate(d)?;
     boundary();
-    let slots = lim
-        .workspace_bytes
-        .checked_sub(fixed_bytes(lim.passes).ok_or(Refusal::Budget)?)
-        .ok_or(Refusal::Budget)?
-        / 8;
+    let slots = capacity(&lim, how)?;
     if slots == 0 || lim.rows_per_range == 0 {
         return Err(Refusal::Budget);
     }
@@ -286,6 +339,9 @@ pub fn order_checked(
     }
     let fits = |x: Load| x.descriptors <= slots && x.rows <= lim.rows_per_range;
     let mut c = Counts::default();
+    if how == LocalOrder::Bytes {
+        c.byte_stack_reserved = byte_msd::stack_payload(slots);
+    }
     let mut plan = Vec::new();
     plan.try_reserve_exact(lim.passes)
         .map_err(|_| Refusal::Allocation)?;
@@ -393,7 +449,10 @@ pub fn order_checked(
         })?;
         boundary();
         assert_eq!(arena.len(), b.load.descriptors);
-        radix(d, &mut arena, b.depth, &mut c.radix_digit_reads);
+        match how {
+            LocalOrder::Bits => radix(d, &mut arena, b.depth, &mut c.radix_digit_reads),
+            LocalOrder::Bytes => byte_msd::sort(d, &mut arena, b.depth, &mut c),
+        }
         for ties in
             arena.chunk_by(|a, z| d.key((*a).into())[b.depth..] == d.key((*z).into())[b.depth..])
         {
@@ -412,6 +471,25 @@ pub fn order_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn byte_workspace_inverts_at_leaf_and_recursion_steps() {
+        for n in [1, 31, 32, 33, 64, 65, 66, 131, 132, 8192, 8370123] {
+            let bytes = workspace_for(32, n, LocalOrder::Bytes).unwrap();
+            let slots = |w| {
+                capacity(
+                    &Limits {
+                        workspace_bytes: w,
+                        rows_per_range: 1,
+                        passes: 32,
+                    },
+                    LocalOrder::Bytes,
+                )
+                .unwrap()
+            };
+            assert_eq!(slots(bytes), n);
+            assert_eq!(slots(bytes - 1), n - 1);
+        }
+    }
     #[test]
     fn only_local_geometry_must_fit_u32() {
         let wide = u64::from(u32::MAX) + 1;
