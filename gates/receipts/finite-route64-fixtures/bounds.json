@@ -1,0 +1,61 @@
+{
+  "results": {
+    "100g_occurrence_upper": {
+      "bands": 577,
+      "bands_over_row_target": 204,
+      "descriptor_index_file_upper_bytes": 140993157361,
+      "largest_single_band_rows": 2310198593,
+      "m": 3181334488,
+      "n": 100000000000,
+      "page_directory_upper_bytes": 985364776,
+      "raw_rows_per_band_target": 97656250,
+      "rows_in_oversize_cells": 74142226608,
+      "scratch_limit": 200000000000,
+      "token_pages_upper": 6306334487,
+      "token_universe_upper": 201802703584,
+      "upper_u": 100000000000,
+      "with_private_inverse_and_margin": 166448027569,
+      "workers": 4
+    },
+    "10g_distinct_upper": {
+      "bands": 578,
+      "bands_over_row_target": 204,
+      "descriptor_index_file_upper_bytes": 12923499594,
+      "largest_single_band_rows": 231078052,
+      "m": 318164488,
+      "n": 10000000000,
+      "page_directory_upper_bytes": 93144936,
+      "raw_rows_per_band_target": 9765625,
+      "rows_in_oversize_cells": 7407418321,
+      "scratch_limit": 20000000000,
+      "token_pages_upper": 596127531,
+      "token_universe_upper": 19076080992,
+      "upper_u": 9129290112,
+      "with_private_inverse_and_margin": 15473009802,
+      "workers": 4
+    },
+    "10g_occurrence_upper": {
+      "bands": 578,
+      "bands_over_row_target": 204,
+      "descriptor_index_file_upper_bytes": 14102409770,
+      "largest_single_band_rows": 231078052,
+      "m": 318164488,
+      "n": 10000000000,
+      "page_directory_upper_bytes": 98541336,
+      "raw_rows_per_band_target": 9765625,
+      "rows_in_oversize_cells": 7407418321,
+      "scratch_limit": 20000000000,
+      "token_pages_upper": 630664487,
+      "token_universe_upper": 20181263584,
+      "upper_u": 10000000000,
+      "with_private_inverse_and_margin": 16651919978,
+      "workers": 4
+    }
+  },
+  "scope": "Banked histogram upper for rank-page / Elias-Fano routing. Not a newly measured front, all-byte row order, joint emit fit or 100 GB admission.",
+  "sha256": {
+    "scanplan-100g/scan.json": "49370600ae37702965c4a736a2de118566e87c00f70cf487484366051094be69",
+    "scanplan-10g/scan.json": "fea28d298533a0096945441477b2c9778b0dff471bbe260796f45be43922b049",
+    "vocab-10g/census.out": "016f755ff8cc72863dac5daa182a502c70a830af1df5828f3d20bec6691e542d"
+  }
+}
