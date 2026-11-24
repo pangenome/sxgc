@@ -1,0 +1,15 @@
+XSA_FINISH_PFCK path=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-native-3g-IwwZjB/merged/frag.pfck2 n=3000000001 tau=22 count=136363637 bytes=1090909136 wall=5.233 workers=2 segments=8 worker_bytes=1572864 source=corpus_adapter fixed_grid=1
+XSA_FINISH_SWEEP_ANATOMY piecewait=840.924 readband=19.797 feed=215.335 repair_total=1077.811 raw_runs=1075961507 bands=16418 rlebwt_wait=0.000 ns_per_raw_run=200.13
+LCP_RUNS_ENCODING member=m14 codec=117 blocks=1050744 payload_bytes=763289200 dir_bytes=16811904 escapes=4687751 max_lcp=322819 zero_blocks=0 u8_blocks=3466 packed_blocks=1047278 packed_bits_per_run=5.2330 bits_per_run=5.8002 n=3000000001
+SXI2_MEMBER id=1 codec=116 count=1075961507 bytes=1005701040
+SXI2_MEMBER id=4 codec=4 count=0 bytes=12
+SXI2_MEMBER id=5 codec=105 count=828459853 bytes=394614988
+SXI2_MEMBER id=7 codec=7 count=256 bytes=256
+SXI2_MEMBER id=10 codec=110 count=1075961507 bytes=0
+SXI2_MEMBER id=11 codec=111 count=1050744 bytes=8405968
+SXI2_MEMBER id=12 codec=112 count=1050744 bytes=8537360
+SXI2_MEMBER id=13 codec=115 count=31858866 bytes=765614752
+SXI2_MEMBER id=14 codec=117 count=1075961507 bytes=780101144
+CONTAINER_FINAL bytes=2962975952 sha256=3935e8f1d220092d2cd12081938748e8a62f02e882bd021781ec7c3d0cabe7f3 members=9
+XSA_FINISH_DONE chi=828459853 n=3000000001 r=1075961507 container=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-native-3g-IwwZjB/product.sxi2
+XSA_FINISH_PEAK_RSS kib=1217068

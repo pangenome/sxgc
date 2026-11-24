@@ -1,0 +1,13 @@
+{
+  "relative_to": "verified 1 GB raw packed product; normalized by input bytes",
+  "normalized_wall": {
+    "raw_to_product_s": 1.2377725926032392,
+    "wall_s": 1.2515692215605283
+  },
+  "target_under_2x": true,
+  "promotion_under_3x": true,
+  "prepared_attributed_read_bytes": 7047344128,
+  "cold_input_bytes": 7047331439,
+  "prepared_writes_vs_disk_control_per_byte": 0.7559856061962243,
+  "normalized_io_pass": false
+}
