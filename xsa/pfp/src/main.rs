@@ -67,6 +67,12 @@ fn main() {
     if bands_dir.is_empty() { bands_dir = format!("{}/bands", merged_dir); }
     let stop_flag = format!("{}/stop.requested", modeb_dir);
     let piece_pool = std::env::var_os("XSA_TEST_V8_100M_PIECE_POOL");
+    let slice_slots = std::env::var_os("XSA_TEST_V8_100M_SXLS_SLOTS");
+    if let Some(flag) = &slice_slots {
+        if flag != "1" || piece_pool.as_deref() != Some(std::ffi::OsStr::new("1")) || !matches!(scratch_budget_bytes, 0 | 200_001_006) {
+            die("fixed SXLS requires the exact fenced PRC1 profile and 2N scratch gate");
+        }
+    }
     if let Some(flag) = &piece_pool {
         use std::os::unix::fs::PermissionsExt;
         let merged = Path::new(&merged_dir);
@@ -167,6 +173,10 @@ fn main() {
         let window=laws::env_u64("CROSS_V2_PIECE_WINDOW",1100);
         let mut cutter=if piece_pool.is_some() { unit::PieceCutter::fixed_v8_pool(&out_prefix,file_n+1,window) }
                        else { unit::PieceCutter::with_piece_target(&out_prefix,file_n+1,window,volatile.as_deref().map(Path::new)) };
+        if slice_slots.is_some() {
+            unit::v8_sxls::narrow(Path::new(&bands_dir),file_n,&remap,cutter,&laws).unwrap_or_else(|e| die(&format!("fixed SXLS: {e}")));
+            eprintln!("SS_DONE_R overlap_stream rows={} total_s={:.2}",file_n+1,laws::now_s(t_all)); return;
+        }
         let mut lcp=Vec::with_capacity(262144);let mut live=std::collections::VecDeque::new();
         let (mut base,mut u,mut ends)=(0,0,0);
         let mut publish=|lcp:&mut Vec<u64>|{if !lcp.is_empty(){unit::emit_lcp_slice(&bands_dir,u,lcp.len(),lcp,base,&mut live,laws::env_u64("SS_LCP_SLICE_WINDOW",128),&laws);base+=lcp.len() as u64;u+=1;lcp.clear();laws.scratch_gate("overlap-slice");}};

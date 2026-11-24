@@ -1,0 +1,28 @@
+{
+  "base": "4e03ed4b345cd9ff5644e49ec8927c0d82a33481",
+  "ceilings": {
+    "cpu_quota": 1,
+    "per_file": 134217728,
+    "seconds": 220,
+    "shared_including_compiler": 805306368,
+    "swap": 0,
+    "taskset_one_core": true
+  },
+  "fixture_native_sha256": "2ca46019392adc87b1cfb360c054deaf7c8a09685580ebe0f287922cbf606015",
+  "full_test_log_sha256": "1e4500e58f1304b5c775aa9f0ada6c85a3fdf2ab6c986a08b2c3231232d6a825",
+  "launcher_exit": 0,
+  "original_directory": "/tmp/v8-sxls-slots-ZbXuG7",
+  "process": "proc_e9cf",
+  "receipt_sha256": {
+    "exits.log": "93ff7811a209e2a8479230bbb9b6bc19f7f311d3af383ec350c1db2a7e7d5494",
+    "results.log": "62ac344f1aedb3d8606a172d9a2408b83bd1d915ea704acb515510451d724da6",
+    "sources.sha": "b7cc251974f962f0dd6fe5da6d6ccb56d8120eb78999499fe82c9101f06090e7"
+  },
+  "retained_partial_image": {
+    "bytes": 262192,
+    "links": 2,
+    "sha256": "5b597826f8a016a3953a359ef6345f1dc82cba1202503b7470a64499b5d7d821"
+  },
+  "scope": "Generated codec, inode, refusal and STOP evidence only; no complete real rows, frozen finish or product.",
+  "utc": "2026-11-24T20:40:45.272909+00:00"
+}

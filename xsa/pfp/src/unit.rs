@@ -73,6 +73,8 @@ pub struct LevelCtx<'a> {
 
 #[path="v8_piece_pool.rs"]
 mod v8_piece_pool;
+#[path="v8_sxls.rs"]
+pub(crate) mod v8_sxls;
 // ---- the piece cutter (BPS1/PRC1/BPG1, transliterated)
 pub struct PieceCutter {
     pool: Option<v8_piece_pool::Pool>,

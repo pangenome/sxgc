@@ -1,0 +1,16 @@
+test unit::v8_sxls::tests::matches_actual_sink_wire_across_copy_unlink_reuse_and_terminal ... ok
+test unit::v8_sxls::tests::packed_wire_and_workspace ... ok
+test unit::v8_sxls::tests::refuse_before_recycling_or_announcing_last_slice ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 1.14s
+test unit::v8_piece_pool_test::cutter_generated_stream_matches_wire_across_reuse_and_terminal ... ok
+test unit::v8_piece_pool_test::failures_precede_growth_or_publication_and_retain_evidence ... ok
+test unit::v8_piece_pool_test::open_handles_are_not_extra_extents_and_ack_is_not_unlink ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.10s
+test unit::handoff_test::only_pieces_move_and_their_bytes_are_unchanged ... ok
+test unit::handoff_test::row43_sink_keeps_wide_piece_endpoints_and_slice_escapes ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+test unit::sxls_batch_test::escape_publications_are_byte_identical ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.01s
+PASS 19 wrong geometry/profile/path/STOP/stale refusals; fresh start then refused empty input, no PRC1/terminal or product
+PASS 4 pre-root profile refusals, 7 pipe/row/extent/truncation refusals, exact 262192-byte partial image (one inode), private STOP on stalled input; no terminal/product
+2ca46019392adc87b1cfb360c054deaf7c8a09685580ebe0f287922cbf606015  /tmp/v8-sxls-slots-ZbXuG7/build/debug/pfp_sort_r
