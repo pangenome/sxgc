@@ -24,12 +24,12 @@ BASE=REPO/'gates/receipts/bounded-shortest-100m'; BASE_SCORE='0827609e682d72d1e3
 def need(ok,s):
     if not ok:raise RuntimeError(s)
 
-def private(d):need(d.resolve()==d and d.parent==S and re.fullmatch(PREFIX+'[A-Za-z0-9]{6}',d.name) and d.stat().st_uid==os.getuid() and d.stat().st_mode&0o077==0,'private fixture receipt')
+def private(d,prefix=PREFIX):need(d.resolve()==d and d.parent==S and re.fullmatch(prefix+'[A-Za-z0-9]{6}',d.name) and d.stat().st_uid==os.getuid() and d.stat().st_mode&0o077==0,'private fixture receipt')
 def load(p):return json.loads(p.read_bytes())
 def guard(d,t,reserve=0):need(time.time()+reserve<t<=CUTOFF and not (d/'stop.requested').exists(),'deadline/stop')
-def lease(pid,t):
+def lease(pid,t,script='overlap_byte_fixture.sh'):
     coord=Path('/proc')/str(pid);lock=Path(os.environ['XDG_RUNTIME_DIR'])/'overlap-ten-timing.lock'
-    need((coord/'fd/9').samefile(lock) and any(Path(os.fsdecode(arg)).name=='overlap_byte_fixture.sh' for arg in (coord/'cmdline').read_bytes().split(b'\0') if arg) and (coord/'cmdline').read_bytes().endswith(str(t).encode()+b'\0'),'wrong coordinator')
+    need((coord/'fd/9').samefile(lock) and any(Path(os.fsdecode(arg)).name==script for arg in (coord/'cmdline').read_bytes().split(b'\0') if arg) and (coord/'cmdline').read_bytes().endswith(str(t).encode()+b'\0'),'wrong coordinator')
     with lock.open('a') as f:
         try:fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:return
@@ -46,7 +46,11 @@ def grant():
     c=cg_info();need(c['memory.max']==str(192<<20) and c['memory.swap.max']=='0' and c['cpu.max']=='100000 100000' and (CG/'cgroup.procs').read_text().split()==[str(os.getpid())],'dedicated 192 MiB one CPU no swap required');return c
 
 def measure(d,t):
-    private(d);p=load(d/'inputs.json');need(p['deadline']==t,'changed deadline');lease(p['parent'],t);guard(d,t,60);exclusive();before=grant();r=dict(status='NOT_VERIFIED',before=before);child=None
+    return measured_book_fixture(d,t,PREFIX,'overlap_byte_fixture.sh','--fixed-small-windows',score,'CHECKED_FINITE_ORDER_ONLY')
+
+def measured_book_fixture(d,t,prefix,launcher,flag,scorer,completed):
+    """Both small studies use exactly the same authenticated book, window policy and service grant."""
+    private(d,prefix);p=load(d/'inputs.json');need(p['deadline']==t,'changed deadline');lease(p['parent'],t,launcher);guard(d,t,60);exclusive();before=grant();r=dict(status='NOT_VERIFIED',before=before);child=None
     try:
         exe=d/'fixture';need(exe.is_file() and not exe.is_symlink() and sha(exe)==(d/'fixture.sha').read_text().split()[0],'fixture binary changed')
         with open(BOOK,'rb',opener=lambda p,f:os.open(p,f|os.O_NOFOLLOW)) as f:
@@ -54,13 +58,13 @@ def measure(d,t):
         offsets=[i*(SIZE-WIDTH)//(WINDOWS-1) for i in range(WINDOWS)];sample=b''.join(data[i:i+WIDTH] for i in offsets);del data
         need(len(sample)==WINDOWS*WIDTH and all(j-i>=WIDTH for i,j in zip(offsets,offsets[1:])),'overlapping/short sample');r.update(sample_sha256=hashlib.sha256(sample).hexdigest(),sample_bytes=len(sample),offsets=offsets)
         with os.fdopen(os.memfd_create('byte-order-book-windows'),'w+b') as f, (d/'fixture.log').open('xb') as out:
-            f.write(sample);f.seek(0);del sample;guard(d,t,60);child=sp.Popen([exe,'--fixed-small-windows',d/'stop.requested',str(t)],stdin=f,stdout=out,stderr=sp.STDOUT,env=dict(PATH=os.defpath,LC_ALL='C'))
+            f.write(sample);f.seek(0);del sample;guard(d,t,60);child=sp.Popen([exe,flag,d/'stop.requested',str(t)],stdin=f,stdout=out,stderr=sp.STDOUT,env=dict(PATH=os.defpath,LC_ALL='C'))
             with open(f'/proc/{child.pid}/io') as io:
                 os.waitid(os.P_PID,child.pid,os.WEXITED|os.WNOWAIT);r['process']=proc_info(child.pid,io)
             r['rc']=child.wait()
         after=grant();r.update(after=after,per_device_io=io_delta(stat_io(before['io.stat']),stat_io(after['io.stat'])))
         need(r['rc']==0 and 0<int(after['memory.peak'])<=192<<20 and {'oom 0','oom_kill 0'}<=set(after['memory.events'].splitlines()) and (d/'fixture.log').stat().st_size<=32<<10,'fixture failed/log/OOM')
-        v=score(d/'fixture.log');guard(d,t);save(d/'score.json',v);r['status']='CHECKED_FINITE_ORDER_ONLY'
+        v=scorer(d/'fixture.log');guard(d,t);save(d/'score.json',v);r['status']=completed
     finally:
         if child is not None and child.poll() is None:(d/'stop.requested').touch();child.wait()
         save(d/'meter.json',r)
