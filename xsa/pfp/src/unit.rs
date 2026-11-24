@@ -99,10 +99,22 @@ pub struct PieceCutter {
 
 impl PieceCutter {
     pub fn new(prefix: &str, n: u64, window: u64) -> PieceCutter {
+        Self::with_piece_target(prefix, n, window, None)
+    }
+
+    // Gate only: redirect a freshly created pieces directory, not the finish
+    // spools. No overwrite, no recursive deletion, and never resume it.
+    pub fn with_piece_target(prefix: &str, n: u64, window: u64,
+                             volatile_target: Option<&std::path::Path>) -> PieceCutter {
         let dir = format!("{}.pieces", prefix);
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir)
-            .unwrap_or_else(|_| die("create the pieces dir"));
+        if let Some(target) = volatile_target {
+            assert!(target.is_absolute() && target.starts_with("/dev/shm") && target.file_name()==Some("pieces".as_ref()));
+            fs::create_dir(target).unwrap_or_else(|_| die("volatile piece target must be fresh"));
+            std::os::unix::fs::symlink(target, &dir).unwrap_or_else(|_| die("refusing to replace piece path"));
+        } else {
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap_or_else(|_| die("create the pieces dir"));
+        }
         let width = 64 - (n.leading_zeros()) as u32;
         let mut pc = PieceCutter {
             prefix: prefix.to_string(), dir, n, window, width,
@@ -294,6 +306,27 @@ impl PieceCutter {
         fs::write(&tmp, terminal).unwrap_or_else(|_| die("write terminal"));
         fs::rename(tmp, format!("{}/terminal", self.dir))
             .unwrap_or_else(|_| die("publish terminal"));
+    }
+}
+
+#[cfg(test)]
+mod handoff_test {
+    use super::PieceCutter;
+    use std::{fs,path::Path};
+    #[test]
+    fn only_pieces_move_and_their_bytes_are_unchanged() {
+        if !Path::new("/dev/shm").is_dir() {return;}
+        let id=format!("xsa-piece-test-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+        let disk=std::env::temp_dir().join(&id); let ram=Path::new("/dev/shm").join(id);
+        fs::create_dir(&disk).unwrap(); fs::create_dir(&ram).unwrap(); let pieces=ram.join("pieces");
+        for (name,target) in [("normal",None),("volatile",Some(pieces.as_path()))] {
+            let prefix=disk.join(name); let mut c=PieceCutter::with_piece_target(prefix.to_str().unwrap(),4,16,target);
+            for (p,b) in [(3,3),(2,2),(0,0),(1,1)] {c.feed_row(p,b);} c.finish();
+        }
+        assert_eq!(fs::read_link(disk.join("volatile.pieces")).unwrap(),pieces);
+        for f in ["start","terminal","p-0-0","g-0"] {assert_eq!(fs::read(disk.join("normal.pieces").join(f)).unwrap(),fs::read(pieces.join(f)).unwrap());}
+        assert_eq!(fs::read(disk.join("normal.runexc")).unwrap(),fs::read(disk.join("volatile.runexc")).unwrap());
+        fs::remove_dir_all(disk).unwrap();fs::remove_dir_all(ram).unwrap();
     }
 }
 

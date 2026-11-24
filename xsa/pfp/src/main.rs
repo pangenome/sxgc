@@ -136,7 +136,9 @@ fn main() {
                 die("resident triples: sandbox or rung1 product sink only");
             }
         } else if file_n > 101_000_000 || std::env::var_os("TRIE_TAP").is_some(){die("overlap fixture path: <=101 MB, product sink only");}
-        let mut cutter=unit::PieceCutter::new(&out_prefix,file_n+1,laws::env_u64("CROSS_V2_PIECE_WINDOW",1100));
+        let volatile=std::env::var_os("XSA_GATE_VOLATILE_PIECES");
+        assert!(volatile.is_none() || resident_sink,"volatile handoff is a fresh resident-product gate only");
+        let mut cutter=unit::PieceCutter::with_piece_target(&out_prefix,file_n+1,laws::env_u64("CROSS_V2_PIECE_WINDOW",1100),volatile.as_deref().map(Path::new));
         let mut lcp=Vec::with_capacity(262144);let mut live=std::collections::VecDeque::new();
         let (mut base,mut u,mut ends)=(0,0,0);
         let mut publish=|lcp:&mut Vec<u64>|{if !lcp.is_empty(){unit::emit_lcp_slice(&bands_dir,u,lcp.len(),lcp,base,&mut live,laws::env_u64("SS_LCP_SLICE_WINDOW",128),&laws);base+=lcp.len() as u64;u+=1;lcp.clear();laws.scratch_gate("overlap-slice");}};

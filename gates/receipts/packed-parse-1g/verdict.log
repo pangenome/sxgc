@@ -1,0 +1,1 @@
+PASS parse.u32 identical; packed-only reconstruction, overlap, all occurrence-boundary predecessors plus END verified; no container attempted

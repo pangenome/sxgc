@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import re
 import struct
+import shutil
+import tempfile
 import subprocess as sp
 import sys
 import time
@@ -53,7 +55,7 @@ def finished(p):
     # Read final /proc/io and CPU counters *before* wait reaps the zombie.
     return os.waitid(os.P_PID,p.pid,os.WEXITED|os.WNOHANG|os.WNOWAIT) is not None
 
-def footprint(d,retained):
+def footprint(d,retained,ram=False):
     # Logical sizes count even if sparse. Sample allocated bytes separately,
     # including private copies, logs and the partial/final product.
     whole=0; parts={'prepared_refs_ids':retained}; stack=[d]
@@ -67,7 +69,8 @@ def footprint(d,retained):
             if e.is_dir(follow_symlinks=False):stack.append(e.path);continue
             rel=Path(e.path).relative_to(d); f=e.name
             if rel.parts[0]=='in' or len(rel.parts)==1 and (f in ('oracle-corpus','inverse.check','product.sxi2','product.sxi2.partial','stop.requested') or f.endswith(('.log','.json','.sha'))):continue
-            group=rel.parts[0] if len(rel.parts)==1 else ('pieces' if '.pieces' in str(rel.parent) else 'slices' if rel.parts[0]=='bands' else f)
+            if ram: group={'pieces':'ram_pieces','bands':'ram_slices'}[rel.parts[0]]
+            else: group=rel.parts[0] if len(rel.parts)==1 else ('pieces' if '.pieces' in str(rel.parent) else 'slices' if rel.parts[0]=='bands' else f)
             parts[group]=parts.get(group,0)+st.st_size
     return whole,parts
 
@@ -83,7 +86,7 @@ def oracle(d,tools):
     assert rc==0 and f'ORACLE rows={N+1} independent_final_rank={N+1} all_adjacent_sa_lcp_bwt_verified=1' in (d/'oracle.log').read_text()
 
 def build(d,tools,profile):
-    assert profile in ('narrow','wide')
+    assert profile in ('narrow','wide','wide-handoff')
     assert (CG/'memory.max').read_text().strip()==str(20*GIB) and (CG/'memory.swap.max').read_text().strip()=='0'
     src=d/'in'; corpus=src/'corpus'; retained=sum((src/f).stat().st_size for f in ('parse.u32','dictionary.refs')); assert corpus.stat().st_size==N
     refs=members(ANCHOR); rows=N+1
@@ -96,7 +99,16 @@ def build(d,tools,profile):
               slices=64*(48+17*262144),control_margin=8<<20)
     bound=sum(plan.values()); assert bound<2*N
     save(d/'scratch-plan.json',dict(parts=plan,counted_bound=bound,limit=2*N))
-    (d/'bands').mkdir(); (d/'merged').mkdir(); flag=d/'stop.requested'; start=time.monotonic()
+    (d/'merged').mkdir(); flag=d/'stop.requested'; ram=None; temp=None; extra_env={}; bands=d/'bands'
+    reserve=plan['pieces']+plan['slices']+plan['control_margin']; rampeak=shmempeak=0
+    if profile=='wide-handoff':
+        # Only transient handoff. Retained parse, PFCK/bitmap/m14 spools and
+        # published container stay on NVMe. Service cgroup charges tmpfs pages.
+        assert any(line.split()[4]=='/dev/shm' and ' - tmpfs ' in line for line in Path('/proc/self/mountinfo').read_text().splitlines())
+        assert shutil.disk_usage('/dev/shm').free>=reserve and 14*GIB+reserve+2*GIB<20*GIB
+        temp=tempfile.TemporaryDirectory(prefix='xsa-volatile-',dir='/dev/shm'); ram=Path(temp.name)
+        bands=ram/'bands'; extra_env={'XSA_GATE_VOLATILE_PIECES':str(ram/'pieces')}
+    bands.mkdir(); start=time.monotonic()
     cg0=cg_info(); env={k:v for k,v in os.environ.items() if not k.startswith(('XSA_','SS_','CROSS_','PFCK_','TRIE_','LD_PRELOAD'))}
     env.update(SS_LCP_SLICE_WINDOW='64',CROSS_V2_PIECES='1',CROSS_V2_PIECE_WINDOW='32',PFCK_SPACING='22')
     common=['--corpus',corpus,'--remap',src/'remap','--threads','2']; pref=d/'merged/frag'
@@ -111,7 +123,7 @@ def build(d,tools,profile):
         if md.exists():(md/'stop.requested').touch(exist_ok=True)
     audit=os.dup(1)
     launch('resident',[BIN/'overlap_resident',src,flag,str(14*GIB),d/'inverse.check'],
-           env=dict(env,XSA_RESIDENT_WIDE_DICT=str(int(profile=='wide')),XSA_RESIDENT_AUDIT_FD=str(audit)),stdout=sp.PIPE,pass_fds=(audit,)); os.close(audit)
+           env=dict(env,XSA_RESIDENT_WIDE_DICT=str(int(profile!='narrow')),XSA_RESIDENT_AUDIT_FD=str(audit)),stdout=sp.PIPE,pass_fds=(audit,)); os.close(audit)
     counted_peak=0; disk_peak=0; at_peak={}; each={}; last_disk=0; active='start'; samples={}
     with (d/'resident.log').open() as tail:
         while True:
@@ -120,9 +132,9 @@ def build(d,tools,profile):
                 if l.startswith('RESIDENT_BEGIN'):active=l.strip().split('=')[-1]
             if active=='emit' and 'sink' not in w and not flag.exists():
                 # Don't charge a sort's idle wall to the finish. Frozen data path.
-                launch('sink',[BIN/'pfp_sort_r',*common,'--out-prefix',pref,'--bands',d/'bands','--scratch-budget-bytes',str(2*N-retained)],
-                       env=dict(env,XSA_TEST_RESIDENT_TRIPLES='1'),stdin=w['resident'].stdout,stdout=sp.DEVNULL); w['resident'].stdout.close()
-                launch('finish',['/tmp/xsa_finish_cur',*common,'--prefix',pref,'--lcp-bands',d/'bands','--output',d/'product.sxi2','--poll-timeout','0','--wit-ram-budget',str(2*GIB),'--with-chi','--container-stream'],
+                launch('sink',[BIN/'pfp_sort_r',*common,'--out-prefix',pref,'--bands',bands,'--scratch-budget-bytes',str(2*N-retained)],
+                       env=dict(env,**extra_env,XSA_TEST_RESIDENT_TRIPLES='1'),stdin=w['resident'].stdout,stdout=sp.DEVNULL); w['resident'].stdout.close()
+                launch('finish',['/tmp/xsa_finish_cur',*common,'--prefix',pref,'--lcp-bands',bands,'--output',d/'product.sxi2','--poll-timeout','0','--wit-ram-budget',str(2*GIB),'--with-chi','--container-stream'],
                        env=dict(env,LD_PRELOAD=str(tools/'monitor.so'),XSA_GATE_PRIVATE_STOP=str(flag)))
             for name,p in w.items():
                 if name in exitcode: continue
@@ -132,6 +144,10 @@ def build(d,tools,profile):
                     if exitcode[name]: request(f'{name} rc={exitcode[name]}')
             if time.monotonic()-last_disk>1 or len(exitcode)==len(w):
                 last_disk=time.monotonic(); whole,parts=footprint(d,retained); disk_peak=max(disk_peak,whole)
+                if ram is not None:
+                    allocated,rparts=footprint(ram,0,ram=True); rparts.pop('prepared_refs_ids'); parts.update(rparts)
+                    rampeak=max(rampeak,allocated); shmempeak=max(shmempeak,int(re.search(r'^shmem (\d+)$',(CG/'memory.stat').read_text(),re.M)[1]))
+                    if max(allocated,sum(rparts.values()))>reserve:request('volatile handoff exceeded reserved RAM')
                 counted=sum(parts.values());
                 for k,v in parts.items(): each[k]=max(each.get(k,0),v)
                 if counted>counted_peak: counted_peak=counted;at_peak=parts
@@ -145,6 +161,11 @@ def build(d,tools,profile):
     rc=dict(profile=profile,rc=exitcode,sampled_wall_s=times,phase_sampled_shared=samples,process=proc,sampled_peak_rss=peaks,
             counted_sampled_peak=counted_peak,counted_at_peak=at_peak,individual_sampled_peaks=each,whole_dir_sampled_allocated=disk_peak,
             wall_s=time.monotonic()-start,shared_before=cg0,shared_after=cg_info(),stop=flag.exists())
+    if ram is not None:
+        rc['volatile_handoff']=dict(reserved_bytes=reserve,sampled_tmpfs_allocated=rampeak,sampled_cgroup_shmem=shmempeak,swap_max=0,mode='restart from prepared inputs, no handoff recovery')
+        link=Path(str(pref)+'.pieces')
+        if link.is_symlink() and link.readlink()==ram/'pieces':link.unlink()
+        temp.cleanup()  # only this gate's fresh volatile directory
     save(d/'build.json',rc)
     assert exitcode==dict(resident=0,sink=0,finish=0) and not flag.exists()
     assert 'oom_kill 0' in rc['shared_after']['memory.events']

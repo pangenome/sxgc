@@ -1,0 +1,4 @@
+CHECK n=1000000665 phrases=31784026 end_pred=30 text_sha=c382daa53d0e66fdc921c32d356961b7e8189ceee0a435bb3b66e06b203ebb61 boundary_sha=1f60944eded65db8a256a7a6b02b6ef4a7ac6df564c37e9e9783aada38faa567
+DECODE lexical_words=25336659 packed_bytes=1242219181 parse_bytes=127136104 corpus_refs_opened=0 overlap_edges=31784025 decoded_output_files=0
+IO read_bytes: 1369362432
+IO write_bytes: 0

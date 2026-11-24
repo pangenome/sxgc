@@ -4,9 +4,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO=$PWD
-case ${1:-narrow} in narrow) profile=narrow;; wide) profile=wide;; *) echo 'usage: overlap_resident_gate.sh [narrow|wide]' >&2; exit 2;; esac
+case ${1:-narrow} in narrow|wide|wide-handoff) profile=${1:-narrow};; *) echo 'usage: overlap_resident_gate.sh [narrow|wide|wide-handoff]' >&2; exit 2;; esac
 (cd xsa && cargo build --release -p pfp --bin pfp_sort_r --bin overlap_resident)
-if [[ $profile == wide ]]; then XSA_RESIDENT_WIDE_DICT=1 python3 gates/overlap_resident_test.py; else XSA_RESIDENT_WIDE_DICT=0 python3 gates/overlap_resident_test.py; fi
+if [[ $profile != narrow ]]; then XSA_RESIDENT_WIDE_DICT=1 python3 gates/overlap_resident_test.py; else XSA_RESIDENT_WIDE_DICT=0 python3 gates/overlap_resident_test.py; fi
 ROOT=/mnt/nvme2n1/erikg/TAPEREADER; S=$ROOT/sandbox; R=$ROOT/climb/rung1
 D=$(mktemp -d "$S/resident-rung1-$profile-XXXXXX"); T=$(mktemp -d /tmp/resident-bin-XXXXXX); echo "receipt=$D tools=$T"
 g++ -O2 -Wall -Wextra -Werror -std=c++17 gates/overlap_prefix_oracle.cpp -o "$T/oracle"
@@ -28,5 +28,5 @@ set +e
 rc=("${PIPESTATUS[@]}");set -e;printf 'build=%s oracle=%s\n' "${rc[@]}" |tee "$D/exits.log"
 [[ ${rc[*]} == '0 0' ]]
 python3 gates/overlap_resident_gate.py certify "$D"
-if [[ $profile == wide ]]; then python3 gates/overlap_slowdown_gate.py "$D"; fi
+if [[ $profile != narrow ]]; then python3 gates/overlap_slowdown_gate.py "$D"; fi
 echo "certified receipt=$D"
