@@ -1,0 +1,15 @@
+{
+  "counted_bound": 1597106334,
+  "limit": 2000001330,
+  "parts": {
+    "bitmap": 125000084,
+    "control_margin": 8388608,
+    "ef_spools": 133324298,
+    "lcp_runs": 263630704,
+    "pfck": 363636680,
+    "pieces": 85205536,
+    "retained": 329829376,
+    "slices": 285215744,
+    "sparse": 2875304
+  }
+}

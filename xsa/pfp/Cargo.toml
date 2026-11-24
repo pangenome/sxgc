@@ -1,0 +1,20 @@
+[package]
+name = "pfp"
+version = "0.1.0"
+edition = "2021"
+description = "AMENDMENT R: the tape-reader producer, transliterated from TAPE_VISION.md + W/B/L into Rust. The C++ pfp_sort.cpp is the reference oracle."
+
+[[bin]]
+name = "pfp_sort_r"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+debug = false
+
+[dependencies]
+rayon = "1.11"
+memmap2 = "0.9"
+
+[build-dependencies]
+cc = "1"

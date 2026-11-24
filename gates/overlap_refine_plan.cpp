@@ -1,0 +1,16 @@
+// Exact repair for sampled over-budget intervals of moderate size. Refuse
+// unsupported masses; no sample-based assumption becomes a resource bound.
+#include <algorithm>
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <string_view>
+#include <vector>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+using namespace std;namespace fs=std::filesystem;using U=uint32_t;using Q=uint64_t;using Key=pair<string_view,bool>;
+struct Mass{Q d,b,r;};struct Bin{Mass m;string s;bool eof;};struct Ref{U pos,h,id,freq;};struct Desc{U off,h,f;};bool fits(Mass a){return a.d<=1100000&&a.r<=2000000&&a.b<=64u<<20;}Mass plusm(Mass x,Mass y){return {x.d+y.d,x.b+y.b,x.r+y.r};}Q reads(){ifstream f("/proc/self/io");string k;Q x;while(f>>k>>x)if(k=="read_bytes:")return x;abort();}
+int main(int ac,char**av){assert(ac==5);fs::path corpus=av[1],refs=av[2],src=av[3],dst=av[4];assert(!fs::exists(dst));Q n=fs::file_size(corpus);assert(n&&n<=1010000000);ifstream plan(src,ios::binary);U bins;assert(plan.read((char*)&bins,4)&&bins&&bins<65536);vector<Bin>old(bins),result;for(auto &v:old){U tag;assert(plan.read((char*)&v.m,sizeof v.m)&&plan.read((char*)&tag,4));v.s.resize(tag&0x7fffffffu);assert(plan.read(v.s.data(),v.s.size()));v.eof=tag>>31;}int fd=open(corpus.c_str(),O_RDONLY);assert(fd>=0);auto t=(const char*)mmap(nullptr,n,PROT_READ,MAP_PRIVATE,fd,0);assert(t!=MAP_FAILED);close(fd);madvise((void*)t,n,MADV_SEQUENTIAL);Q repaired=0;for(U i=0;i<bins;i++){auto &b=old[i];if(fits(b.m)){result.push_back(b);continue;}assert(++repaired<=4&&b.m.b<=96u<<20&&b.m.d<=1500000);Key low=i?Key{old[i-1].s,old[i-1].eof}:Key{},hi{b.s,b.eof};vector<char>buf;buf.reserve(b.m.b);vector<Desc>a;a.reserve(b.m.d);ifstream f(refs,ios::binary);Ref r;Mass got{};while(f.read((char*)&r,sizeof r)){U len=r.h&0x7fffffff;bool eof=r.h>>31;assert(r.pos+Q(len)<=n);for(U j=0;j<len-(eof?0:8);j++){Key x{{t+r.pos+j,len-j},eof};if((i&&x<=low)||(i+1<bins&&hi<x))continue;got=plusm(got,{1,len-j,r.freq});assert(got.b<=b.m.b&&got.d<=b.m.d);a.push_back({(U)buf.size(),(len-j)|(U(eof)<<31),r.freq});buf.insert(buf.end(),x.first.begin(),x.first.end());}if(!(r.id%32768))assert(reads()<6*n);}assert(got.b==b.m.b&&got.r==b.m.r&&got.d==b.m.d);auto key=[&](Desc d)->Key{return {{buf.data()+d.off,d.h&0x7fffffff},bool(d.h>>31)};};sort(a.begin(),a.end(),[&](Desc x,Desc y){return key(x)<key(y);});Mass slice{};for(U j=0;j<a.size();){auto x=key(a[j]);U end=j;Mass g{};do{g=plusm(g,{1,x.first.size(),a[end].f});end++;}while(end<a.size()&&key(a[end])==x);assert(fits(g));auto joined=plusm(slice,g);if(slice.d&&(!fits(joined)||joined.b>32u<<20)){auto p=key(a[j-1]);result.push_back({slice,string(p.first),p.second});slice={};}slice=plusm(slice,g);j=end;}result.push_back({slice,b.s,b.eof});}Q size=4;for(auto &v:result){assert(fits(v.m));size+=28+v.s.size();}assert(size<8u<<20);ofstream o(dst,ios::binary);U count=result.size();o.write((char*)&count,4);for(auto &v:result){U tag=U(v.s.size())|(U(v.eof)<<31);o.write((char*)&v.m,24).write((char*)&tag,4).write(v.s.data(),v.s.size());}o.close();assert(o&&fs::file_size(dst)==size&&reads()<=6*n);printf("REFINED old=%u new=%u repaired=%llu bytes=%llu reads=%llu\n",bins,count,(unsigned long long)repaired,(unsigned long long)size,(unsigned long long)reads());}

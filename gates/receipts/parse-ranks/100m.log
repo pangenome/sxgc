@@ -1,0 +1,12 @@
+PASS depth=2 classes=3028780 reads=12685312
+PASS depth=4 classes=3110375 reads=12685312
+PASS depth=8 classes=3134060 reads=12685312
+PASS depth=16 classes=3148824 reads=12685312
+PASS depth=32 classes=3156930 reads=12685312
+PASS depth=64 classes=3162015 reads=12685312
+PASS depth=128 classes=3165205 reads=12685312
+PASS depth=256 classes=3167765 reads=12685312
+PASS depth=512 classes=3169463 reads=12685312
+PASS depth=1024 classes=3170395 reads=12685312
+PASS depth=2048 classes=3170531 reads=12685312
+RANKS rows=3170531 passes=11 permutation_and_suffix_recurrence=1 peak_counted=84926356 final_columns=46879984 reads=12685312

@@ -1,0 +1,47 @@
+TRACE sec=0.004 stage=anchors reads=1572864
+TRACE sec=0.255 stage=anchors reads=80216064
+SS_OVERLAP_PHASE dict_sort
+TRACE sec=0.506 stage=dict-sort reads=100003840
+TRACE sec=0.756 stage=dict-sort reads=100003840
+TRACE sec=1.007 stage=dict-sort reads=100003840
+TRACE sec=1.257 stage=dict-sort reads=100003840
+TRACE sec=1.510 stage=dict-sort reads=100003840
+TRACE sec=1.762 stage=dict-sort reads=100003840
+SS_OVERLAP_PHASE dedup_scatter
+TRACE sec=2.012 stage=dedup reads=100003840
+SS_OVERLAP_PHASE parse_kernel
+TRACE sec=3.071 stage=aligned-lcp reads=601051136
+TRACE sec=3.783 stage=aligned-lcp reads=981209088
+TRACE sec=4.631 stage=aligned-lcp reads=1506418688
+TRACE sec=5.419 stage=aligned-lcp reads=1994465280
+TRACE sec=6.287 stage=aligned-lcp reads=2524811264
+TRACE sec=7.270 stage=aligned-lcp reads=3114741760
+TRACE sec=8.076 stage=aligned-lcp reads=3594145792
+TRACE sec=9.154 stage=aligned-lcp reads=4184436736
+TRACE sec=10.009 stage=aligned-lcp reads=4688035840
+TRACE sec=10.842 stage=aligned-lcp reads=5173641216
+TRACE sec=11.740 stage=aligned-lcp reads=5699346432
+TRACE sec=12.598 stage=aligned-lcp reads=6187130880
+TRACE sec=13.428 stage=aligned-lcp reads=6659633152
+TRACE sec=14.319 stage=aligned-lcp reads=7144054784
+TRACE sec=15.219 stage=aligned-lcp reads=7670341632
+TRACE sec=15.608 stage=aligned-lcp reads=7893520384
+TRACE sec=16.049 stage=aligned-lcp reads=8127283200
+TRACE sec=16.908 stage=aligned-lcp reads=8619790336
+TRACE sec=17.712 stage=aligned-lcp reads=9085165568
+TRACE sec=18.147 stage=aligned-lcp reads=9318354944
+TRACE sec=18.688 stage=aligned-lcp reads=9566998528
+TRACE sec=19.211 stage=aligned-lcp reads=9806012416
+TRACE sec=19.745 stage=aligned-lcp reads=10107084800
+TRACE sec=20.431 stage=aligned-lcp reads=10500042752
+TRACE sec=21.144 stage=aligned-lcp reads=10912776192
+TRACE sec=21.819 stage=aligned-lcp reads=11296854016
+TRACE sec=22.331 stage=aligned-lcp reads=11588005888
+TRACE sec=22.982 stage=aligned-lcp reads=11961659392
+TRACE sec=23.966 stage=aligned-lcp reads=12499066880
+TRACE sec=24.930 stage=aligned-lcp reads=13053403136
+TRACE sec=25.912 stage=aligned-lcp reads=13614362624
+TRACE sec=26.794 stage=aligned-lcp reads=14121058304
+TRACE sec=27.675 stage=aligned-lcp reads=14617403392
+TRACE sec=28.615 stage=aligned-lcp reads=15133831168
+STOP read guard

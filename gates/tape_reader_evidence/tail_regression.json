@@ -1,0 +1,38 @@
+{
+  "test": "production predicate extraction; both census and tail sites",
+  "corpus_bytes": 3000000000,
+  "baseline_commit": "ea90a63",
+  "baseline_source_sha256": "83ea2638cbee2876b4376492de07ae1a187517c29d1d3bb71fd06d5bd56a0ee3",
+  "fixed_source_sha256": "37a192a1a3b14ed59c6578d1628df74c1f115e009429975e66590179baa42361",
+  "tail_rows_expected": 24,
+  "baseline_tail_rows": 25,
+  "fixed_tail_rows": 24,
+  "duplicate": {
+    "off": 2999999999,
+    "raw_key": "20",
+    "symbol_key": "21",
+    "baseline_waves": [
+      0,
+      1
+    ],
+    "fixed_waves": [
+      1
+    ]
+  },
+  "first_tail_stream_divergence": {
+    "rank": 1,
+    "baseline": {
+      "wave": 0,
+      "off": 2999999999,
+      "raw_key": "20",
+      "symbol_key": "21"
+    },
+    "fixed": {
+      "wave": 1,
+      "off": 2999999999,
+      "raw_key": "20",
+      "symbol_key": "21"
+    }
+  },
+  "limitation": "Tail-only stream; full reader stream did not complete. No P1/P2 acceptance."
+}

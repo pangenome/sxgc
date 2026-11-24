@@ -1,0 +1,88 @@
+TRACE sec=0.004 stage=anchors reads=1572864
+TRACE sec=0.257 stage=anchors reads=77070336
+SS_OVERLAP_PHASE dict_sort
+TRACE sec=0.509 stage=dict-sort reads=100003840
+TRACE sec=0.760 stage=dict-sort reads=100003840
+TRACE sec=1.010 stage=dict-sort reads=100003840
+TRACE sec=1.263 stage=dict-sort reads=100003840
+TRACE sec=1.515 stage=dict-sort reads=100003840
+TRACE sec=1.765 stage=dict-sort reads=100003840
+SS_OVERLAP_PHASE dedup_scatter
+TRACE sec=2.016 stage=dedup reads=100003840
+TRACE sec=2.270 stage=dedup reads=100003840
+SS_OVERLAP_PHASE parse_kernel
+TRACE sec=2.652 stage=aligned-lcp reads=100003840
+SS_OVERLAP_PHASE pair_census
+TRACE sec=3.097 stage=pair-census reads=160161792
+TRACE sec=3.349 stage=refine-census reads=196599808
+SS_OVERLAP_REFINE parent_max=2282770 child_max=2040730 slots=67592
+TRACE sec=3.601 stage=refine-census reads=196599808
+SS_OVERLAP_REFINE parent_max=2282770 child_max=1861293 slots=67849
+TRACE sec=3.857 stage=refine-census reads=196599808
+TRACE sec=4.110 stage=refine-census reads=196599808
+SS_OVERLAP_REFINE parent_max=2282770 child_max=1699819 slots=68106
+TRACE sec=4.364 stage=refine-census reads=196599808
+TRACE sec=4.615 stage=refine-census reads=196599808
+SS_OVERLAP_REFINE parent_max=2282770 child_max=1583191 slots=68363
+TRACE sec=4.866 stage=refine-census reads=196599808
+TRACE sec=5.119 stage=refine-census reads=196599808
+SS_OVERLAP_REFINE parent_max=2282770 child_max=1474417 slots=68620
+TRACE sec=5.378 stage=refine-census reads=196599808
+TRACE sec=5.631 stage=refine-census reads=196599808
+TRACE sec=5.889 stage=refine-census reads=196599808
+TRACE sec=6.140 stage=refine-census reads=196599808
+SS_OVERLAP_REFINE parent_max=2282770 child_max=1383700 slots=68877
+TRACE sec=6.391 stage=distribute reads=196599808
+TRACE sec=6.649 stage=distribute reads=211673088
+TRACE sec=6.904 stage=distribute reads=235925504
+TRACE sec=7.161 stage=distribute reads=260562944
+SS_OVERLAP_PHASE window_sort window=1 pairs=1190487
+TRACE sec=7.420 stage=restage reads=346132480
+TRACE sec=7.710 stage=restage reads=542732288
+TRACE sec=7.960 stage=descriptor-sort reads=736354304
+SS_OVERLAP_PHASE emit window=1
+CHECKPOINT rows=1000000 digest=6e5cfabff987de99 reads=793518080 wall=8.164
+TRACE sec=8.214 stage=emit reads=805367808
+TRACE sec=8.479 stage=distribute reads=814956544
+TRACE sec=8.730 stage=distribute reads=820150272
+TRACE sec=8.983 stage=distribute reads=831098880
+TRACE sec=9.243 stage=distribute reads=847736832
+SS_OVERLAP_PHASE window_sort window=2 pairs=1395039
+TRACE sec=9.494 stage=restage reads=890601472
+TRACE sec=9.822 stage=restage reads=1017024512
+TRACE sec=10.072 stage=descriptor-sort reads=1052803072
+SS_OVERLAP_PHASE emit window=2
+CHECKPOINT rows=2000000 digest=077460eb2384d611 reads=1052803072 wall=10.250
+TRACE sec=10.328 stage=distribute reads=1055686656
+TRACE sec=10.584 stage=distribute reads=1060712448
+TRACE sec=10.835 stage=distribute reads=1072140288
+TRACE sec=11.098 stage=distribute reads=1085022208
+SS_OVERLAP_PHASE window_sort window=3 pairs=1387788
+TRACE sec=11.475 stage=restage reads=1104408576
+TRACE sec=11.825 stage=restage reads=1294131200
+TRACE sec=12.075 stage=descriptor-sort reads=1522188288
+SS_OVERLAP_PHASE emit window=3
+CHECKPOINT rows=3000000 digest=e1e54c08e888e0c4 reads=1564086272 wall=12.242
+CHECKPOINT rows=4000000 digest=994ecaaa306665fb reads=1565999104 wall=12.319
+TRACE sec=12.327 stage=emit reads=1565999104
+TRACE sec=12.589 stage=distribute reads=1577705472
+TRACE sec=12.847 stage=distribute reads=1594015744
+TRACE sec=13.099 stage=distribute reads=1612677120
+TRACE sec=13.352 stage=distribute reads=1633746944
+SS_OVERLAP_PHASE window_sort window=4 pairs=1385537
+TRACE sec=13.683 stage=restage reads=1735057408
+TRACE sec=14.000 stage=restage reads=1934753792
+SS_OVERLAP_PHASE emit window=4
+TRACE sec=14.252 stage=emit reads=2112167936
+CHECKPOINT rows=5000000 digest=5108f96df9481f44 reads=2135592960 wall=14.379
+TRACE sec=14.511 stage=distribute reads=2154254336
+TRACE sec=14.761 stage=distribute reads=2166243328
+TRACE sec=15.016 stage=distribute reads=2183942144
+TRACE sec=15.276 stage=distribute reads=2204946432
+TRACE sec=15.531 stage=distribute reads=2224713728
+SS_OVERLAP_PHASE window_sort window=5 pairs=958532
+TRACE sec=15.782 stage=restage reads=2353901568
+TRACE sec=16.033 stage=restage reads=2593218560
+SS_OVERLAP_PHASE emit window=5
+CHECKPOINT rows=6000000 digest=80bcb54036d8a8a4 reads=2697850880 wall=16.259
+PROBE rows=6000000 digest=80bcb54036d8a8a4 reads=2697850880 wall=16.259

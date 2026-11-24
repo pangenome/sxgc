@@ -1,0 +1,10 @@
+arm=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/private-pipeline-physical-1795455434576759240
+complete_slice_rows=93585408
+max_logged_counted_scratch=71289067
+SS_OVERLAP_REFILL window=75 depth=28 active=264934 bytes=2746079
+SS_OVERLAP_REFILL window=75 depth=40 active=45077 bytes=479360
+SS_OVERLAP_REFILL window=75 depth=52 active=17136 bytes=187840
+SS_OVERLAP_REFILL window=75 depth=64 active=8934 bytes=98643
+STOP_OBSERVED where=descriptor-sort exit=75
+CONTAINER_STREAM mode=incremental member=m1 off=33376080 blocks=35840 payload_bytes=33373744 head_bits=196137065 len_bits=69616970
+STOP_OBSERVED phase=finish-v2 waiting_for=band_progress waited_s=0.620

@@ -1,0 +1,10 @@
+arm=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/private-pipeline-physical-1795455427962614998
+complete_slice_rows=1048576
+max_logged_counted_scratch=49196089
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=48864289 bands=301856 columns_legal_sublinear=0 asserted=49166145 budget_bytes=200000000 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=48865465 bands=329760 columns_legal_sublinear=0 asserted=49195225 budget_bytes=200000000 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=48866489 bands=329600 columns_legal_sublinear=0 asserted=49196089 budget_bytes=200000000 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=48867385 bands=306368 columns_legal_sublinear=0 asserted=49173753 budget_bytes=200000000 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+STOP_OBSERVED where=distribute exit=75
+CONTAINER_STREAM mode=incremental member=m1 off=304304 blocks=256 payload_bytes=301968 head_bits=1936498 len_bits=470452
+STOP_OBSERVED phase=finish-v2 waiting_for=band_progress waited_s=0.120

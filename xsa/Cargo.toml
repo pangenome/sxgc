@@ -23,3 +23,6 @@ tiny_http = "0.12"
 tempfile = "3.23"
 
 sha2 = "0.10"
+
+[workspace]
+members = ["pfp"]

@@ -1,0 +1,1 @@
+PLAN windows=3338 over_budget=1 descriptors=938179281 rows=1000000665 total_key_bytes=40925082224 max_descriptors=489991 max_rows=516964 max_key_bytes=70721375 naive_tape_scan_bytes=4691182503642 counted_with_plan=921510869 reads=2913198080

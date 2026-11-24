@@ -1,0 +1,13 @@
+{
+  "rc": [
+    0,
+    0,
+    0
+  ],
+  "stop": false,
+  "sha256": "6325c843c0d9aa9be00d69260aafdd794936e2e79f16174efb00c43db831f341",
+  "wall_s": 512.20798934903,
+  "shared_peak": 402653184,
+  "whole_arm_peak": 440164352,
+  "sink_reserve": 80000000
+}
