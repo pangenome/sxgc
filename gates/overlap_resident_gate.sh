@@ -4,10 +4,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO=$PWD
+case ${1:-narrow} in narrow) profile=narrow;; wide) profile=wide;; *) echo 'usage: overlap_resident_gate.sh [narrow|wide]' >&2; exit 2;; esac
 (cd xsa && cargo build --release -p pfp --bin pfp_sort_r --bin overlap_resident)
-python3 gates/overlap_resident_test.py
+if [[ $profile == wide ]]; then XSA_RESIDENT_WIDE_DICT=1 python3 gates/overlap_resident_test.py; else XSA_RESIDENT_WIDE_DICT=0 python3 gates/overlap_resident_test.py; fi
 ROOT=/mnt/nvme2n1/erikg/TAPEREADER; S=$ROOT/sandbox; R=$ROOT/climb/rung1
-D=$(mktemp -d "$S/resident-rung1-XXXXXX"); T=$(mktemp -d /tmp/resident-bin-XXXXXX); echo "receipt=$D tools=$T"
+D=$(mktemp -d "$S/resident-rung1-$profile-XXXXXX"); T=$(mktemp -d /tmp/resident-bin-XXXXXX); echo "receipt=$D tools=$T"
 g++ -O2 -Wall -Wextra -Werror -std=c++17 gates/overlap_prefix_oracle.cpp -o "$T/oracle"
 cc -O2 -Wall -Wextra -Werror -shared -fPIC -pthread gates/finish_stop_monitor.c -o "$T/monitor.so"
 mkdir "$D/in"
@@ -22,8 +23,10 @@ echo 'private corpus, remap, refs, parse, rank check and oracle copy: mincore ze
 # A fresh user service for each meter, no cache flush, swap or machine-wide dials.
 run=(systemd-run --user --quiet --collect --wait --pipe -p MemorySwapMax=0 -p Nice=10)
 set +e
-"${run[@]}" -p MemoryMax=20G -p CPUQuota=400% /usr/bin/python3 "$REPO/gates/overlap_resident_gate.py" build "$D" "$T" | \
+"${run[@]}" -p MemoryMax=20G -p CPUQuota=400% /usr/bin/python3 "$REPO/gates/overlap_resident_gate.py" build "$D" "$T" "$profile" | \
 "${run[@]}" -p MemoryMax=1400M -p CPUQuota=100% /usr/bin/python3 "$REPO/gates/overlap_resident_gate.py" oracle "$D" "$T"
 rc=("${PIPESTATUS[@]}");set -e;printf 'build=%s oracle=%s\n' "${rc[@]}" |tee "$D/exits.log"
 [[ ${rc[*]} == '0 0' ]]
-python3 gates/overlap_resident_gate.py certify "$D"; echo "certified receipt=$D"
+python3 gates/overlap_resident_gate.py certify "$D"
+if [[ $profile == wide ]]; then python3 gates/overlap_slowdown_gate.py "$D"; fi
+echo "certified receipt=$D"

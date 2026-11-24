@@ -3,8 +3,8 @@
 // NUMBER: M <= XSA_SA_CEILING (the default 2^31-1, the law) -> the
 // 32-bit kernel at this level; M > the ceiling AND the next level
 // condenses -> ONE MORE PARSE LEVEL + the induction upward; no
-// condensation -> libsais64 (the residual - UNVENDORED in Rust so
-// far: the census dies loudly with the numbers, never a silent
+// condensation -> wide integer kernel (the residual - unintegrated
+// so far: the census dies loudly with the numbers, never a silent
 // fallback).
 // Level k+1's corpus is level k's ID sequence stored BIG-ENDIAN, so
 // the byte machinery's memcmp IS the ID-lexicographic order. The
@@ -198,15 +198,15 @@ pub fn build_level2(pa: &[u32], m0: u64, modeb: &str, threads: u64,
     laws.stop_check("levels");
     // THE CENSUS ARITHMETIC (by number): if the next level STILL
     // exceeds the ceiling, it must condense; if it does not
-    // condense, the residual (libsais64) is required - UNVENDORED:
+    // condense, the wide integer residual is required - NOT integrated:
     // die with the numbers, never a silent fallback
     if m2 > ceiling {
         if m2 * 2 > m0 {
             die(&format!("LEVELS_RESIDUAL: m2={} does not condense \
                           from m1={} against the ceiling {} - the \
                           phrase-incompressible residual requires \
-                          libsais64, which is NOT vendored in the Rust \
-                          machine (the census arithmetic, by number)",
+                          an uncertified 64-bit integer kernel; the wide \
+                          byte dictionary path does not handle this residual",
                          m2, m0, ceiling));
         }
         die(&format!("LEVELS_RECURSE: m2={} still exceeds the ceiling \

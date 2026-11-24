@@ -14,11 +14,13 @@ use std::{
 #[path = "../overlap_min.rs"]
 mod ranges;
 use ranges::BlockMin;
+#[path = "../overlap_dict_index.rs"]
+mod index;
+use index::{local_offset, RankStarts, Suffixes};
 #[link(name = "libsais_r", kind = "static")]
 extern "C" {
     fn libsais_int(t: *mut i32, sa: *mut i32, n: i32, k: i32, fs: i32) -> i32;
     fn libsais_plcp_int(t: *const i32, sa: *const i32, pl: *mut i32, n: i32) -> i32;
-    fn libsais(t: *const u8, sa: *mut i32, n: i32, fs: i32, freq: *mut i32) -> i32;
 }
 const W: usize = 8;
 fn stop(path: &Path) {
@@ -113,7 +115,7 @@ struct Lists {
 }
 struct Dict {
     bytes: Vec<u8>,
-    start: Vec<u32>,
+    start: Vec<u64>,
     eof_id: usize,
     decode: [u8; 256],
 }
@@ -243,15 +245,30 @@ fn main() {
         d += w.raw() + 1;
         descriptors += w.width();
     }
-    let di = i32::try_from(d).expect("dictionary exceeds signed libsais width");
+    let wide = match std::env::var("XSA_RESIDENT_WIDE_DICT").as_deref() {
+        Ok("1") => true,
+        Ok("0") | Err(std::env::VarError::NotPresent) => false,
+        _ => panic!("XSA_RESIDENT_WIDE_DICT must be 0 or 1"),
+    };
+    assert_eq!(usize::BITS, 64, "resource plan requires 64-bit addressing");
+    if !wide {
+        i32::try_from(d).expect("dictionary exceeds signed libsais width");
+    }
+    assert!(
+        m + 6 * k <= i32::MAX as usize,
+        "parse SA plus workspace exceeds signed width"
+    );
     // Bytes of simultaneously live arrays, not file-cache residency. Reserve
     // extra SA space for recursion, and bound doubled heap capacity by 2*k:
     // a finite equal key ends at a word boundary -> at most one offset/word.
     let parse_bound = 8 * m + 8 * k + 24 * k; // parse/SA, refs, 6k extra SA slots
-    let aux_bound = n + d + 20 * k + 32 * m;
-    let retained = 8 * (k + 1) + 9 * m + 4 * m + 8 * m.div_ceil(16);
-    let dict_bound = 5 * d + retained + (64 << 20); // byte dictionary + SA, kernel work allowance
-    let emit_bound = 9 * d + retained + 40 * k + (8 << 20); // owner + potential heap + blocks
+    let aux_bound = n + d + 24 * (k + 1) + 32 * m;
+    let retained = 12 * (k + 1) + 9 * m + 4 * m + 8 * m.div_ceil(16);
+    let sa_bytes = if wide { 8 * d } else { 4 * d };
+    let owner_bytes = if wide { RankStarts::bytes(d) } else { 4 * d };
+    let dict_bound = d + sa_bytes + retained + (64 << 20);
+    let emit_bound = d + sa_bytes + owner_bytes + retained + 40 * k + (8 << 20);
+    eprintln!("RESIDENT_INDEX wide={wide} sa_bytes={sa_bytes} owner_bytes={owner_bytes} start_bytes={} native_above_i32={}",8*(k+1),d>i32::MAX as usize);
     eprintln!("RESIDENT_PLAN n={n} m={m} k={k} dict_symbols={d} descriptors={descriptors} parse_bound={parse_bound} aux_bound={aux_bound} dict_bound={dict_bound} emit_bound={emit_bound} array_grant={grant}");
     assert!(
         grant >= parse_bound.max(aux_bound).max(dict_bound).max(emit_bound),
@@ -317,7 +334,7 @@ fn main() {
         decode,
     };
     for &w in &words {
-        dict.start.push(dict.bytes.len() as u32);
+        dict.start.push(dict.bytes.len() as u64);
         let i = w.pos as usize;
         dict.bytes
             .extend(corpus[i..i + w.raw()].iter().map(|&b| encode[b as usize]));
@@ -327,7 +344,7 @@ fn main() {
         dict.bytes.push(0);
     }
     assert_eq!(dict.bytes.len(), d);
-    dict.start.push(d as u32);
+    dict.start.push(d as u64);
     p.end();
 
     let p = phase("aligned_and_lists");
@@ -397,29 +414,25 @@ fn main() {
     p.end();
 
     let p = phase("dictionary_sort");
-    let mut sa = vec![0; d];
-    // SEP < END < any raw byte. The order among different prefix-free owned
-    // tails is decided before SEP. Arbitrary order *within* equal tails is fine.
-    assert_eq!(
-        unsafe {
-            libsais(
-                dict.bytes.as_ptr(),
-                sa.as_mut_ptr(),
-                di,
-                0,
-                std::ptr::null_mut(),
-            )
-        },
-        0
-    );
+    // SEP < END < any raw byte. Equal finite tails are merged by continuation.
+    let sa = Suffixes::sort(&dict.bytes, wide);
     p.end();
     let p = phase("owner_map");
-    let mut owner = vec![u32::MAX; d];
-    for v in 0..k {
-        let start = dict.start[v] as usize;
-        let end = dict.start[v + 1] as usize - 1;
-        owner[start..end - if v == dict.eof_id { 1 } else { W }].fill(v as u32);
+    enum Owners {
+        Dense(Vec<u32>),
+        Compact(RankStarts),
     }
+    let owner = if wide {
+        Owners::Compact(RankStarts::new(&dict.start, d))
+    } else {
+        let mut a = vec![u32::MAX; d];
+        for v in 0..k {
+            let start = dict.start[v] as usize;
+            let end = dict.start[v + 1] as usize - 1;
+            a[start..end - if v == dict.eof_id { 1 } else { W }].fill(v as u32);
+        }
+        Owners::Dense(a)
+    };
     p.end();
     let p = phase("emit");
     let audit = std::env::var("XSA_RESIDENT_AUDIT_FD").ok().map(|v| {
@@ -440,18 +453,25 @@ fn main() {
     let mut q = BinaryHeap::new();
     let (mut prev, mut len, mut head) = (0, 0, 0);
     let (mut seen, mut groups, mut max_group) = (0usize, 0usize, 0usize);
-    for (r, &pos) in sa.iter().enumerate() {
+    for r in 0..d {
         if r % (1 << 22) == 0 {
             stop(flag);
         }
-        let i = pos as usize;
-        let v = owner[i];
-        if v == u32::MAX {
-            continue;
-        }
-        let v = v as usize;
+        let i = sa.at(r);
+        let v = match &owner {
+            Owners::Dense(a) => {
+                if a[i] == u32::MAX {
+                    continue;
+                }
+                a[i] as usize
+            }
+            Owners::Compact(a) => a.word(i),
+        };
         let end = dict.start[v + 1] as usize - 1;
         let size = end - i;
+        if size <= if v == dict.eof_id { 1 } else { W } {
+            continue;
+        }
         let h = common(&dict.bytes[prev..prev + len], &dict.bytes[i..end]);
         if len == 0 || h < len.min(size) {
             flush(&mut q, &lists, len, head, &mut out);
@@ -460,7 +480,7 @@ fn main() {
         } else {
             assert_eq!(len, size, "proper prefix among representatives");
         }
-        let off = pos as u32 - dict.start[v];
+        let off = local_offset(i, dict.start[v]);
         let idx = lists.loc[v];
         let b = if off == 0 {
             0

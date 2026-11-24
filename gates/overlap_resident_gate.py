@@ -82,7 +82,8 @@ def oracle(d,tools):
     save(d/'oracle.json',dict(rc=rc,process=stats,sampled_peak_rss=peak,cgroup=cg_info(),wall_including_wait_s=time.monotonic()-start))
     assert rc==0 and f'ORACLE rows={N+1} independent_final_rank={N+1} all_adjacent_sa_lcp_bwt_verified=1' in (d/'oracle.log').read_text()
 
-def build(d,tools):
+def build(d,tools,profile):
+    assert profile in ('narrow','wide')
     assert (CG/'memory.max').read_text().strip()==str(20*GIB) and (CG/'memory.swap.max').read_text().strip()=='0'
     src=d/'in'; corpus=src/'corpus'; retained=sum((src/f).stat().st_size for f in ('parse.u32','dictionary.refs')); assert corpus.stat().st_size==N
     refs=members(ANCHOR); rows=N+1
@@ -110,7 +111,7 @@ def build(d,tools):
         if md.exists():(md/'stop.requested').touch(exist_ok=True)
     audit=os.dup(1)
     launch('resident',[BIN/'overlap_resident',src,flag,str(14*GIB),d/'inverse.check'],
-           env=dict(env,XSA_RESIDENT_AUDIT_FD=str(audit)),stdout=sp.PIPE,pass_fds=(audit,)); os.close(audit)
+           env=dict(env,XSA_RESIDENT_WIDE_DICT=str(int(profile=='wide')),XSA_RESIDENT_AUDIT_FD=str(audit)),stdout=sp.PIPE,pass_fds=(audit,)); os.close(audit)
     counted_peak=0; disk_peak=0; at_peak={}; each={}; last_disk=0; active='start'; samples={}
     with (d/'resident.log').open() as tail:
         while True:
@@ -141,7 +142,7 @@ def build(d,tools):
             if len(exitcode)==len(w):break
             time.sleep(.2)
     for f in (*logs.values(),*iofiles.values()):f.close()
-    rc=dict(rc=exitcode,sampled_wall_s=times,phase_sampled_shared=samples,process=proc,sampled_peak_rss=peaks,
+    rc=dict(profile=profile,rc=exitcode,sampled_wall_s=times,phase_sampled_shared=samples,process=proc,sampled_peak_rss=peaks,
             counted_sampled_peak=counted_peak,counted_at_peak=at_peak,individual_sampled_peaks=each,whole_dir_sampled_allocated=disk_peak,
             wall_s=time.monotonic()-start,shared_before=cg0,shared_after=cg_info(),stop=flag.exists())
     save(d/'build.json',rc)
@@ -159,5 +160,5 @@ if __name__=='__main__':
     mode=sys.argv[1]; d=Path(sys.argv[2]);
     if mode=='certify':certify(d)
     elif mode=='oracle':oracle(d,Path(sys.argv[3]))
-    elif mode=='build':build(d,Path(sys.argv[3]))
+    elif mode=='build':build(d,Path(sys.argv[3]),sys.argv[4] if len(sys.argv)>4 else 'narrow')
     else:raise ValueError(mode)
