@@ -58,6 +58,9 @@ class Hundred(unittest.TestCase):
         hundred.verify_default(data,docs,v)
         for d,doc in [(data,bad) for bad in ('',v['profile'],hundred.sha(data))]+[(b'{}',docs)]:
             with self.assertRaises(RuntimeError): hundred.verify_default(d,doc,v)
+        r=hundred.defaults.decision('1g');one_file=(hundred.ROOT/hundred.ONE_DEFAULT).read_bytes();docs1=(hundred.ROOT/hundred.DOCS[0]).read_text()
+        hundred.verify_default(one_file,docs1,r,'1g')
+        with self.assertRaises(RuntimeError):hundred.verify_default(one_file,docs1.replace(hundred.sha(one_file),'unpublished'),r,'1g')
         one=dict(v,rung='1g'); data=json.dumps(one).encode()
         with self.assertRaises(RuntimeError): hundred.verify_default(data,docs+' '+hundred.sha(data),one)
 

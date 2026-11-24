@@ -4,7 +4,7 @@ Use `python3 -B gates/overlap_defaults.py plan 1g` to replay the decision from t
 
 ## 1 GB: four ordered emission lanes, batched SXLS escapes
 
-[Complete bank, hash lists and score inputs](gates/receipts/radix-full-1g/). Source `d72ac25db741f98e4295bfdcf9af53c2682ed0a4`, cold raw input of 1,000,000,665 bytes, same wide-interface sort (internally narrow at this size), private tmpfs handoffs and bitmap, 20 GiB shared / 14 GiB arrays / four build CPUs / two finish threads, concurrent 1,400 MiB / one CPU row verifier. No swap. Raw and prepared end at the same finished v8 product, not at the row pipe. Verification compares all 1,000,000,666 rows and all 1,014,098,520 container bytes (SHA `b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3`).
+Measured profile **`packed-radix-4-batch`**. [Decision JSON](gates/receipts/radix-full-1g/default.json) SHA-256 `e89d7097cceef60c574340669db8211f063bca70d66b2f935b6233a9fd93b274`. [Complete bank, hash lists and score inputs](gates/receipts/radix-full-1g/). Source `d72ac25db741f98e4295bfdcf9af53c2682ed0a4`, cold raw input of 1,000,000,665 bytes, same wide-interface sort (internally narrow at this size), private tmpfs handoffs and bitmap, 20 GiB shared / 14 GiB arrays / four build CPUs / two finish threads, concurrent 1,400 MiB / one CPU row verifier. No swap. Raw and prepared end at the same finished v8 product, not at the row pipe. Verification compares all 1,000,000,666 rows and all 1,014,098,520 container bytes (SHA `b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3`).
 
 | lanes/writer | raw s | prepared s | emit s | sink write calls | sink CPU s | build cgroup CPU s | peak shared GiB |
 |---|---:|---:|---:|---:|---:|---:|---:|

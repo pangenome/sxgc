@@ -25,6 +25,7 @@ LIVE = Path.home()/'sxgc'
 DOCS = ('OVERLAP_DEFAULTS.md', 'OVERLAP_10G_STUDY.md', 'OVERLAP_100G_CONTRACT.md',
         'docs/overlap_scanplan.md')
 DEFAULT = 'gates/receipts/scale-10g/default.json'
+ONE_DEFAULT = 'gates/receipts/radix-full-1g/default.json'
 SCAN = 'gates/receipts/scanplan-10g/scan.json'
 FRONT = 'gates/receipts/packed-front-10g/front-end.json'
 CALIBRATION_SHA = 'fea28d298533a0096945441477b2c9778b0dff471bbe260796f45be43922b049'
@@ -90,10 +91,11 @@ def budget(deadline: int, clock: float) -> int:
     return required
 
 
-def verify_default(data: bytes, docs: str, decision: dict) -> None:
+def verify_default(data: bytes, docs: str, decision: dict, rung: str='10g') -> None:
     # Structural JSON equality distinguishes false from 0, unlike dict equality.
     need(json.dumps(json.loads(data),sort_keys=True) == json.dumps(decision,sort_keys=True) and
-         decision['rung'] == '10g' and type(decision['normalized_speed_target_met']) is bool and
+         decision['rung'] == rung and ((rung=='10g' and type(decision['normalized_speed_target_met']) is bool) or
+         (rung=='1g' and decision['normalized_speed_target_met'] is None)) and
          decision['profile'] in docs and sha(data) in docs, 'undocumented/stale default')
 
 
@@ -125,7 +127,7 @@ def admitted(deadline: int) -> dict:
     need(all(line.startswith('100644 blob ') for line in
              git('ls-tree','-r',rev,'--','gates/receipts').splitlines()), 'nonregular receipt in bank')
     files = {}
-    for name in (*DOCS, DEFAULT, SCAN, FRONT):
+    for name in (*DOCS, DEFAULT, ONE_DEFAULT, SCAN, FRONT):
         entry=git('ls-tree',rev,'--',name).split();need(len(entry)==4,'missing published evidence: '+name)
         mode, kind, obj, path = entry
         need((mode,kind,path)==('100644','blob',name), 'unpublished evidence')
@@ -143,6 +145,7 @@ def admitted(deadline: int) -> dict:
     check_sweep(defaults.BANK/'scale-10g',decision['profile']);v10_fixture(defaults.BANK/'v10-relay')
     docs = files[DOCS[0]].decode()
     verify_default(files[DEFAULT],docs,decision)
+    verify_default(files[ONE_DEFAULT],docs,defaults.decision('1g'),'1g')
     s = json.loads(files[SCAN]); clock = calibration_clock(s,json.loads(files[FRONT])['census'])
     need(re.fullmatch('[a-f0-9]{40}', s['commit']), 'invalid calibration revision')
     git('merge-base','--is-ancestor', s['commit'], rev)
