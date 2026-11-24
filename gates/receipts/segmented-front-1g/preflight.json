@@ -1,0 +1,50 @@
+{
+  "bank_identity": {
+    "dictionary.packed": [
+      66308,
+      17191920555,
+      1242219181,
+      1795480074158965584,
+      1795480074158965584
+    ],
+    "parse.u32": [
+      66308,
+      17191914673,
+      127136104,
+      1795480074807965538,
+      1795480074807965538
+    ]
+  },
+  "cgroup": "/sys/fs/cgroup/user.slice/user-1001.slice/user@1001.service/app.slice/run-u285.service",
+  "cgroup_before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 268835\nuser_usec 122924\nsystem_usec 145910\ncore_sched.force_idle_usec 0\nnr_periods 3\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "10903552",
+    "memory.swap.max": "0"
+  },
+  "cold_private_path": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/segmented-1g-ptvas3/in/corpus",
+  "deadline": 1795504134,
+  "free_before": 4926634651648,
+  "front_io_limit_each": 16000010640,
+  "immutable_source": "/mnt/nvme2n1/erikg/TAPEREADER/climb/rung1/pile-slice1g.bin",
+  "mincore_checked_pages": 244141,
+  "mincore_resident_pages": 0,
+  "n": 1000000665,
+  "private_input_bytes": 1000000665,
+  "promotion": false,
+  "raw_sha256": "c382daa53d0e66fdc921c32d356961b7e8189ceee0a435bb3b66e06b203ebb61",
+  "reserved_logical": 3000001995,
+  "rung": "1g",
+  "source_identity": [
+    66308,
+    10830449283,
+    1000000665,
+    1795234658861019659,
+    1795234658861019659
+  ],
+  "status": "REFUSED",
+  "trusted_columns": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-parse-ORX2dw/columns"
+}

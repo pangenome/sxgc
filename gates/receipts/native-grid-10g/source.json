@@ -1,0 +1,14 @@
+{
+  "scored": true,
+  "sha256": {
+    "binaries.log": "8fe37a361874054faf85c66c98d4f6e11a724d219b8680ace17ec6ab944d3e70",
+    "build.log": "f4d099f2cff418dcc31eb80dad1ac6cefae73626718c97eb3209452ec5be5a83",
+    "cold.log": "c62bd42e7f055a944994ef055454c2990e21e06211ae0fa7dbe7c243deab1567",
+    "exit.json": "e09637dca5ae6ca075c0964518fa8f30860f41aa14fe18b015cb4a50ec5dc591",
+    "fixtures.log": "8444ca0bf1cadb755a61932050a16dc9379bcd8c11f992ce1781cd27ae8ce8e1",
+    "inputs.json": "8f030f84ee69508b58becfb01ddb382dd78599e49e3b830f83b4eb200d31a2dc",
+    "resident.log": "963af803ed82889cdee2b8adb1d551f385cdaa613f8addb468b5b916dde5e73d",
+    "result.json": "4b54c25e04f4e5971b24e156ced210f7ce5cf4829127dcbcb9c0e84729c92cef"
+  },
+  "source": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/dict-grid-10g-Yy3QxU"
+}

@@ -1,0 +1,12 @@
+{
+  "cgroup": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 4556177169\nuser_usec 3580181413\nsystem_usec 975995755\ncore_sched.force_idle_usec 0\nnr_periods 31104\nnr_throttled 400\nthrottled_usec 4302711\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "214748364800",
+    "memory.peak": "124423614464",
+    "memory.swap.max": "0"
+  },
+  "rc": 0
+}

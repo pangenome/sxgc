@@ -1,0 +1,39 @@
+{
+  "arms": [
+    {
+      "cpu_s": 1079.14256734,
+      "entries": 11239544612,
+      "hash_s": 69.948712,
+      "peak_rss": 110972248064,
+      "read_bytes": 0,
+      "sha256": "71a1bdfde1185e6f4a7d6cacc3210b4677c35e902af06956068a55c4324f3109",
+      "threads": 1,
+      "wall_s": 1079.267245632,
+      "write_bytes": 0
+    },
+    {
+      "cpu_s": 1347.793392699,
+      "entries": 11239544612,
+      "hash_s": 88.071946,
+      "peak_rss": 110973251584,
+      "read_bytes": 0,
+      "sha256": "71a1bdfde1185e6f4a7d6cacc3210b4677c35e902af06956068a55c4324f3109",
+      "threads": 4,
+      "wall_s": 558.867635476,
+      "write_bytes": 0
+    },
+    {
+      "cpu_s": 1444.940634492,
+      "entries": 11239544612,
+      "hash_s": 85.531589,
+      "peak_rss": 110974312448,
+      "read_bytes": 0,
+      "sha256": "71a1bdfde1185e6f4a7d6cacc3210b4677c35e902af06956068a55c4324f3109",
+      "threads": 2,
+      "wall_s": 923.22305493,
+      "write_bytes": 0
+    }
+  ],
+  "scope": "in-memory dictionary sort only; no product, prep or hash time in arm wall",
+  "selected_threads": 4
+}

@@ -1,0 +1,48 @@
+{
+  "cgroup": "/sys/fs/cgroup/user.slice/user-1001.slice/user@1001.service/app.slice/run-u286.service",
+  "cgroup_after": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 12263480\nuser_usec 11807244\nsystem_usec 456236\ncore_sched.force_idle_usec 0\nnr_periods 125\nnr_throttled 30\nthrottled_usec 34080\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "3221225472",
+    "memory.peak": "1589514240",
+    "memory.swap.max": "0"
+  },
+  "cgroup_before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 52936\nuser_usec 38953\nsystem_usec 13983\ncore_sched.force_idle_usec 0\nnr_periods 1\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "3221225472",
+    "memory.peak": "9773056",
+    "memory.swap.max": "0"
+  },
+  "cgroup_io_delta": null,
+  "cold_private_columns_zero_resident": [
+    "dictionary.packed",
+    "parse.u32"
+  ],
+  "decode_verified": true,
+  "grant_minus_metadata_and_tape": 1773145936,
+  "host_available_before": 866312863744,
+  "metadata_limit": 205860355,
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 0,
+    "cpu_s": 12.11,
+    "rchar": 127155848,
+    "read_bytes": 1369362432,
+    "syscr": 1958,
+    "syscw": 1,
+    "wchar": 193,
+    "write_bytes": 4096
+  },
+  "promotion": false,
+  "raw_sha256": "c382daa53d0e66fdc921c32d356961b7e8189ceee0a435bb3b66e06b203ebb61",
+  "rc": 0,
+  "status": "INTERMEDIATE_VERIFIED",
+  "wall_s": 12.281974360346794
+}

@@ -1,0 +1,125 @@
+{
+  "archived_front_io": {
+    "read_bytes": 3861856256,
+    "write_bytes": null
+  },
+  "archived_front_wall_s": 30.38,
+  "attributed_io_ratio": {
+    "read_bytes": 1.3594824550611135,
+    "write_bytes": null
+  },
+  "bank_identity": {
+    "dictionary.packed": [
+      66308,
+      17191920555,
+      1242219181,
+      1795480074158965584,
+      1795480074158965584
+    ],
+    "parse.u32": [
+      66308,
+      17191914673,
+      127136104,
+      1795480074807965538,
+      1795480074807965538
+    ]
+  },
+  "census": {
+    "D": 1166209205,
+    "alphabet": 230,
+    "descriptors": 938179281,
+    "dictionary_bytes": 1242219181,
+    "initial_runs": 90,
+    "intermediate_passes": 1,
+    "k": 25336659,
+    "m": 31784026,
+    "max_phrase": 19366,
+    "n": 1000000665,
+    "parse_bytes": 127136104,
+    "parse_extent": 183803980,
+    "peak_counted": 1525275857,
+    "starts_above_u32": 0
+  },
+  "cgroup": "/sys/fs/cgroup/user.slice/user-1001.slice/user@1001.service/app.slice/run-u285.service",
+  "cgroup_before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 268835\nuser_usec 122924\nsystem_usec 145910\ncore_sched.force_idle_usec 0\nnr_periods 3\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "10903552",
+    "memory.swap.max": "0"
+  },
+  "cgroup_front_after": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 57859944\nuser_usec 49006686\nsystem_usec 8853257\ncore_sched.force_idle_usec 0\nnr_periods 594\nnr_throttled 73\nthrottled_usec 1607297\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 25344\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "201326592",
+    "memory.swap.max": "0"
+  },
+  "cgroup_front_before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 1520533\nuser_usec 848575\nsystem_usec 671957\ncore_sched.force_idle_usec 0\nnr_periods 21\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 774\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "201224192",
+    "memory.swap.max": "0"
+  },
+  "cgroup_front_io_delta": null,
+  "cold_private_path": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/segmented-1g-ptvas3/in/corpus",
+  "compare_s": 2.118092349730432,
+  "deadline": 1795504134,
+  "equal_column_sha256": {
+    "dictionary.packed": "ef27d524fea7dc1d6d788b44c50a6240e329e386cc2ae2dfd6f1f8d8431940c5",
+    "parse.u32": "770a8ac63168af9b947e8e96b104d5a20b30437e19491b413e98ccd1f9de63b4"
+  },
+  "footprint_scans": 25,
+  "free_after_front": 4924265369600,
+  "free_before": 4926634651648,
+  "front_io_limit_each": 16000010640,
+  "front_under_3x": true,
+  "front_wall_s": 57.283839635550976,
+  "immutable_source": "/mnt/nvme2n1/erikg/TAPEREADER/climb/rung1/pile-slice1g.bin",
+  "logical_headroom": 474725473,
+  "mincore_checked_pages": 244141,
+  "mincore_resident_pages": 0,
+  "n": 1000000665,
+  "private_input_bytes": 1000000665,
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 303104,
+    "cpu_s": 55.14,
+    "rchar": 5271370424,
+    "read_bytes": 5250125824,
+    "syscr": 432836,
+    "syscw": 550540,
+    "wchar": 4640717900,
+    "write_bytes": 4641333248
+  },
+  "promotion": false,
+  "raw_sha256": "c382daa53d0e66fdc921c32d356961b7e8189ceee0a435bb3b66e06b203ebb61",
+  "rc": 0,
+  "reserved_logical": 3000001995,
+  "rung": "1g",
+  "sampled_counted_logical": 1516933341,
+  "sampled_min_free": 4923033919488,
+  "sampled_rss": 22274048,
+  "sampled_whole_dir_allocated": 3440844800,
+  "sampled_whole_dir_file_bytes": 2517069412,
+  "source_identity": [
+    66308,
+    10830449283,
+    1000000665,
+    1795234658861019659,
+    1795234658861019659
+  ],
+  "status": "FRONT_COMPARED",
+  "target_under_2x": true,
+  "trusted_columns": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-parse-ORX2dw/columns",
+  "wall_ratio": 1.8855773415257069
+}

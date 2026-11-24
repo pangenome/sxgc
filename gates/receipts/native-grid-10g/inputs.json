@@ -1,0 +1,30 @@
+{
+  "array_grant": 150323855360,
+  "cgroup": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 266838\nuser_usec 130920\nsystem_usec 135917\ncore_sched.force_idle_usec 0\nnr_periods 3\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "214748364800",
+    "memory.peak": "11014144",
+    "memory.swap.max": "0"
+  },
+  "columns": {
+    "dictionary.packed": 11942962780,
+    "parse.u32": 1272657952
+  },
+  "deadline": 1795531169,
+  "env": {
+    "GOMP_SPINCOUNT": "0",
+    "OMP_DYNAMIC": "FALSE",
+    "OMP_NUM_THREADS": "4",
+    "OMP_THREAD_LIMIT": "4",
+    "OMP_WAIT_POLICY": "PASSIVE",
+    "XSA_RESIDENT_DICT_GRID": "1",
+    "XSA_RESIDENT_PACKED": "1",
+    "XSA_RESIDENT_WIDE_DICT": "1"
+  },
+  "pair1": "/tmp/overlap-restart-jceQI2/gates/receipts/radix-full-1g",
+  "receipt10": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-bitmap-3eqCFk",
+  "source": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-front-10g-YebiCY"
+}
