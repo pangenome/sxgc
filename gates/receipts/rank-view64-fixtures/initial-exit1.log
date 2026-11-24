@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/home/erikg/sxgc/gates/overlap_rank_view64_test.py", line 20, in <module>
+    if __name__=='__main__':main(*(Path(p).resolve() for p in sys.argv[1:]))
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/erikg/sxgc/gates/overlap_rank_view64_test.py", line 18, in main
+    sp.run([front,raw,out,'4',str(64<<20),str(2*len(text)),stop,end],capture_output=True,check=True);sp.run([rank,'rank',out/'keys.u64',inv,'4',str(64<<20),stop,end],capture_output=True,check=True);p=sp.run([checker,d],capture_output=True);assert p.returncode==0,(p.stderr,p.stdout,len(text))
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '[PosixPath('/tmp/rank-view64-fixture-Gdullf/front'), PosixPath('/tmp/tmp0j7dzor8/raw'), PosixPath('/tmp/tmp0j7dzor8/columns'), '4', '67108864', '7938', PosixPath('/tmp/tmp0j7dzor8/stop'), '1795531084']' returned non-zero exit status 75.

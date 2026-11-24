@@ -1,0 +1,13 @@
+{
+  "launcher": "proc_19a9",
+  "source": "dbcd1f7355ebb448a25d1c5641f5a5b5727fd9b1",
+  "requested_deadline": 1795531160,
+  "experimental_cutoff": 1795531169,
+  "required_remaining_s_exclusive": 900,
+  "post_exit_observed_time": 1795530581,
+  "rc": 75,
+  "reached_source_pin": false,
+  "created_sandbox_receipt": false,
+  "timed_worker_started": false,
+  "scope": "Prelaunch refusal; no 10 GB input read or new front/rank measurement. At inspection only 579 s remained to the requested deadline. Retain the admission, do not retry or shorten it."
+}

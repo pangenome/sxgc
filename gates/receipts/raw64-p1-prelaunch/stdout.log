@@ -1,0 +1,1 @@
+One 10 GB raw->wide columns->wide rank stage on 4 CPUs / 32 GiB, independently checked; no byte row stream/product or larger dispatch

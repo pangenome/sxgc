@@ -1,0 +1,1 @@
+PASS 30 real native handoffs on generated text + one predicted 2N refusal; every parse-start byte LCP/position/BWT, head span, ordinal and successor checked at 1/2/4 consumers; malformed rank, address, extent and grant refusals
