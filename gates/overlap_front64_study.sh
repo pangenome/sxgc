@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Single new endpoint: cold raw -> canonical wide columns -> wide ranks; no product or scale continuation.
 set -euo pipefail
-[[ $# == 1 && $1 =~ ^[1-9][0-9]{9}$ ]] && (( $1 <= 1795531169 && $1 > $(date +%s)+900 )) || exit 75
+now=$(date +%s)
+[[ $# == 1 && $1 =~ ^[1-9][0-9]{9}$ ]] && (( $1 <= now+1800 && $1 > now+900 )) || exit 75
 cd "$(dirname "$0")/..";[[ ! -e gates/receipts/raw64-p1-10g/score.json ]] || exit 75
 source gates/overlap_pin.sh;overlap_pin_series gates/overlap_front64_study.sh "$1"
 exec 9>"${XDG_RUNTIME_DIR:?}/overlap-ten-timing.lock";flock -n 9 || exit 75

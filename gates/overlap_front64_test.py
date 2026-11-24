@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 from overlap_resident_test import prepare,trigger
+from overlap_front64_balance import balance
 
 def main(front,verify):
     rng=random.Random(84166);tag=next(i.to_bytes(8,'big') for i in range(9999) if trigger(i.to_bytes(8,'big')));end=str(int(time.time())+180)
@@ -21,6 +22,7 @@ def main(front,verify):
                 p=build(w)
                 if not good:assert p.returncode==75 and not out.exists();continue
                 assert p.returncode==0 and (out/'dictionary.lex64').read_bytes()==wide and (out/'keys.u64').read_bytes()==keys,(p.stdout,p.stderr)
+                timelines=balance(p.stdout.decode());assert set(timelines)=={'order','publish'} and all(len(v['lane_rows'])==w and sum(v['lane_rows'])==len(keys)//8 for v in timelines.values())
                 args=[verify,out/'dictionary.lex64',out/'keys.u64',old/'dictionary.packed',old/'parse.u32',str(len(offset)),str(a),stop,end];assert sp.run(args,capture_output=True).returncode==0
                 (out/'keys.u64').write_bytes(bytes([255])*len(keys));assert sp.run(args,capture_output=True).returncode!=0
                 for q in out.iterdir():q.unlink()

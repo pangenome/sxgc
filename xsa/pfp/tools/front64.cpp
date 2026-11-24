@@ -37,6 +37,32 @@ struct Buffer{int fd;U at,used=0;std::array<uint8_t,65536>b;
 static int file(const fs::path&p,U size){ck(size<=INT64_MAX,"file extent");int f=open(p.c_str(),O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW|O_CLOEXEC,0600);ck(f>=0 && !ftruncate(f,size),"size new column");return f;}
 static void finish(int fd){ck(!fsync(fd) && !close(fd),"column fsync/close");}
 static void syncdir(const fs::path&p){int fd=open(p.c_str(),O_DIRECTORY|O_RDONLY|O_CLOEXEC);ck(fd>=0,"directory open");finish(fd);}
+// One writer per bin per phase. No atomics, clocks or shared telemetry in row loops.
+struct BinMeter {
+ double sort=0, label=0, publish=0;
+ int order_lane=-1, publish_lane=-1;
+};
+static void report_bins(const std::array<U,BINS+1>& offsets, const std::vector<BinMeter>& meters,
+                        int team, bool publishing, double wall) {
+ struct Lane { U bins=0, rows=0; double active=0; };
+ std::vector<Lane> lanes(team);
+ const char* phase=publishing?"publish":"order";
+ double longest=-1,sort=0,label=0,active=0;
+ U longest_bin=0;
+ for(U b=0;b<BINS;++b){
+  U rows=offsets[b+1]-offsets[b]; if(!rows)continue;
+  const auto& m=meters[b];int tid=publishing?m.publish_lane:m.order_lane;
+  ck(tid>=0 && tid<team,"missing bin worker");
+  double dt=publishing?m.publish:m.sort+m.label;auto& lane=lanes[tid];
+  ++lane.bins;lane.rows+=rows;lane.active+=dt;active+=dt;
+  if(dt>longest){longest=dt;longest_bin=b;}
+  if(!publishing){sort+=m.sort;label+=m.label;}
+ }
+ for(int tid=0;tid<team;++tid){const auto& a=lanes[tid];
+  std::printf("FRONT64_LANE phase=%s lane=%d bins=%llu rows=%llu active_s=%.9f\n",phase,tid,(unsigned long long)a.bins,(unsigned long long)a.rows,a.active);
+ }
+ std::printf("FRONT64_BINS phase=%s wall_s=%.9f active_s=%.9f sort_s=%.9f label_s=%.9f longest_bin=%llu longest_rows=%llu longest_s=%.9f\n",phase,wall,active,sort,label,(unsigned long long)longest_bin,(unsigned long long)(offsets[longest_bin+1]-offsets[longest_bin]),longest);
+}
 static void front(const char*input,const fs::path&out,U threads,U grant,U scratch){
  ck(threads>=1 && threads<=64 && threads<=U(omp_get_num_procs()),"worker extent");omp_set_dynamic(0);omp_set_num_threads(int(threads));int actual=0;
 #pragma omp parallel
@@ -66,21 +92,27 @@ static void front(const char*input,const fs::path&out,U threads,U grant,U scratc
  U maxbin=0,present=0;for(U b=0;b<BINS;++b){U s=bins[b];for(auto&h:hist){U c=h[b];h[b]=s;s+=c;}bins[b+1]=s;maxbin=std::max(maxbin,s-bins[b]);present+=s>bins[b];}ck(bins.back()==m,"histogram total");
 #pragma omp parallel
  {U lane=omp_get_thread_num();auto&h=hist[lane];for(U j=cut(m,lane,threads);j<cut(m,lane+1,threads);++j){if(!(j%65536))guard();U p=prefix(j);v[h[p>>52]++]={p,j};}}
+ std::vector<BinMeter> meters(BINS);
  double tp=omp_get_wtime();U k=0,owned=0,term=0;
  // Equal full records necessarily share a bin. Only this local sort compares raw trailing bytes.
 #pragma omp parallel for schedule(dynamic,1) reduction(+:k,owned,term)
- for(U b=0;b<BINS;++b){guard();U lo=bins[b],hi=bins[b+1],calls=0;std::sort(v+lo,v+hi,[&](Entry x,Entry y){if(!(++calls%BLOCK))guard();return less(x,y);});
-  Entry last{};U bytes=0,loc=0;for(U j=lo;j<hi;++j){if(!(j%65536))guard();Entry e=v[j];if(j==lo || less(last,e)){U l=len(e.ord);loc=bytes;bytes+=8+l;++k;owned+=starts[e.ord+1]-starts[e.ord];term+=e.ord+1==m;}last=e;v[j].prefix=loc;}col[b+1]=bytes;}
+ for(U b=0;b<BINS;++b){guard();U lo=bins[b],hi=bins[b+1],calls=0;double begin=omp_get_wtime();std::sort(v+lo,v+hi,[&](Entry x,Entry y){if(!(++calls%BLOCK))guard();return less(x,y);});
+  double sorted=omp_get_wtime();Entry last{};U bytes=0,loc=0;for(U j=lo;j<hi;++j){if(!(j%65536))guard();Entry e=v[j];if(j==lo || less(last,e)){U l=len(e.ord);loc=bytes;bytes+=8+l;++k;owned+=starts[e.ord+1]-starts[e.ord];term+=e.ord+1==m;}last=e;v[j].prefix=loc;}col[b+1]=bytes;
+  meters[b].order_lane=omp_get_thread_num();meters[b].sort=sorted-begin;meters[b].label=omp_get_wtime()-sorted;}
+ double ordered=omp_get_wtime();
  // Lengths are bounded by n, only one terminal. Sum in a wide domain BEFORE converting to file offsets.
  Big total=0;for(U b=1;b<=BINS;++b){total+=col[b];ck(total<=INT64_MAX,"dictionary exceeds off_t");col[b]=U(total);}U tape=U(total);Big combined=total+8*Big(m);ck(term==1 && total==Big(owned)+16*Big(k)-8 && combined<=scratch && combined<=2*Big(n),"column scratch/geometry");
  guard();auto partial=out;partial+=".partial";ck(fs::create_directory(partial),"fresh partial directory");int dict=file(partial/"dictionary.lex64",tape);double td=omp_get_wtime();
 #pragma omp parallel for schedule(dynamic,1)
- for(U b=0;b<BINS;++b){Buffer w{dict,col[b],0,{}};U prev=UINT64_MAX;for(U j=bins[b];j<bins[b+1];++j){if(!(j%65536))guard();auto&e=v[j];U pos=e.prefix;if(pos!=prev){ck(w.at+w.used==col[b]+pos,"range offset");U l=len(e.ord),tag=(l<<1)|U(e.ord+1==m);w.put(&tag,8);w.put(raw+starts[e.ord],l);}prev=pos;e.prefix+=col[b];}w.flush();ck(w.at==col[b+1],"range end");}
- finish(dict);munmap(const_cast<uint8_t*>(raw),n);close(fd);double tw=omp_get_wtime();U high_keys=0;
+ for(U b=0;b<BINS;++b){double begin=omp_get_wtime();Buffer w{dict,col[b],0,{}};U prev=UINT64_MAX;for(U j=bins[b];j<bins[b+1];++j){if(!(j%65536))guard();auto&e=v[j];U pos=e.prefix;if(pos!=prev){ck(w.at+w.used==col[b]+pos,"range offset");U l=len(e.ord),tag=(l<<1)|U(e.ord+1==m);w.put(&tag,8);w.put(raw+starts[e.ord],l);}prev=pos;e.prefix+=col[b];}w.flush();ck(w.at==col[b+1],"range end");meters[b].publish_lane=omp_get_thread_num();meters[b].publish=omp_get_wtime()-begin;}
+ double published=omp_get_wtime();finish(dict);munmap(const_cast<uint8_t*>(raw),n);close(fd);double tw=omp_get_wtime();U high_keys=0;
  // All raw lengths are dead. Reuse starts, indexed by the original occurrence ordinal, for the key column.
 #pragma omp parallel for schedule(static) reduction(+:high_keys)
  for(U j=0;j<m;++j){starts[v[j].ord]=v[j].prefix;high_keys+=v[j].prefix>UINT32_MAX;}
  munmap(v,16*m);int keys=file(partial/"keys.u64",8*m);writeat(keys,(const uint8_t*)starts,8*m,0);finish(keys);munmap(starts,8*(m+1));syncdir(partial);guard();ck(syscall(SYS_renameat2,AT_FDCWD,partial.c_str(),AT_FDCWD,out.c_str(),RENAME_NOREPLACE)==0,"publish columns");syncdir(out.has_parent_path()?out.parent_path():fs::path("."));
- std::printf("FRONT64 n=%llu m=%llu k=%llu descriptors=%llu max_phrase=%llu starts_above_u32=%llu keys_above_u32=%llu dictionary_bytes=%llu key_bytes=%llu arrays=%llu team=%d nonempty_bins=%llu max_bin=%llu scan_s=%.6f partition_s=%.6f sort_dedup_s=%.6f publish_dict_s=%.6f publish_keys_s=%.6f raw_s=%.6f\n",(unsigned long long)n,(unsigned long long)m,(unsigned long long)k,(unsigned long long)owned,(unsigned long long)longest,(unsigned long long)above,(unsigned long long)high_keys,(unsigned long long)tape,(unsigned long long)(8*m),(unsigned long long)arrays,actual,(unsigned long long)present,(unsigned long long)maxbin,ts-t0,tp-ts,td-tp,tw-td,omp_get_wtime()-tw,omp_get_wtime()-t0);
+ double end=omp_get_wtime();
+ report_bins(bins,meters,actual,false,ordered-tp);
+ report_bins(bins,meters,actual,true,published-td);
+ std::printf("FRONT64 n=%llu m=%llu k=%llu descriptors=%llu max_phrase=%llu starts_above_u32=%llu keys_above_u32=%llu dictionary_bytes=%llu key_bytes=%llu arrays=%llu team=%d nonempty_bins=%llu max_bin=%llu scan_s=%.6f partition_s=%.6f sort_dedup_s=%.6f publish_dict_s=%.6f publish_keys_s=%.6f raw_s=%.6f\n",(unsigned long long)n,(unsigned long long)m,(unsigned long long)k,(unsigned long long)owned,(unsigned long long)longest,(unsigned long long)above,(unsigned long long)high_keys,(unsigned long long)tape,(unsigned long long)(8*m),(unsigned long long)arrays,actual,(unsigned long long)present,(unsigned long long)maxbin,ts-t0,tp-ts,td-tp,tw-td,end-tw,end-t0);
 }
 int main(int ac,char**av)try{if(ac==5 && std::string(av[1])=="plan"){std::printf("front64_array_bound=%llu\n",(unsigned long long)budget(num(av[2]),num(av[3]),num(av[4])));return 0;}ck(ac==8,"front64 RAW NEW_DIR THREADS ARRAY_BYTES SCRATCH_BYTES STOP DEADLINE or plan N M THREADS");flag=av[6];deadline=num(av[7]);ck(deadline<=INT64_MAX,"deadline extent");guard();front(av[1],av[2],num(av[3]),num(av[4]),num(av[5]));return 0;}catch(const std::exception&e){fail(e.what());}

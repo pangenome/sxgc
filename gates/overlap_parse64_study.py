@@ -20,7 +20,7 @@ IN={'parse.u32':(4*M,'a56741994089e273fe11d27dd51ef09b68c04194f23c1bd70a1845a78e
 BOUND=max(T+12*M,36*M)+(4<<20)
 
 def private(d):need(d.resolve()==d and d.parent==S and re.fullmatch(PREFIX+'[A-Za-z0-9]{6}',d.name) and d.stat().st_uid==os.getuid() and d.stat().st_mode&0o077==0,'private study')
-def guard(d,t,s=0):need(time.time()+s<t<=CUTOFF and not (d/'stop.requested').exists(),'headroom/stop')
+def guard(d,t,s=0,*,cutoff=CUTOFF):need(time.time()+s<t<=cutoff and not (d/'stop.requested').exists(),'headroom/stop')
 def cores():
     seen=set();v=[]
     for i in sorted(os.sched_getaffinity(0)):
@@ -46,11 +46,11 @@ def copy_file(src,dest,n,phase):
 def grant(mem,cpu):
     g=cg_info();need((g['memory.max'],g['cpu.max'],g['memory.swap.max'])==(str(mem),f'{cpu*100000} 100000','0') and (CG/'cgroup.procs').read_text().split()==[str(os.getpid())] and {'oom 0','oom_kill 0'}<=set(g['memory.events'].splitlines()),'dedicated resource grant');return g
 
-def measure(d,label,args,end,capr,capw,affinity,mem,cpus,*,ledger=None):
+def measure(d,label,args,end,capr,capw,affinity,mem,cpus,*,ledger=None,cutoff=CUTOFF):
     before=grant(mem,cpus);r=dict(before=before,argv=list(map(str,args)),affinity=affinity,io_caps=[capr,capw],status='INCOMPLETE');p=None
     env=dict(PATH=os.defpath,LC_ALL='C',OMP_DYNAMIC='FALSE',OMP_THREAD_LIMIT='4',OMP_STACKSIZE='1M',OMP_PROC_BIND='FALSE');expected=load(d,'tools.json');need(sha(Path(args[0]))==expected[Path(args[0]).name],'tool drift');stop=d/'stop.requested';rss=whole=sampled=0;reason=None
     try:
-        guard(d,end);t0=time.monotonic()
+        guard(d,end,cutoff=cutoff);t0=time.monotonic()
         with (d/(label+'.log')).open('xb') as log:
             p=sp.Popen(['taskset','-c',','.join(map(str,affinity)),*map(str,args)],env=env,stdout=log,stderr=log)
             with open(f'/proc/{p.pid}/io') as io:
