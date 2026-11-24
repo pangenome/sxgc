@@ -3,7 +3,7 @@
 namespace route64 {
 struct Load {U d=0,rows=0;};
 struct Band {unsigned lo,hi; Load load;};
-struct Stripe {U lo=0,hi=0,base=0,pages=0;}; // rank-1 slices; virtual coordinates concatenated in same order
+struct Stripe {U lo=0,hi=0,base=0,pages=0,longest=0;}; // rank-1 slices; virtual coordinates concatenated in same order
 struct Route {
  const rawview::View& v;const uint8_t* text;U n,m;int team;rawview::Stop stop;
  std::vector<Stripe> stripe;std::vector<unsigned> band_for;std::vector<Band> bands;std::vector<Layout> slices;Pages pages;
@@ -18,15 +18,17 @@ struct Route {
   for(U base=0;base<owned;){U last=base+std::min<U>(owned-base,65536);if(base)stop.check();
    for(U o=base;o<last;++o)visit(o,cell_at(p,w.len,o));
    base=last;}}
+ static Big census_arrays(U n,U m,U team){return Big(rawview::budget(n,m,team))+Big(team)*CELL*sizeof(Load)+Big(CELL)*(sizeof(unsigned)+sizeof(Band))+team*sizeof(Stripe)+(1<<20);}
+ static Big build_arrays(U n,U m,U team,U nb,U pg){return census_arrays(n,m,team)+Pages::bytes(pg)+Big(nb)*team*(sizeof(Layout)+sizeof(Encoder))+Big(team)*sizeof(InBuf)*2;}
  void build(const char* newfile,U target,U arrays,U other_files){
   stop.check();need(target && other_files>=8*m && Big(other_files)<=2*Big(n),"route target/other scratch");
-  Big base=Big(rawview::budget(n,m,team))+Big(team)*CELL*sizeof(Load)+Big(CELL)*(sizeof(unsigned)+sizeof(Band))+U(team)*sizeof(Stripe)+(1<<20);
+  Big base=census_arrays(n,m,team);
   need(base<=arrays,"routing census array grant");double t=omp_get_wtime();
   std::vector<Load> counts(CELL*team);stripe.resize(team);band_for.resize(CELL);bands.reserve(CELL);
 #pragma omp parallel num_threads(team)
   {int lane=omp_get_thread_num();need(omp_get_num_threads()==team,"route team");auto& s=stripe[lane];s.lo=rawview::cut(m,lane,team);s.hi=rawview::cut(m,lane+1,team);s.pages=s.hi-s.lo;
    auto c=counts.data()+CELL*lane;
-   heads(s,[&](U r,auto w,U owned){U freq=v.after_head(r)-r;s.pages+=(owned-1)/PAGE;
+   heads(s,[&](U r,auto w,U owned){U freq=v.after_head(r)-r;s.pages+=(owned-1)/PAGE;s.longest=std::max(s.longest,owned);
     offsets(w,owned,[&](U,unsigned key){++c[key].d;c[key].rows+=freq;});});}
   double tc=omp_get_wtime();U page_count=0;for(auto& s:stripe){s.base=page_count;page_count=narrow(Big(page_count)+s.pages);}
   need(Big(page_count)*PAGE<=UINT64_MAX,"route token extent");
@@ -37,7 +39,7 @@ struct Route {
     band.hi=i;bands.push_back(band);band={i,0,{}};}
    band_for[i]=unsigned(bands.size());band.load.d+=cell.d;band.load.rows+=cell.rows;all+=cell.d;mass+=cell.rows;}
   band.hi=CELL;bands.push_back(band);need(all==v.stats.owned && mass==n && band.load.d,"route census coverage");
-  U nb=bands.size(),ns=nb*team;array_bound=narrow(base+Pages::bytes(page_count)+Big(ns)*(sizeof(Layout)+sizeof(Encoder))+Big(team)*sizeof(InBuf)*2);
+  U nb=bands.size(),ns=nb*team;array_bound=narrow(build_arrays(n,m,team,nb,page_count));
   need(array_bound<=arrays,"routing index array grant");slices.resize(ns);pages.allocate(page_count);
   for(int lane=0;lane<team;++lane){for(unsigned i=0;i<CELL;++i){auto& b=slices[band_for[i]*team+lane];auto c=counts[CELL*lane+i];b.count+=c.d;b.rows+=c.rows;}}
   std::vector<Load>().swap(counts);

@@ -1,0 +1,5 @@
+build=/tmp/finite-emitter64-sanitized-kIJPL8
+PASS 45 exact descriptor routes / 9 predicted 2N refusals across 1/2/4 workers, byte-identical ordered proof vs brute raw suffix groups, width/extent/old-output/grant/STOP checks, archived bound
+PASS 57 complete independent byte-SA row43 streams; 1/2/4 ordered lanes, 3 predicted scratch refusals, 3 actual 8311-word ties beyond old cursor limit, synthetic wire/seam/backpressure/STOP and no-row-file checks
+EMIT_PLAN pages_upper=6306334487 bands=577 slots=192000000 per_team_marks=1615916000 route_arrays_upper=146756005144 emit_arrays_upper=149889337624 array_upper=149889337624
+EMIT_PLAN pages_upper=6068813 bands=2049 slots=192001 per_team_marks=1610528 route_arrays_upper=225053032 emit_arrays_upper=160910512 array_upper=225053032

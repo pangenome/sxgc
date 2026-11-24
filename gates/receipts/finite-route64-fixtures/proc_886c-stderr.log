@@ -1,0 +1,9 @@
+In file included from gates/overlap_finite_emit64_unit.cpp:1:
+gates/../xsa/pfp/tools/finite_emit_rows.hpp: In member function ‘void finiteemit::Marks::walk(unsigned int, rawview::U, F&) [with F = main()::<lambda(rawview::U)>]’:
+gates/../xsa/pfp/tools/finite_emit_rows.hpp:13:24: error: infinite recursion detected [-Werror=infinite-recursion]
+   13 |  template<class F>void walk(unsigned l,U w,F& f){U x=lev[l][w];need(x,"empty marked child");lev[l][w]=0;
+      |                        ^~~~
+gates/../xsa/pfp/tools/finite_emit_rows.hpp:14:44: note: recursive call
+   14 |   do{U i=64*w+std::countr_zero(x);if(l)walk(l-1,i,f);else f(i+1);x&=x-1;}while(x);}
+      |                                        ~~~~^~~~~~~~~
+cc1plus: all warnings being treated as errors

@@ -1,0 +1,2 @@
+build=/tmp/finite-emitter64-local-sQ8nIK
+PASS 57 complete independent byte-SA row43 streams; 1/2/4 ordered lanes, 3 predicted scratch refusals, 3 actual 8311-word ties beyond old cursor limit, synthetic wire/seam/backpressure/STOP and no-row-file checks

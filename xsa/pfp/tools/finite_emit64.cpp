@@ -1,0 +1,18 @@
+#include "finite_emit64.hpp"
+#include <charconv>
+#include <cinttypes>
+#include <csignal>
+#include <string_view>
+using namespace finiteemit;
+static U decimal(const char* x){U v=0;std::string_view s(x);auto [p,e]=std::from_chars(s.data(),s.data()+s.size(),v);need(p==s.data()+s.size() && e==std::errc{},"unsigned decimal");return v;}
+int main(int ac,char** av){if(ac==9 && std::string_view(av[1])=="plan"){U n=decimal(av[2]),m=decimal(av[3]),k=decimal(av[4]),u=decimal(av[5]),nb=decimal(av[6]),slots=decimal(av[7]),t=decimal(av[8]);
+ need(n<(U(1)<<43) && k && k<=m && k<=u && u<=n && slots && slots<=u && nb && nb<=CELL,"plan geometry");U pg=narrow(Big(m)+(u-k)/PAGE),routing=narrow(Route::build_arrays(n,m,t,nb,pg)),emitting=narrow(Emit::emit_arrays(n,m,t,nb,pg,slots));need(Big(pg)*PAGE<=UINT64_MAX,"virtual extent");
+ std::printf("EMIT_PLAN pages_upper=%" PRIu64 " bands=%" PRIu64 " slots=%" PRIu64 " per_team_marks=%" PRIu64 " route_arrays_upper=%" PRIu64 " emit_arrays_upper=%" PRIu64 " array_upper=%" PRIu64 "\n",pg,nb,slots,narrow(t*Marks::bytes(m)),routing,emitting,std::max(routing,emitting));return 0;}
+ need(ac==11,"finite_emit64 RAW INVERSE.u64 NEW_POSTINGS WORKERS ARRAY_BYTES OTHER_FILE_BYTES ROW_TARGET TOTAL_DESCRIPTOR_SLOTS STOP DEADLINE > pipe");
+ struct stat st{};need(!fstat(STDOUT_FILENO,&st) && S_ISFIFO(st.st_mode),"row sink must be a pipe, not a row file");signal(SIGPIPE,SIG_IGN);omp_set_dynamic(0);
+ U t=decimal(av[4]),grant=decimal(av[5]),other=decimal(av[6]),target=decimal(av[7]),slots=decimal(av[8]),end=decimal(av[10]);need(end<=INT64_MAX && t<=U(omp_get_num_procs()),"team/deadline");rawview::Stop stop{av[9],end};stop.check();
+ rawview::Input raw(av[1]),inv(av[2]);U n=raw.size,m=inv.size/8;need(!(inv.size%8) && n<(U(1)<<43) && rawview::budget(n,m,t)<=grant && other>=inv.size && Big(other)<=Big(2)*n,"stream geometry/grant/scratch");
+ rawview::Mem text;text.open(n,raw.fd);rawview::View v(text.bytes(),n,m,int(t),stop);v.build(inv.fd,grant);Route ix(v,text.bytes(),n,m,int(t),stop);ix.build(av[3],target,grant,other);
+ Emit e(ix);e.run(STDOUT_FILENO,slots,grant);auto& c=e.totals;
+ std::fprintf(stderr,"FINITE_EMIT n=%" PRIu64 " m=%" PRIu64 " team=%" PRIu64 " k=%" PRIu64 " descriptors=%" PRIu64 " groups=%" PRIu64 " rows=%" PRIu64 " multi=%" PRIu64 " bitmap_groups=%" PRIu64 " max_tie=%" PRIu64 " max_mass=%" PRIu64 " wire=%" PRIu64 " populated=%" PRIu64 " counted=%" PRIu64 " arrays=%" PRIu64 " bands=%zu leaves=%zu local_scans=%" PRIu64 " exact_bypass=%" PRIu64 " decoded=%" PRIu64 " refine_s=%.6f waves=%" PRIu64 " packets=%" PRIu64 " view_s=%.6f census_s=%.6f layout_s=%.6f encode_s=%.6f fsync_s=%.6f order_wall_s=%.6f publish_wall_s=%.6f order_lane_s=%.6f gather_lane_s=%.6f produce_lane_s=%.6f queue_full_lane_s=%.6f cat_wait_s=%.6f cat_send_s=%.6f writes=%" PRIu64 " eagain=%" PRIu64 " row_bytes=%" PRIu64 "\n",n,m,t,v.stats.groups,v.stats.owned,c.groups,n+1,c.multi,c.bitmaps,c.max_tie,c.max_mass,ix.wire,ix.transferred,ix.wire+other,e.arrays,ix.bands.size(),e.plan.jobs.size(),e.plan.scans,e.plan.exact,e.plan.decodes,e.plan.seconds,e.waves,e.packets,v.stats.build,ix.census_s,ix.plan_s,ix.encode_s,ix.fsync_s,e.sort_wall,e.stream_wall,c.sort,c.gather,c.produce,e.queue_blocked,e.sink_stats.wait,e.sink_stats.send_s,e.sink_stats.writes,e.sink_stats.again,e.sink_stats.bytes);
+}

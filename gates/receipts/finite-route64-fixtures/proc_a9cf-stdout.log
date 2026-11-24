@@ -1,0 +1,3 @@
+build=/tmp/finite-route64-first-5pId1R
+PASS 8312 EF posting permutations, malformed bitmap refusal and 3027 paged rank/offset seams
+PASS 45 exact descriptor routes / 9 predicted 2N refusals across 1/2/4 workers, byte-identical ordered proof vs brute raw suffix groups, width/extent/old-output/grant/STOP checks, archived bound

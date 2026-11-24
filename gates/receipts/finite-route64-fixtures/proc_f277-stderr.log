@@ -1,0 +1,9 @@
+raw_rank_view64 refused: duplicate successor in tie
+Traceback (most recent call last):
+  File "/home/erikg/sxgc/gates/overlap_finite_emit64_test.py", line 73, in <module>
+    if __name__=='__main__':run(Path(sys.argv[1]).resolve())
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/erikg/sxgc/gates/overlap_finite_emit64_test.py", line 56, in run
+    assert p.returncode==0,(n,m,w,p.stderr);f=fields(p.stderr.decode(),'FINITE_EMIT');assert p.stdout==rows and int(f['rows'])==n+1 and int(f['counted'])<=2*n,(n,w,f);verified+=1;teams[w]+=1;bitmap+=int(f['bitmap_groups']);idx.unlink()
+           ^^^^^^^^^^^^^^^
+AssertionError: (116362, 8312, 1, b'raw_rank_view64 refused: whole cell exceeds ordering slots (refinement required)\n')
