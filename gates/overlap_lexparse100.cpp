@@ -1,9 +1,11 @@
-// Fixture-entry-only raw -> packed census. No large-input authorization here.
+// Intermediate entry is compiled only for the supervised 1/10 GB gate.
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <csignal>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -14,6 +16,7 @@
 #include <vector>
 #include <sched.h>
 #include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/resource.h>
 #include <unistd.h>
 
@@ -26,6 +29,7 @@ static_assert(sizeof(Header)==8 && sizeof(off_t)==8 && __BYTE_ORDER__==__ORDER_L
 using Key=std::pair<std::string_view,bool>;
 void check(bool ok,const char* msg){ if(!ok) throw std::runtime_error(msg); }
 struct Stop : std::runtime_error {using runtime_error::runtime_error;};
+std::time_t gate_deadline=0; // Unset for fixtures. The supervisor also meters IO and time.
 struct Ledger {
     fs::path dir,flag;
     Q cap,live=0,peak=0;
@@ -33,17 +37,17 @@ struct Ledger {
         std::cerr<<"SCRATCH live="<<live<<" peak="<<peak<<" cap="<<cap<<" attempted="<<attempted<<'\n';
         throw Stop(why);
     }
-    void poll() const { if(fs::exists(flag)) stop("requested"); }
+    void poll() const { if(gate_deadline && std::time(nullptr)>=gate_deadline) stop("deadline"); if(fs::exists(flag)) stop("requested"); }
     void charge(Q b){ if(b>cap-live) stop("2N-scratch",b); live+=b; peak=std::max(peak,live); }
     void retire(const fs::path& p){ Q b=fs::file_size(p); check(b<=live && fs::remove(p),"retire segment"); live-=b; }
 };
-void limits(){
+void limits(bool fixture){
     cpu_set_t allowed; check(!sched_getaffinity(0,sizeof allowed,&allowed),"get affinity");
     int cpu=0; while(cpu<CPU_SETSIZE && !CPU_ISSET(cpu,&allowed)) ++cpu;
     check(cpu<CPU_SETSIZE,"no CPU"); CPU_ZERO(&allowed); CPU_SET(cpu,&allowed);
     check(!sched_setaffinity(0,sizeof allowed,&allowed),"pin CPU");
     rlimit ram{192u<<20,192u<<20}; check(!setrlimit(RLIMIT_AS,&ram),"address space cap");
-    check(!mlockall(MCL_CURRENT|MCL_FUTURE),"no-swap memory lock refused");
+    if(fixture) check(!mlockall(MCL_CURRENT|MCL_FUTURE),"no-swap memory lock refused");
 }
 // Keep the final trigger's eight bytes for the following (possibly END-only) word.
 template<class F> U scan(std::ifstream& in,Q n,Ledger& disk,F consume){
@@ -215,9 +219,28 @@ void census(const fs::path& src,const fs::path& dir,Q n,bool small){
              <<" initial_runs="<<initial<<" intermediate_passes="<<passes<<" peak_counted="<<disk.peak<<'\n';
 }
 int main(int argc,char** argv){try{
-    check(argc==4,"usage: lexparse100 CORPUS NEW_DIR --fixture[-small]");std::string_view mode(argv[3]);
-    check(mode=="--fixture" || mode=="--fixture-small","fixture entry only");
+    check(argc==4,"usage: lexparse100 CORPUS NEW_DIR MODE"); std::string_view mode(argv[3]);
+    bool fixture=mode=="--fixture" || mode=="--fixture-small";
     check(fs::is_regular_file(argv[1]),"not a regular input"); Q n=fs::file_size(argv[1]);
-    check(n && n<=10'000'000,"wrong fixture size"); limits(); census(argv[1],argv[2],n,mode=="--fixture-small");return 0;
+    if(fixture) check(n && n<=10'000'000,"wrong fixture size");
+    else {
+#ifdef SEGMENTED_INTERMEDIATE
+        check((mode=="--intermediate-1g" && n==1'000'000'665) ||
+              (mode=="--intermediate-10g" && n==10'000'000'000),"wrong intermediate rung");
+        // Require a live supervising gate. A lost meter must not leave an orphan census.
+        pid_t supervisor;Q admitted;std::string marker;
+        check(bool(std::cin>>marker>>supervisor>>admitted>>gate_deadline) && marker=="SEGMENTED_PREFLIGHT" &&
+              admitted==n && gate_deadline>std::time(nullptr),"missing/unusable gate admission");
+        check(!prctl(PR_SET_PDEATHSIG,SIGTERM) && supervisor==getppid(),"lost gate supervisor");
+        std::ifstream membership("/proc/self/cgroup"); std::string row;std::getline(membership,row);
+        check(row.rfind("0::/",0)==0,"not cgroup v2");auto cg=fs::path("/sys/fs/cgroup")/row.substr(4);
+        auto setting=[&](const char* key){std::ifstream in(cg/key);std::string s;std::getline(in,s);return s;};
+        check(setting("memory.max")=="201326592" && setting("memory.swap.max")=="0" &&
+              setting("cpu.max")=="100000 100000","incorrect intermediate grant");
+#else
+        check(false,"fixture entry only");
+#endif
+    }
+    limits(fixture); census(argv[1],argv[2],n,mode=="--fixture-small");return 0;
 }catch(const Stop& e){std::cerr<<"STOP_OBSERVED lexparse100="<<e.what()<<'\n';return 75;}
  catch(const std::exception& e){std::cerr<<"lexparse100: "<<e.what()<<'\n';return 70;}}

@@ -1,4 +1,4 @@
-# 100 GB lexical front (fixture entry only; no launch authority)
+# Segmented lexical front (default fixture entry only; 100 GB refused)
 
 `overlap_lexparse100.cpp` is a separate front, not a new default or a change to
 lexparse10. The executable rejects all but positive regular files of at most
@@ -99,5 +99,6 @@ approve a separate fail-closed gate: verify pinned input manifest/environment,
 immutable source, exact rung, free scratch (including filesystem overhead),
 CPU/memory/no-swap cgroup, wall/physical read/write and stop guards, cold-cache
 conditions, and capture receipts without destroying evidence. No such gate is
-supplied. Success of a cold front would establish exact counts only, not a
+supplied for 100 GB. For supervised intermediate studies only, see the
+[1/10 GB qualification gates](overlap_segmented_studies.md). Success of a cold front would establish exact counts only, not a
 bounded product, suffix-order proof, performance promotion or larger launch.
