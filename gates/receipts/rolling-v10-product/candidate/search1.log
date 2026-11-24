@@ -1,0 +1,2 @@
+{"id":0,"pos":4628641,"len":125,"cross":1}
+SEARCH_BOUNDARY mode=cross-doc structure=member-m15 patterns=1 absent=0 refused=0 excluded_cross_doc=0 matches_kept=1 verified=1 wall_s=0.027 law=no_match_may_cross_a_document_boundary

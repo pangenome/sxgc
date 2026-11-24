@@ -1,0 +1,2 @@
+PASS absent/empty/available optional io.stat; persistent live permission failure refuses, actual reaped worker accepted
+PASS 7 full brute row43 streams; truncated, extra, narrow, invalid wide extent, BWT and stop/rung refusals

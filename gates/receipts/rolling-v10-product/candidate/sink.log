@@ -1,0 +1,33 @@
+pfp_sort_r: THE TAPE READER (AMENDMENT R) - Rust first; the C++ is the reference oracle
+SS_TAPE_START corpus_bytes=6311445 out_prefix=/tmp/rolling-v10-product-4kNx5u/candidate/merged/frag threads=1 memory_gb=196 rule=amendment_r_transliteration
+SS_REMAP symbols=256 sha_note=order_preserving_used_set
+SS_SCRATCH scratch_budget_bytes=12622890 rule=operator_clause_2xN
+SS_SXLS_WRITER batched_escapes=false
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1577907 bands=262192 columns_legal_sublinear=0 asserted=1840099 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1577907 bands=524384 columns_legal_sublinear=0 asserted=2102291 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1577907 bands=786576 columns_legal_sublinear=0 asserted=2364483 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1577907 bands=1048768 columns_legal_sublinear=0 asserted=2626675 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1577907 bands=1310960 columns_legal_sublinear=0 asserted=2888867 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1577907 bands=1573152 columns_legal_sublinear=0 asserted=3151059 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1577907 bands=1835344 columns_legal_sublinear=0 asserted=3413251 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1577907 bands=2097536 columns_legal_sublinear=0 asserted=3675443 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1577907 bands=2359728 columns_legal_sublinear=0 asserted=3937635 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1577907 bands=2621920 columns_legal_sublinear=0 asserted=4199827 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1577907 bands=2884112 columns_legal_sublinear=0 asserted=4462019 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1577907 bands=3146304 columns_legal_sublinear=0 asserted=4724211 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1577907 bands=3408496 columns_legal_sublinear=0 asserted=4986403 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1578421 bands=262192 columns_legal_sublinear=0 asserted=1840613 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1578421 bands=262192 columns_legal_sublinear=0 asserted=1840613 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1578421 bands=524384 columns_legal_sublinear=0 asserted=2102805 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1578421 bands=786576 columns_legal_sublinear=0 asserted=2364997 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1578421 bands=1048768 columns_legal_sublinear=0 asserted=2627189 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1578421 bands=1310960 columns_legal_sublinear=0 asserted=2889381 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1578421 bands=1573152 columns_legal_sublinear=0 asserted=3151573 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1578421 bands=1835344 columns_legal_sublinear=0 asserted=3413765 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1578421 bands=2097536 columns_legal_sublinear=0 asserted=3675957 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1578421 bands=2359728 columns_legal_sublinear=0 asserted=3938149 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1578421 bands=2621920 columns_legal_sublinear=0 asserted=4200341 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-slice pairs_live=0 pieces=1578421 bands=2641958 columns_legal_sublinear=0 asserted=4220379 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH phase=overlap-done pairs_live=0 pieces=1578437 bands=2641958 columns_legal_sublinear=0 asserted=4220395 budget_bytes=12622890 rule=amendment_b4_the_scratch_law;operator_clause_2xN;fat_is_named_not_summed
+SS_SCRATCH_PEAK peak_live_bytes=4986403 budget_bytes=12622890 pairs_live=0 pieces=1578437 bands=2641958 columns_legal_sublinear=0 rule=amendment_b4_the_scratch_law;operator_clause_2xN;the_fat_is_named
+SS_DONE_R overlap_stream rows=6311446 total_s=2.16

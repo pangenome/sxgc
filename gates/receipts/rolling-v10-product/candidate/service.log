@@ -1,0 +1,4 @@
+2026-11-24T23:36:04.652530+00:00 lambda01 systemd[2892654]: Started run-u381.service - /usr/bin/taskset -c 0,1 /usr/bin/python3 -BE /home/erikg/sxgc/gates/overlap_v10_product_compare.py candidate /tmp/rolling-v10-product-4kNx5u.
+2026-11-24T23:36:09.910172+00:00 lambda01 systemd[2892654]: run-u381.service: Main process exited, code=exited, status=1/FAILURE
+2026-11-24T23:36:09.910430+00:00 lambda01 systemd[2892654]: run-u381.service: Failed with result 'exit-code'.
+2026-11-24T23:36:09.910770+00:00 lambda01 systemd[2892654]: run-u381.service: Consumed 5.537s CPU time, 2.9M memory peak, 0B memory swap peak.

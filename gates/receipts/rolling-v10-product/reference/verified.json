@@ -1,0 +1,129 @@
+{
+  "all_rows_raw_verified": true,
+  "arm": "reference",
+  "bytes": 378392,
+  "inputs": {
+    "cut": 4628663,
+    "map": "6022aa68d036848d23efe984ba8300d0a4a4648cbecfc80fc10933c95090f473",
+    "pattern": "IxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxIxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxI",
+    "pos": 4628641,
+    "raw": "d24608087840588c05c8f3a7df674ee713ed66c3f0ef219f6d3f6a877ac3d8ef",
+    "remap": "8abe0be4061f15f505476387304c5707eaae0b7d809e0495b12b1e72e95ff1ff"
+  },
+  "members": [
+    {
+      "bytes": 101840,
+      "codec": 116,
+      "count": 101800,
+      "id": 1,
+      "offset": 64,
+      "sha256": "9adbe9afb3f4c6500dd66e82fa20512a6ee90cfbde7a2fb58105c72d39afe9d3",
+      "stored_crc": 1663329252
+    },
+    {
+      "bytes": 12,
+      "codec": 4,
+      "count": 0,
+      "id": 4,
+      "offset": 202936,
+      "sha256": "0da64314dec135e73e86cba36a52479f4664f4b2b93ae87c9ff1834e9456298e",
+      "stored_crc": 822617187
+    },
+    {
+      "bytes": 101027,
+      "codec": 105,
+      "count": 101797,
+      "id": 5,
+      "offset": 101904,
+      "sha256": "257ae7e17dabfd82ed31fdc164b89df97aed4564142d14e6db7a35c9e8a6949e",
+      "stored_crc": 698341284
+    },
+    {
+      "bytes": 256,
+      "codec": 7,
+      "count": 256,
+      "id": 7,
+      "offset": 202952,
+      "sha256": "8abe0be4061f15f505476387304c5707eaae0b7d809e0495b12b1e72e95ff1ff",
+      "stored_crc": 1970988718
+    },
+    {
+      "bytes": 0,
+      "codec": 110,
+      "count": 101800,
+      "id": 10,
+      "offset": 203208,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_crc": 0
+    },
+    {
+      "bytes": 816,
+      "codec": 111,
+      "count": 100,
+      "id": 11,
+      "offset": 203208,
+      "sha256": "ba37249fbd2bfbb0163a76764da160a9f01bea2cb4e15a65ee01b2c343dd56aa",
+      "stored_crc": 4282889516
+    },
+    {
+      "bytes": 880,
+      "codec": 112,
+      "count": 100,
+      "id": 12,
+      "offset": 204024,
+      "sha256": "1d02f1b56600a7226d8e603f158628e63e0c61e57b2c8b07e923033ae419be93",
+      "stored_crc": 3042763605
+    },
+    {
+      "bytes": 118136,
+      "codec": 115,
+      "count": 4715,
+      "id": 13,
+      "offset": 204904,
+      "sha256": "1124ffee4ca257e98f48baab18dc132001e2aabc65392e188456a466179cd91b",
+      "stored_crc": 136345971
+    },
+    {
+      "bytes": 72,
+      "codec": 15,
+      "count": 3,
+      "id": 15,
+      "offset": 377920,
+      "sha256": "e6524693fe118313c7dab5a2b778d12b032c11cded2e97c65d42a7703cb791f9",
+      "stored_crc": 2666763875
+    },
+    {
+      "bytes": 54880,
+      "codec": 20,
+      "count": 6311445,
+      "id": 20,
+      "offset": 323040,
+      "sha256": "1e64828bb92622c0e58e8b4767792f61c9c51a60645470927c4537ad9ff6b943",
+      "stored_crc": 281158816
+    }
+  ],
+  "original": "/tmp/rolling-v10-product-ljelES/reference",
+  "original_sampled_scratch": 5708682,
+  "original_shared_peak": 62038016,
+  "original_stop": true,
+  "original_supervisor_exit": 1,
+  "original_worker_exits": {
+    "finish": 0,
+    "join": 0,
+    "relay": 0,
+    "rows": 0,
+    "sink": 0,
+    "tap": 0,
+    "witness": 0
+  },
+  "raw_to_join_s": null,
+  "rows": 6311446,
+  "scope": "Read-only authentication of a completed join and separate query checks; no row replay or build clock.",
+  "sha256": "921f4e473e19fefcf8a7916d431c28694941323b6262ff109ae3c7c7820f19ab",
+  "verification_exits": {
+    "ctx": 0,
+    "docs": 0,
+    "search0": 0,
+    "search1": 0
+  }
+}

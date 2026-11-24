@@ -1,0 +1,59 @@
+{
+  "argv": {
+    "ctx": [
+      "/tmp/v10-fixture-1001-1206931/tools/target/release/xsa",
+      "ctx-verify",
+      "--sxi",
+      "/tmp/rolling-v10-product-4kNx5u/reference/work.partial.sxi2",
+      "--text",
+      "/tmp/rolling-v10-product-4kNx5u/reference/raw",
+      "--context",
+      "xxx",
+      "--context",
+      "xxxx"
+    ],
+    "docs": [
+      "/tmp/v10-fixture-1001-1206931/tools/target/release/xsa",
+      "docstarts",
+      "verify",
+      "/tmp/rolling-v10-product-4kNx5u/reference/work.partial.sxi2",
+      "--docs-map",
+      "/tmp/rolling-v10-product-4kNx5u/reference/map",
+      "--samples",
+      "128"
+    ],
+    "search0": [
+      "/tmp/v10-fixture-1001-1206931/tools/target/release/xsa",
+      "search",
+      "/tmp/rolling-v10-product-4kNx5u/reference/work.partial.sxi2",
+      "--pattern",
+      "IxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxIxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxI",
+      "--jsonl",
+      "--corpus",
+      "/tmp/rolling-v10-product-4kNx5u/reference/raw"
+    ],
+    "search1": [
+      "/tmp/v10-fixture-1001-1206931/tools/target/release/xsa",
+      "search",
+      "/tmp/rolling-v10-product-4kNx5u/reference/work.partial.sxi2",
+      "--pattern",
+      "IxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxIxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxI",
+      "--jsonl",
+      "--corpus",
+      "/tmp/rolling-v10-product-4kNx5u/reference/raw",
+      "--cross-doc"
+    ]
+  },
+  "errors": [],
+  "exits": {
+    "ctx": 0,
+    "docs": 0,
+    "search0": 0,
+    "search1": 0
+  },
+  "fd_sampling_retries": 0,
+  "memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+  "sampled_logical_scratch": 3141,
+  "shared_peak": 28758016,
+  "stop": false
+}

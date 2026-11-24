@@ -1,0 +1,23 @@
+Traceback (most recent call last):
+  File "/home/erikg/sxgc/gates/overlap_v10_product_compare.py", line 185, in <module>
+    if __name__=='__main__':main()
+                            ^^^^^^
+  File "/home/erikg/sxgc/gates/overlap_v10_product_compare.py", line 181, in main
+    try:h.product_run()
+        ^^^^^^^^^^^^^^^
+  File "/home/erikg/sxgc/gates/overlap_v10_product_compare.py", line 157, in product_run
+    self.cmd('join',[JOIN,'fixture-join',self.product,self.m20,mp]);
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/erikg/sxgc/gates/overlap_v10_product_compare.py", line 109, in cmd
+    def cmd(self,name,argv,**kw):self.spawn(name,argv,**kw);self.wait()
+                                                            ^^^^^^^^^^^
+  File "/home/erikg/sxgc/gates/overlap_v10_product_compare.py", line 104, in wait
+    assert self.measure()<=2*N,'logical scratch alert'
+           ^^^^^^^^^^^^^^
+  File "/home/erikg/sxgc/gates/overlap_v10_product_compare.py", line 92, in measure
+    try:fds=list(Path(f'/proc/{p.pid}/fd').iterdir())
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 1058, in iterdir
+    for name in os.listdir(self):
+                ^^^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied: '/proc/2774266/fd'

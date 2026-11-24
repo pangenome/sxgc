@@ -1,0 +1,1 @@
+SEARCH_BOUNDARY mode=no-cross-default structure=member-m15 patterns=1 absent=0 refused=0 excluded_cross_doc=1 matches_kept=0 verified=1 wall_s=0.025 law=no_match_may_cross_a_document_boundary

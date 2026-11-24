@@ -1,6 +1,8 @@
 # Small exact-v10 fixture (qualification, not a scale gate)
 
-**Result:** all 8,847,248 bytes match, including the directory and provenance.
+**Rolling producer → complete v10 index:** On a new generated input, the rolling producer and direct Rust trie pipe built an index **byte-identical to all 378,392 bytes** of the independently constructed band-fed reference. Both passed the raw-row and document-boundary checks. [Result, costs and two preserved supervisor failures](gates/receipts/rolling-v10-product/). This is an end-to-end integration result, not a corpus benchmark.
+
+**Earlier band-relay fixture (different input):** all 8,847,248 bytes match, including the directory and provenance.
 The candidate consumes overlap-produced rows, not reference SA/BWT/LCP or trie
 bytes. Reference and candidate share the raw corpus, its 256-byte remap, the
 exact-corpus XSEP map and the banked native finish. This establishes the

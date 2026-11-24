@@ -1,0 +1,9 @@
+EPOCH_ARRAY_CHARGE pre_census=26320153 max_active_bands=20 encoder_bytes=330880 route_arrays=26651033
+EPOCH_PART i=0 lo=0 hi=20 waves=10 desc=41244 rows=1976863 bytes=64896 interior=0 populated=64824 sha256=bb9a321255e0fc824ad73acac40d57670e402f56a178893a15ea10c890aabcab
+EPOCH_PART i=1 lo=20 hi=40 waves=10 desc=40202 rows=1853195 bytes=63720 interior=0 populated=63672 sha256=38d372f148c3e5c9e1511c38012565e3ac919132d17a2726c55cb11ef37444db
+EPOCH_PART i=2 lo=40 hi=60 waves=10 desc=40992 rows=1655211 bytes=64832 interior=0 populated=64832 sha256=794f33accc66eb37fb7c054e21d89ec34e4fe60d113e7406c8cefe62afbba9fc
+EPOCH_PART i=3 lo=60 hi=70 waves=5 desc=20502 rows=826176 bytes=32048 interior=0 populated=32048 sha256=4a17e4e38c36885653c83689346ad3c326e2bb03f7eea9a182010c99a6146fdd
+EPOCH_INDEX epochs=4 file_cap=65536 peak_extent=64896 total_extent=225496 nonposting_reserved=12557354 encode_offset_visits=571760 hash_readback=225496 hash_s=0.001728
+DIRECT_RANGES target_bands=70 bands=70 samples=4480 max_range_descriptors=2691 max_range_rows=129024 guaranteed_wire_upper=227815 explicit_write=225496 fragment_bytes=225496 sample_s=0.003753
+EMIT_TILES grain=1536 tiles=139 extension_descriptors=105 max_tile_descriptors=1578 max_tile_rows=75650 tiles_above_ring=138 plan_s=0.000245
+FINITE_EMIT n=6311445 m=101798 team=2 k=2306 descriptors=142940 groups=13806 rows=6311446 multi=2747 bitmap_groups=2747 max_tie=49 max_mass=2304 wire=225496 populated=225376 counted=12622250 arrays=26651033 bands=70 leaves=70 local_scans=0 exact_bypass=0 decoded=142940 refine_s=0.000126 waves=35 packets=3154 view_s=0.107376 census_s=0.014146 layout_s=0.000762 encode_s=0.043096 fsync_s=0.001876 order_wall_s=0.090311 publish_wall_s=1.900149 order_lane_s=0.090841 gather_lane_s=0.016574 produce_lane_s=3.468792 queue_full_lane_s=2.933832 cat_wait_s=0.476736 cat_send_s=1.375107 writes=3557 eagain=471 row_bytes=75737352

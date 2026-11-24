@@ -1,0 +1,45 @@
+--- a/gates/overlap_v10_product_compare.py
++++ b/gates/overlap_v10_product_compare.py
+@@ -37,6 +36,0 @@
+-def optional_io_stat(cgroup):
+-    # IOAccounting=yes does not guarantee the io controller is delegated here.
+-    # Never turn absence into zero. Admission/exit/memory counters remain mandatory.
+-    try:return (cgroup/'io.stat').read_text().strip() or None
+-    except FileNotFoundError:return None
+-
+@@ -55 +49 @@
+-        self.root=root;self.d=root/arm;self.name=arm;self.stop=root/'stop.requested';self.fd_retries=0;self.clocks={};self.work={};self.threads=[];self.errors=[];self.peak=0;self.alloc=0;self.argv={}
++        self.root=root;self.d=root/arm;self.name=arm;self.stop=root/'stop.requested';self.fd_retries=0;self.work={};self.threads=[];self.errors=[];self.peak=0;self.alloc=0;self.argv={}
+@@ -178 +172 @@
+-        prepared=clock();self.clocks.update(cold_setup_s=t0-before,front_and_rank_barriers_s=prepared-t0)
++        prepared=clock()
+@@ -190 +184 @@
+-        self.wait();t1=clock();self.clocks['stream_and_finish_s']=t1-prepared;log=lambda tag:(d/(tag+'.log')).read_text()
++        self.wait();t1=clock();log=lambda tag:(d/(tag+'.log')).read_text()
+@@ -201 +195 @@
+-        tj=clock();self.clocks.update(raw_to_join_s=tj-t0,prepared_to_join_s=tj-prepared,join_and_publish_payload_s=tj-t1);table=inventory(self.product);assert table[-1]['sha256']==m20sha and table[-1]['bytes']==m20len; sc=self.product.stat().st_size
++        tj=clock();table=inventory(self.product);assert table[-1]['sha256']==m20sha and table[-1]['bytes']==m20len; sc=self.product.stat().st_size
+@@ -206 +200 @@
+-        full_sha=digest(self.product); self.clocks['postcheck_s']=clock()-tj
++        full_sha=digest(self.product); tv=clock();out=d/'index.sxi2';os.link(self.product,out);self.product.unlink();fd=os.open(d,os.O_RDONLY|os.O_DIRECTORY);os.fsync(fd);os.close(fd)
+@@ -208,2 +202,2 @@
+-                    limits=plan,front_files=files,position_bytes_each_way=(ROWS*8 if ref else 0),end_utc=time.strftime('%FT%TZ',time.gmtime()),**self.clocks,
+-                    shared_peak=int(self.cgval('memory.peak')),memory_max=int(self.cgval('memory.max')),swap_max=0,cpu_max=self.cgval('cpu.max'),cpu_stat=self.cgval('cpu.stat'),io_stat=optional_io_stat(self.cg),memory_events=self.cgval('memory.events'),
++                    limits=plan,front_files=files,position_bytes_each_way=(ROWS*8 if ref else 0),end_utc=time.strftime('%FT%TZ',time.gmtime()),raw_to_join_s=tj-t0,prepared_to_join_s=tj-prepared,
++                    cold_setup_s=t0-before,stream_and_finish_s=t1-prepared,join_and_publish_payload_s=tj-t1,postcheck_s=tv-tj,shared_peak=int(self.cgval('memory.peak')),memory_max=int(self.cgval('memory.max')),swap_max=0,cpu_max=self.cgval('cpu.max'),cpu_stat=self.cgval('cpu.stat'),io_stat=self.cgval('io.stat') or None,memory_events=self.cgval('memory.events'),
+@@ -211 +204,0 @@
+-        assert not self.stop.exists();out=d/'index.sxi2';os.link(self.product,out);self.product.unlink();fd=os.open(d,os.O_RDONLY|os.O_DIRECTORY);os.fsync(fd);os.close(fd)
+@@ -225 +218 @@
+-    finally:store(h.d/'status.json',dict(argv=h.argv,exits={k:p.poll() for k,p in h.work.items()},stop=h.stop.exists(),errors=h.errors,clocks=h.clocks,fd_sampling_retries=h.fd_retries,sampled_logical_scratch=h.peak,shared_peak=int(h.cgval('memory.peak')),memory_events=h.cgval('memory.events')))
++    finally:store(h.d/'status.json',dict(argv=h.argv,exits={k:p.poll() for k,p in h.work.items()},stop=h.stop.exists(),errors=h.errors,fd_sampling_retries=h.fd_retries,sampled_logical_scratch=h.peak,shared_peak=int(h.cgval('memory.peak')),memory_events=h.cgval('memory.events')))
+--- a/gates/overlap_v10_product_input.py
++++ b/gates/overlap_v10_product_input.py
+@@ -15 +15 @@
+-LOG_CAP = 16 << 10  # except 48 KiB for finish; at most 12 bounded log drains per arm
++LOG_CAP = 16 << 10  # per stage, bounded pipe drains, at most 12 logs per arm
+@@ -30,2 +29,0 @@
+-    # Front dictionary = U+16k-8, plus 8m keys. k<=m<=M_CAP, U<=N.
+-    front=N+24*M_CAP-8+CONTROLS; rank=16*M_CAP+CONTROLS; stream=base+8*M_CAP+POST
+@@ -33 +31 @@
+-                front=front,rank=rank,stream=stream,candidate=max(front,rank,stream),limit=2*N)
++                candidate=base+8*M_CAP+POST,limit=2*N)

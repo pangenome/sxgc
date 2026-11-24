@@ -1,0 +1,20 @@
+Traceback (most recent call last):
+  File "/home/erikg/sxgc/gates/overlap_v10_product_compare.py", line 220, in <module>
+    if __name__=='__main__':main()
+                            ^^^^^^
+  File "/home/erikg/sxgc/gates/overlap_v10_product_compare.py", line 216, in main
+    else:h.product_run()
+         ^^^^^^^^^^^^^^^
+  File "/home/erikg/sxgc/gates/overlap_v10_product_compare.py", line 203, in product_run
+    cold_setup_s=t0-before,stream_and_finish_s=t1-prepared,join_and_publish_payload_s=tj-t1,postcheck_s=tv-tj,shared_peak=int(self.cgval('memory.peak')),memory_max=int(self.cgval('memory.max')),swap_max=0,cpu_max=self.cgval('cpu.max'),cpu_stat=self.cgval('cpu.stat'),io_stat=self.cgval('io.stat') or None,memory_events=self.cgval('memory.events'),
+                                                                                                                                                                                                                                                                                   ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/erikg/sxgc/gates/overlap_v10_product_compare.py", line 64, in cgval
+    def cgval(self,k):return (self.cg/k).read_text().strip()
+                             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 1029, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 1015, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/sys/fs/cgroup/user.slice/user-1001.slice/user@1001.service/app.slice/run-u381.service/io.stat'

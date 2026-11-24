@@ -1,0 +1,4 @@
+{"MESSAGE": "Started run-u381.service - /usr/bin/taskset -c 0,1 /usr/bin/python3 -BE /home/erikg/sxgc/gates/overlap_v10_product_compare.py candidate /tmp/rolling-v10-product-4kNx5u.", "_BOOT_ID": "848093a2e7b541f9b94006bbe0759433", "__MONOTONIC_TIMESTAMP": "5629352852260", "__REALTIME_TIMESTAMP": "1795563364652549"}
+{"MESSAGE": "run-u381.service: Main process exited, code=exited, status=1/FAILURE", "_BOOT_ID": "848093a2e7b541f9b94006bbe0759433", "__MONOTONIC_TIMESTAMP": "5629358109915", "__REALTIME_TIMESTAMP": "1795563369910204"}
+{"MESSAGE": "run-u381.service: Failed with result 'exit-code'.", "_BOOT_ID": "848093a2e7b541f9b94006bbe0759433", "__MONOTONIC_TIMESTAMP": "5629358110509", "__REALTIME_TIMESTAMP": "1795563369910798"}
+{"MESSAGE": "run-u381.service: Consumed 5.537s CPU time, 2.9M memory peak, 0B memory swap peak.", "_BOOT_ID": "848093a2e7b541f9b94006bbe0759433", "__MONOTONIC_TIMESTAMP": "5629358110571", "__REALTIME_TIMESTAMP": "1795563369910860"}

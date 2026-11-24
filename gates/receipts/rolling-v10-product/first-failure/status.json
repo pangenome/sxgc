@@ -1,0 +1,101 @@
+{
+  "argv": {
+    "finish": [
+      "/home/erikg/.cache/xsa/13524d6bbedad508fdd8e30e7ab709dbf62ae5db64eb0cd8864dd79efa5b7b4c/xsa_finish",
+      "--corpus",
+      "/tmp/rolling-v10-product-ljelES/reference/raw",
+      "--remap",
+      "/tmp/rolling-v10-product-ljelES/reference/remap",
+      "--threads",
+      "1",
+      "--prefix",
+      "/tmp/rolling-v10-product-ljelES/reference/merged/frag",
+      "--lcp-bands",
+      "/tmp/rolling-v10-product-ljelES/reference/bands",
+      "--output",
+      "/tmp/rolling-v10-product-ljelES/reference/work.partial.sxi2",
+      "--poll-timeout",
+      "120",
+      "--wit-ram-budget",
+      "134217728",
+      "--with-chi",
+      "--no-lcp-runs"
+    ],
+    "join": [
+      "/tmp/v10-fixture-1001-1206931/tools/target/release/xsa",
+      "fixture-join",
+      "/tmp/rolling-v10-product-ljelES/reference/work.partial.sxi2",
+      "/tmp/rolling-v10-product-ljelES/reference/m20",
+      "/tmp/rolling-v10-product-ljelES/reference/map"
+    ],
+    "relay": [
+      "/tmp/native-v10-p4oy1a/tools/relay",
+      "row43",
+      "/tmp/rolling-v10-product-ljelES/reference/raw",
+      "6311445",
+      "/tmp/rolling-v10-product-ljelES/reference/tap",
+      "/tmp/rolling-v10-product-ljelES/stop.requested"
+    ],
+    "rows": [
+      "/tmp/native-v10-p4oy1a/tools/v10_rows",
+      "/tmp/rolling-v10-product-ljelES/reference/raw"
+    ],
+    "sink": [
+      "/tmp/native-v10-p4oy1a/tools/pfp_sort_r",
+      "--corpus",
+      "/tmp/rolling-v10-product-ljelES/reference/raw",
+      "--remap",
+      "/tmp/rolling-v10-product-ljelES/reference/remap",
+      "--threads",
+      "1",
+      "--out-prefix",
+      "/tmp/rolling-v10-product-ljelES/reference/merged/frag",
+      "--bands",
+      "/tmp/rolling-v10-product-ljelES/reference/bands",
+      "--scratch-budget-bytes",
+      "12622890"
+    ],
+    "tap": [
+      "/tmp/v10-fixture-1001-1206931/tools/target/release/xsa",
+      "ctx-tap",
+      "--bands",
+      "/tmp/rolling-v10-product-ljelES/reference/tap",
+      "--corpus",
+      "/tmp/rolling-v10-product-ljelES/reference/raw",
+      "--out",
+      "/tmp/rolling-v10-product-ljelES/reference/m20",
+      "--doc-starts",
+      "/tmp/rolling-v10-product-ljelES/reference/map",
+      "--n",
+      "6311446",
+      "--depth",
+      "8",
+      "--min-support",
+      "1000",
+      "--docs-min-support",
+      "1000",
+      "--threads",
+      "1"
+    ],
+    "witness": [
+      "/tmp/rolling-v10-product-ljelES/witness",
+      "/tmp/rolling-v10-product-ljelES/reference/checker",
+      "/tmp/rolling-v10-product-ljelES/stop.requested",
+      "--generated-v10-pipe"
+    ]
+  },
+  "errors": [],
+  "exits": {
+    "finish": 0,
+    "join": 0,
+    "relay": 0,
+    "rows": 0,
+    "sink": 0,
+    "tap": 0,
+    "witness": 0
+  },
+  "memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+  "sampled_logical_scratch": 5708682,
+  "shared_peak": 62038016,
+  "stop": true
+}

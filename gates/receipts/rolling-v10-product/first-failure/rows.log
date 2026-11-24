@@ -1,0 +1,7 @@
+SS_OVERLAP_PHASE dict_sort
+SS_OVERLAP_PHASE dedup_scatter
+SS_OVERLAP_PHASE parse_kernel
+SS_OVERLAP_PHASE pair_census
+SS_OVERLAP_PHASE window_sort window=1 pairs=142940
+SS_OVERLAP_PHASE emit window=1
+SS_OVERLAP_BINNED rows=6311445 phrases=101798 distinct=2306 reps=13806 windows=1 max_cell=138329 descriptor_cap=1048576
