@@ -1,0 +1,26 @@
+{
+  "conditional_reader_plus_two_rank_arrays_upper": 11298353,
+  "conditions": "Fresh per-job band, exact seam-free maximal run cuts, v8 non-spooling loader; GCC 13 libstdc++ fresh-vector capacities and old+new geometric realloc. Logical vector payloads only; excludes BandSlots, allocator retention, control objects, stack, corpus/PFCK, bitmap, directories, IO/cache and concurrent stages. Not RSS, disk scratch, timing or admission.",
+  "deep_reallocation_peak_bytes": 6291456,
+  "finish_log_sha256": "75a6e89636bb85e28ddf801f59cf60f0031ed6c0806c1c862819c97c56c19295",
+  "fold_rows": 100000504,
+  "fresh_pair_capacity_upper": 262144,
+  "head_and_tail_rank_bytes_upper": 1048576,
+  "load_copy_payload_upper": 6106865,
+  "load_deep_payload_upper": 10249777,
+  "max_copied_deep_entries": 219906,
+  "original": {
+    "empty": 0,
+    "escapes": 1129147,
+    "live": 1,
+    "loads": 591,
+    "max_live_lcp_slice_bytes": 3958321,
+    "max_slice_bytes": 2410688,
+    "preads": 972,
+    "retired": 382,
+    "slices": 382,
+    "staged_bytes": 100001094
+  },
+  "reader_source_sha256": "48fe0cf632d43eb96d93dd979e6338bedd214fdb2d0068e32f5c152767536096",
+  "source_blob": "8a04d79a0dc80cd813c3a561cb75f1910fd57777"
+}

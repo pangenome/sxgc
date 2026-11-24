@@ -1,0 +1,29 @@
+{
+  "base": "2d85026ae973e951480f1133bffdf4ab435940af",
+  "ceilings": {
+    "handoff_s": 45,
+    "handoff_shared": 134217728,
+    "one_core": true,
+    "per_file": 134217728,
+    "swap": 0,
+    "tools_s": 150,
+    "tools_shared": 536870912
+  },
+  "fixture_sink_sha256": "2ca46019392adc87b1cfb360c054deaf7c8a09685580ebe0f287922cbf606015",
+  "original_directory": "/tmp/v8-fold-geometry-vkfMQA",
+  "process": "proc_5d53",
+  "receipt_sha256": {
+    "exits.log": "329973d36d489b8b40040b8f53b11769fd6ad95fc3dd683f9533529432a441ca",
+    "handoff.log": "8d24600337d5699153b879c3b68dacce014bcfd1e4a9670bf6ee685bf5ac431f",
+    "model.json": "abdfbe3436e3e5ce7b605981f9f45112bddd95ba1815120fc71359be26a369d7",
+    "partial-exits.json": "e3b880433e18c81cc4fcab99ca6298d3bc1cd566e23b4329d3570fb67e34ef35",
+    "reader.log": "073e51ea5160d1823efc69b7b6f77b67790a8bd1842836bcc514a04e08a53114",
+    "sources.sha": "4dc8ac1835e5463c1e551450f4ffdf5ff9a8ec7a5c83b7e0f48d09f6cf13a912",
+    "tools.log": "fc074959a82f18793c5dc15bccadeb895e870d325de106c9218529587f321bc0",
+    "tools.sha": "7523729e9ac780209a1ddaf7275f4a2d58480194b35206042ee92dfb228b81e7"
+  },
+  "scope": "Reader-only generated handoff, expected truncated sink; native source-class probe, NOT the frozen finish ELF, full stream, product or joint admission.",
+  "sink_log_sha256": "61f46ab0d390516e34a6a0654af08344790c8722d4e55ffcc1714a9a9a9ebee5",
+  "surviving_five_private_slot_bytes": 2556128,
+  "utc": "2026-11-24T20:54:14.513852+00:00"
+}

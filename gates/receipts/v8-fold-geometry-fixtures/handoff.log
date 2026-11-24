@@ -1,0 +1,8 @@
+/tmp/v8-fold-geometry-vkfMQA/pinned-lcp-column.inc: OK
+/tmp/v8-fold-geometry-vkfMQA/probe: OK
+/tmp/v8-fold-geometry-vkfMQA/relay-fixture: OK
+/tmp/v8-fold-geometry-vkfMQA/relay-real: OK
+/tmp/v8-fold-geometry-vkfMQA/blocks: OK
+/tmp/v8-fold-geometry-vkfMQA/model.json: OK
+GEN_READER rows=1835008 loads=2 intersect_reads=8 staged=1835009 max_source_slices=7 reported_live=5151101 band_deep_capacity_max=2097152 canonical_unlinks=7
+PASS five-slot Rust writer -> seven copied/unlinked SXLS, all generated LCP values and overlap checked; sink deliberately truncated, no terminal/finish/product

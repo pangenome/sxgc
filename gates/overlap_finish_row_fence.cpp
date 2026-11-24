@@ -1,6 +1,6 @@
 // Checked row43 -> verified NARROW pipe for one fixed v8 input. Not a wide
 // production sink. Never forward the final packet on partial EOF/proof failure.
-#include "overlap_finish_row_fence.hpp"
+#include "overlap_finish_fold_fence.hpp"
 #include <cerrno>
 #include <charconv>
 #include <csignal>
@@ -50,9 +50,12 @@ static U final_rank(const unsigned char* raw,U n,U last,const Stop& stop,U cap,U
     }return rank;}
 
 int main(int ac,char** av) try {
-    bool exact=true; Limits limits{RUNS,SLICE,PAYLOAD};const char* want=SHA;
+    bool exact=true,track_fold=true; U band=65536,slice_rows=262144,fold_limit=3958321;
+    Limits limits{RUNS,SLICE,PAYLOAD};const char* want=SHA;
 #ifdef ROW_FENCE_FIXTURE
-    exact=false;need(ac==9 && std::string_view(av[1])=="--fixture","test profile only");
+    exact=false;track_fold=ac==12 && std::string_view(av[1])=="--fixture-fold";
+    need(track_fold || (ac==9 && std::string_view(av[1])=="--fixture"),"test profile only");
+    if(track_fold){band=decimal(av[9]);slice_rows=decimal(av[10]);fold_limit=decimal(av[11]);}
     limits={decimal(av[5]),decimal(av[6]),decimal(av[7])};want=av[8];
 #else
     need(ac==5 && std::string_view(av[1])=="--v8-100m","--v8-100m PRIVATE_RAW STOP DEADLINE");
@@ -64,7 +67,7 @@ int main(int ac,char** av) try {
     U n=U(st.st_size);need(exact?n==N:n<=524288,"wrong raw rung");
     auto raw=static_cast<const unsigned char*>(mmap(nullptr,n,PROT_READ,MAP_PRIVATE,fd,0));need(raw!=MAP_FAILED,"map raw");
     auto* sha=EVP_MD_CTX_new();need(sha && EVP_DigestInit_ex(sha,EVP_sha256(),nullptr)==1,"hash init");
-    Fence fence(limits);std::array<Row,8192> buf;U prev=n,final_work=0,rank=0;char digest[65]{};
+    Fence fence(limits);Fold<382> fold(n+1,band,slice_rows,fold_limit);std::array<Row,8192> buf;U prev=n,final_work=0,rank=0;char digest[65]{};
     // Same-stream upper on equality bytes: nonescapes <=254, escapes <=H.
     // Check before comparing; erroneous claims cannot buy unlimited work.
     U prefix_cap=exact?(n+1-ESC)*254+ESC*H:(n+1)*n;
@@ -78,10 +81,11 @@ int main(int ac,char** av) try {
             need(b==(p?raw[p-1]:256u) && (!exact || b!=0),"raw predecessor/remap");
             for(U off=0;off<h;off+=65536){if(off)stop.check();need(!std::memcmp(raw+p+off,raw+prev+off,std::min<U>(h-off,65536)),"claimed prefix");}
             if(fence.rows)need(p!=prev && (prev+h==n || (p+h<n && raw[prev+h]<raw[p+h])),"order/LCP");
-            fence.add(b,h);prev=p;row.b=uint32_t(b);
+            fence.add(b,h);if(track_fold)fold.add(b,h);prev=p;row.b=uint32_t(b);
         }
         need(EVP_DigestUpdate(sha,buf.data(),bytes)==1,"hash rows");
         if(fence.rows==n+1){char extra;need(!transfer(0,&extra,1,false,stop),"extra rows");fence.end();
+            if(track_fold){fold.end();need(!exact || (fold.loads==591 && fold.reads==972 && fold.staged==100001094 && fold.peak==3958321),"v8 fold geometry mismatch");}
             unsigned char d[EVP_MAX_MD_SIZE];unsigned k=0;need(EVP_DigestFinal_ex(sha,d,&k)==1 && k==32,"hash final");
             for(unsigned i=0;i<k;++i)snprintf(digest+2*i,3,"%02x",d[i]);
             need(!strcmp(digest,want),"narrow row SHA");
@@ -93,6 +97,8 @@ int main(int ac,char** av) try {
         transfer(1,buf.data(),bytes,true,stop);
     }
     stop.check();EVP_MD_CTX_free(sha);need(!munmap(const_cast<unsigned char*>(raw),n) && !close(fd),"release raw");
+    if(track_fold)std::fprintf(stderr,"FOLD_GEOMETRY loads=%llu reads=%llu staged=%llu peak=%llu max_slices=%llu\n",
+        (unsigned long long)fold.loads,(unsigned long long)fold.reads,(unsigned long long)fold.staged,(unsigned long long)fold.peak,(unsigned long long)fold.max_slices);
     std::fprintf(stderr,"FENCED rows=%llu final_rank=%llu runs=%llu sxls_peak=%llu sxls_escapes=%llu m14_blocks=%llu m14_payload=%llu prefix_bytes=%llu final_compare_bytes=%llu narrow_sha256=%s\n",
         (unsigned long long)fence.rows,(unsigned long long)rank,(unsigned long long)fence.runs,(unsigned long long)fence.slice_peak,
         (unsigned long long)fence.total_esc,(unsigned long long)fence.m14_blocks,(unsigned long long)fence.lcp_payload,

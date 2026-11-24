@@ -1,0 +1,3 @@
+PASS 4875 independent two-coalescer fold schedules, 9750 pre-exposure cap refusals, 3361 at final row/flush
+PASS 5 independent complete raw row streams with fold fence, 5 one-byte-short fold caps withheld tail
+PASS 6 exact raw row43 -> narrow streams incl SXLS and 8192-row EOF cuts, 59 refused inputs/caps with final packet withheld, 36 m14 boundary blocks, stalled read/write STOP, wrong rung, file and deadline refusals

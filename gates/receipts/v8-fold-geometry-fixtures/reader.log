@@ -1,0 +1,4 @@
+XSA_FINISH_LCP_BANDS dir=arm/bands n=1835008 mode=stream
+XSA_FINISH_LCP_BANDS_DONE dir=arm/bands slices=7 retired=7 empty=0 loads=2 preads=8 staged_bytes=1835009 escapes=108951 max_lcp=34067 max_slice_bytes=511184 max_live_lcp_slice_bytes=5151101 wait_ms=219 live=1 bytes_per_rank=1.000001
+LCP_SLICE_CONSUMER max_live_bytes=5151101 slices=7 retired=7 peak_over_n=2.807127 staged_bytes=1835009 bytes_per_rank=1.000001 escapes=108951 max_slice_bytes=511184 empty_slices=0 wait_ms=219
+GEN_READER rows=1835008 loads=2 intersect_reads=8 staged=1835009 max_source_slices=7 reported_live=5151101 band_deep_capacity_max=2097152 canonical_unlinks=7
