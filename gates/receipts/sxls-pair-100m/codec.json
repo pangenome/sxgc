@@ -1,0 +1,44 @@
+{
+  "cgroup": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 3312032\nuser_usec 771184\nsystem_usec 2540848\ncore_sched.force_idle_usec 0\nnr_periods 99\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "26845184",
+    "memory.swap.max": "0"
+  },
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 0,
+    "cpu_s": 3.24,
+    "rchar": 1436364483,
+    "read_bytes": 0,
+    "syscr": 28763,
+    "syscw": 2260248,
+    "wchar": 236170843,
+    "write_bytes": 8192
+  },
+  "rc": 0,
+  "trial": {
+    "batch_reads": 0,
+    "batch_s": 0.208399,
+    "batch_syscw": 1146,
+    "batch_writes": 0,
+    "escapes": 1129147,
+    "exact_bytes": 1,
+    "max_slice_escapes": 134284,
+    "nonempty": 382,
+    "peak_pair_allocated": 4825088,
+    "peak_pair_logical": 4821472,
+    "rows": 100000504,
+    "scalar_reads": 0,
+    "scalar_s": 2.305644,
+    "scalar_syscw": 2259058,
+    "scalar_writes": 0,
+    "slices": 382
+  },
+  "wall_including_wait_s": 16.017928234301507
+}

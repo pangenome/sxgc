@@ -1,0 +1,6 @@
+
+running 1 test
+test unit::sxls_batch_test::paired_live_slices ... SXLS_TRIAL rows=100000504 slices=382 escapes=1129147 nonempty=382 max_slice_escapes=134284 peak_pair_logical=4821472 peak_pair_allocated=4825088 scalar_s=2.305644 batch_s=0.208399 scalar_syscw=2259058 batch_syscw=1146 scalar_reads=0 batch_reads=0 scalar_writes=0 batch_writes=0 exact_bytes=1
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 15.83s

@@ -1,0 +1,16 @@
+{
+  "batch_s": 0.208399,
+  "batch_syscw": 1146,
+  "digest": "82747f11a9925bb4d89cc812410d98e411ce80b1767ee1ff4dc22e94e2cd874e",
+  "escapes": 1129147,
+  "joiner_and_other_scratch": 44945764,
+  "limit": 200001006,
+  "local_wall_speedup": 11.063603952034319,
+  "observed_saved_syscw": 2257912,
+  "paired_scratch_bound": 53858756,
+  "predicted_saved_syscw": 2257912,
+  "scalar_s": 2.305644,
+  "scalar_syscw": 2259058,
+  "scope": "paired actual SXLS encode/write/sync/rename of every slice; real 100 MB row stream, private tmpfs, no finish",
+  "slices": 382
+}
