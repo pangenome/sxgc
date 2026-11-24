@@ -1,4 +1,4 @@
-"""Measured 1/3 GB overlap gates, from raw or prepared lexical parse.
+"""Measured 1/3/10 GB overlap gates, from raw or prepared lexical parse.
 Build stdout is reserved for the separate raw verifier. No Python per-row path.
 """
 from dataclasses import dataclass
@@ -21,7 +21,8 @@ class Rung:
 ROOT=Path('/mnt/nvme2n1/erikg/TAPEREADER')
 ONE=Rung(1_000_000_665,'b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3',ROOT/'climb/rung1/run_wide/product.sxi2',Path('/tmp/xsa_finish_cur'),('--with-chi','--container-stream'),20,14,1400)
 THREE=Rung(3_000_000_000,'3935e8f1d220092d2cd12081938748e8a62f02e882bd021781ec7c3d0cabe7f3',ROOT/'bins-p1/run14e/reader/product.sxi2',ROOT/'bins-p1/bin/xsa_finish',(),60,42,4200)
-def config(profile): return THREE if profile in ('packed-3g','packed-3g-bitmap') else ONE
+TEN=Rung(10_000_000_000,'26cfb2de0cccab8a8712a332956d58693dcbbb34373a9031a7bbaaa08cc504c9',ROOT.parent/'lcpruns-gate/g3/scratch/pf-10gb.sxi2',Path('/tmp/xsa_finish_cur'),('--with-chi','--container-stream'),200,140,14000)
+def config(profile): return TEN if profile=='packed-10g-bitmap' else THREE if profile in ('packed-3g','packed-3g-bitmap') else ONE
 GIB = 1 << 30
 CG = Path('/sys/fs/cgroup')/Path('/proc/self/cgroup').read_text().strip().split('::/')[1]
 
@@ -83,7 +84,9 @@ def oracle(d,tools,cfg):
     assert (CG/'memory.max').read_text().strip()==str(cfg.oracle_mib<<20) and (CG/'memory.swap.max').read_text().strip()=='0'
     start=time.monotonic(); peak=0
     with (d/'oracle.log').open('xb') as f:
-        p=sp.Popen([tools/'oracle',d/'oracle-corpus'],stdout=f,stderr=f)
+        args=[tools/'oracle',d/'oracle-corpus'];
+        if cfg==TEN:args.append(d/'stop.requested')
+        p=sp.Popen(args,stdout=f,stderr=f)
         with open(f'/proc/{p.pid}/io') as io:
             while not finished(p): peak=max(peak,proc_info(p.pid,io)['VmHWM']); time.sleep(.5)
             stats=proc_info(p.pid,io); rc=p.wait()
@@ -99,17 +102,28 @@ def pack_front(d,tools,cfg):
     cols=d/'columns'; assert not cols.exists() and not (d/'merged').exists()
     start=time.monotonic(); peak=allocated=0
     with (d/'pack.log').open('xb') as log:
-        p=sp.Popen([tools/'lexparse',d/'in/corpus',cols,'--packed-3g' if cfg==THREE else '--packed'],stdout=log,stderr=log)
+        args=[tools/'lexparse',d/'in/corpus',cols]
+        if cfg!=TEN:args.append('--packed-3g' if cfg==THREE else '--packed')
+        p=sp.Popen(args,stdout=log,stderr=log)
         with open(f'/proc/{p.pid}/io') as io:
             while not finished(p):
                 peak=max(peak,proc_info(p.pid,io)['VmHWM']); wh,parts=footprint(d,0); allocated=max(allocated,wh)
-                if sum(parts.values())>2*cfg.n or time.monotonic()-start>600:(d/'stop.requested').touch()
+                if sum(parts.values())>2*cfg.n or time.monotonic()-start>(1200 if cfg==TEN else 600):(d/'stop.requested').touch()
                 time.sleep(.25)
             info=proc_info(p.pid,io); code=p.wait()
     front=dict(rc=code,process=info,sampled_peak_rss=peak,sampled_allocated=allocated,wall_s=time.monotonic()-start,cgroup_after=cg_info())
     save(d/'front-end.json',front); assert code==0 and not (d/'stop.requested').exists()
-    log=(d/'pack.log').read_text(); match=re.search(r'^LEXPARSE n=(\d+) phrases=(\d+) distinct=(\d+) descriptors=(\d+) .* peak_counted=(\d+) final_columns=(\d+) ',log,re.M)
-    assert match; n,m,k,descriptors,peak_counted,total=map(int,match.groups()); assert n==cfg.n
+    log=(d/'pack.log').read_text()
+    if cfg==TEN:
+        v={s:int(x) for s,x in re.findall(r'(\w+)=(\d+)',next(l for l in log.splitlines() if l.startswith('LEX10 ')))}
+        ref=json.loads((REPO/'gates/receipts/packed-front-10g/front-end.json').read_text())
+        for key,value in ref['census'].items():
+            if key not in ('read_bytes','write_bytes'):assert v[key]==value,key
+        n,m,k,descriptors,peak_counted=(v[s] for s in ('n','m','k','descriptors','peak_counted'));total=v['dictionary_bytes']+4*m
+    else:
+        match=re.search(r'^LEXPARSE n=(\d+) phrases=(\d+) distinct=(\d+) descriptors=(\d+) .* peak_counted=(\d+) final_columns=(\d+) ',log,re.M)
+        assert match; n,m,k,descriptors,peak_counted,total=map(int,match.groups())
+    assert n==cfg.n
     if cfg==ONE: assert (m,k)==(31_784_026,25_336_659)
     sizes={p.name:p.stat().st_size for p in cols.iterdir()}; assert set(sizes)=={'parse.u32','dictionary.packed'}
     assert sizes['parse.u32']==4*m and sum(sizes.values())==total<=peak_counted<=2*n
@@ -117,8 +131,13 @@ def pack_front(d,tools,cfg):
     resident=12*(k+1)+13*m+8*((m+15)//16)
     bounds=dict(parse=tape+8*m+32*k,aux=tape+D+25*(k+1)+32*m,sort=9*D+resident+(64<<20),
                 emit=9*D+16*((D+63)//64)+resident+40*k+(8<<20))
+    if cfg==TEN:
+        resident=12*(k+1)+21*m+16*((m+15)//16)
+        bounds=dict(parse=tape+8*m+40*k,aux=tape+D+33*(k+1)+56*(m+1),sort=9*D+resident+(64<<20),emit=9*D+16*((D+63)//64)+resident+40*k+(8<<20))
+        assert bounds==ref['proposed_array_bytes'] and v['D']==D and v['alphabet']<=254 and max(n,tape,D)<2**43
     front.update(n=n,m=m,k=k,descriptors=descriptors,D=D,array_bounds=bounds,counted_front_peak=peak_counted,columns=sizes); save(d/'front-end.json',front)
-    assert 0<k<=m<=100_000_000 and k<=80_000_000 and m+6*k<2**31 and tape<2**32 and max(bounds.values())<=cfg.arrays_gib*GIB
+    assert 0<k<=m and m+6*k<2**31 and max(bounds.values())<=cfg.arrays_gib*GIB
+    if cfg!=TEN:assert m<=100_000_000 and k<=80_000_000 and tape<2**32
     if cfg==THREE: assert 2**31<=D<2**63 and n+1<2**32
     # Conservative reproducible cut: evict only this gate's freshly generated
     # columns and private corpus (even the finish must pay for cold text).
@@ -128,8 +147,8 @@ def pack_front(d,tools,cfg):
     save(d/'front-end.json',front); say('PACKED_FRONT',m,k,peak_counted,round(front['wall_s'],3)); return front
 
 def build(d,tools,profile):
-    assert profile in ('narrow','wide','wide-handoff','packed-raw','packed-3g','packed-3g-bitmap'); cfg=config(profile); N=cfg.n
-    bitmap=profile=='packed-3g-bitmap'
+    assert profile in ('narrow','wide','wide-handoff','packed-raw','packed-3g','packed-3g-bitmap','packed-10g-bitmap'); cfg=config(profile); N=cfg.n
+    bitmap=profile in ('packed-3g-bitmap','packed-10g-bitmap')
     assert (CG/'memory.max').read_text().strip()==str(cfg.shared_gib*GIB) and (CG/'memory.swap.max').read_text().strip()=='0'
     src=d/'in'; corpus=src/'corpus'; assert corpus.stat().st_size==N
     packed=profile.startswith('packed-'); raw_start=time.monotonic(); cg0=cg_info()
@@ -178,6 +197,7 @@ def build(d,tools,profile):
         if md.exists():(md/'stop.requested').touch(exist_ok=True)
     audit=os.dup(1)
     if cfg==THREE: env['XSA_GATE_PACKED_3G']='1'
+    if cfg==TEN: env['XSA_GATE_PACKED_10G']='1'
     rank_input=[d/'inverse.check'] if cfg==ONE else []
     binary_dir=tools if (tools/'overlap_resident').exists() else REPO/'xsa/target/release'
     launch('resident',[binary_dir/'overlap_resident',producer_in,flag,str(cfg.arrays_gib*GIB),*rank_input],
@@ -227,7 +247,7 @@ def build(d,tools,profile):
                 if counted>(before_emit if packed and not retired else bound):request('counted scratch crossed reservation')
             mem=int((CG/'memory.current').read_text()); samples[active]=max(samples.get(active,0),mem)
             if flag.exists():request('private flag')
-            if sum(x['read_bytes'] for x in proc.values())>20*N or time.monotonic()-start>3600:request('runaway read/time guard')
+            if sum(x['read_bytes'] for x in proc.values())>20*N or time.monotonic()-start>(12822 if cfg==TEN else 3600):request('runaway read/time guard')
             if len(exitcode)==len(w):break
             time.sleep(.2)
     for f in (*logs.values(),*iofiles.values()):f.close()
@@ -251,7 +271,7 @@ def build(d,tools,profile):
     assert exitcode==dict(resident=0,sink=0,finish=0) and not flag.exists()
     assert 'oom_kill 0' in rc['shared_after']['memory.events']
 
-def wit_budget(cfg): return (2 if cfg==ONE else 6)*GIB
+def wit_budget(cfg): return (2 if cfg==ONE else 20 if cfg==TEN else 6)*GIB
 
 def certify(d,cfg):
     actual=sha(d/'product.sxi2'); table=members(d/'product.sxi2'); same=table==members(cfg.anchor)

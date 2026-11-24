@@ -1,15 +1,31 @@
-// Exact byte-LCP RMQ over adjacent ranks. Keep the u32 leaves, but index
-// only minima of 16 consecutive ranks. between(x,y) takes min(x,y].
-pub struct BlockMin {
-    leaves: Vec<u32>,
-    tree: Vec<u32>,
+// Exact byte-LCP RMQ over adjacent ranks. Match leaves/tree to byte LCP
+// width, not parse rank width. between(x,y) takes min(x,y].
+pub trait Value: Copy + Ord {
+    const MAX: Self;
+    fn get(self) -> usize;
+}
+impl Value for u32 {
+    const MAX: Self = u32::MAX;
+    fn get(self) -> usize {
+        self as usize
+    }
+}
+impl Value for u64 {
+    const MAX: Self = u64::MAX;
+    fn get(self) -> usize {
+        usize::try_from(self).unwrap()
+    }
+}
+pub struct BlockMin<T = u32> {
+    leaves: Vec<T>,
+    tree: Vec<T>,
     blocks: usize,
 }
-impl BlockMin {
+impl<T: Value> BlockMin<T> {
     const B: usize = 16;
-    pub fn new(leaves: Vec<u32>) -> Self {
+    pub fn new(leaves: Vec<T>) -> Self {
         let blocks = leaves.len().div_ceil(Self::B);
-        let mut tree = vec![u32::MAX; 2 * blocks];
+        let mut tree = vec![T::MAX; 2 * blocks];
         for (i, b) in leaves.chunks(Self::B).enumerate() {
             tree[blocks + i] = *b.iter().min().unwrap();
         }
@@ -27,9 +43,9 @@ impl BlockMin {
         let (lo, hi) = (x + 1, y + 1);
         let (a, b) = (lo.div_ceil(Self::B), hi / Self::B);
         if a >= b {
-            return *self.leaves[lo..hi].iter().min().unwrap() as usize;
+            return self.leaves[lo..hi].iter().min().unwrap().get();
         }
-        let mut v = u32::MAX;
+        let mut v = T::MAX;
         for &t in self.leaves[lo..a * Self::B]
             .iter()
             .chain(&self.leaves[b * Self::B..hi])
@@ -49,7 +65,7 @@ impl BlockMin {
             l /= 2;
             r /= 2;
         }
-        v as usize
+        v.get()
     }
 }
 #[cfg(test)]

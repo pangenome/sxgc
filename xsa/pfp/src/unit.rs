@@ -314,6 +314,26 @@ mod handoff_test {
     use super::PieceCutter;
     use std::{fs,path::Path};
     #[test]
+    fn row43_sink_keeps_wide_piece_endpoints_and_slice_escapes() {
+        let id=format!("xsa-row43-test-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+        let dir=std::env::temp_dir().join(id);fs::create_dir(&dir).unwrap();let path=dir.to_str().unwrap();
+        let base=1u64<<32;let n=10_000_000_000u64;let mut c=PieceCutter::new(dir.join("frag").to_str().unwrap(),n+1,16);
+        for (p,b) in [(n,42),(base+7,42),(base+3,8),(base+8,8)] {
+            let row=crate::overlap_row43::encode(p,0,b);let(p,_,b)=crate::overlap_row43::decode(&row);c.feed_row(p,b as u8);
+        }
+        // Two 34-bit values span a u64 word boundary in each PRC1 column.
+        c.flush_run();c.close_band();let piece=fs::read(dir.join("frag.pieces/p-0-0")).unwrap();
+        assert_eq!(u32::from_le_bytes(piece[32..36].try_into().unwrap()),34);
+        for (start,expected) in [(54,[n,base+3]),(70,[base+7,base+8])] {
+            let bits=u128::from_le_bytes(piece[start..start+16].try_into().unwrap());assert_eq!([(bits&((1<<34)-1)) as u64,(bits>>34) as u64],expected);
+        }
+        let laws=crate::laws::Laws::new(dir.join("stop").display().to_string(),0,2*n,n,path.into(),path.into(),path.into());
+        let (_,wide_lcp,_)=crate::overlap_row43::decode(&crate::overlap_row43::encode(base+2,base+1,9));
+        super::emit_lcp_slice(path,0,2,&[0,wide_lcp],base+9,&mut std::collections::VecDeque::new(),16,&laws);
+        let slice=fs::read(dir.join("band_0.lcp")).unwrap();let at=|i:usize|u64::from_le_bytes(slice[i..i+8].try_into().unwrap());
+        assert_eq!(&slice[48..50],&[0,255]);assert_eq!([at(24),at(32),at(50),at(58)],[base+1,base+9,base+10,base+1]);fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn only_pieces_move_and_their_bytes_are_unchanged() {
         if !Path::new("/dev/shm").is_dir() {return;}
         let id=format!("xsa-piece-test-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());

@@ -1,5 +1,6 @@
 """Small, complete streams from an independent brute SA. Reject broken/old frames."""
 from pathlib import Path
+import os
 import random
 import subprocess as sp
 import sys
@@ -7,7 +8,7 @@ import tempfile
 
 def wire(p,h,b):return ((p&0xffffffff) | ((h&0xffffffff)<<32) | ((0x80000000+b+(p>>32)*512+(h>>32)*1048576)<<64)).to_bytes(12,'little')
 
-def main(exe):
+def main(exe,producer=None):
     assert wire(0x112345678,0x298765432,256).hex()=='785634123254769800032080'
     with tempfile.TemporaryDirectory() as tmp:
         d=Path(tmp);corpus=d/'text';flag=d/'stop';cmd=[exe,corpus,flag,'--fixture'];rng=random.Random(981)
@@ -19,6 +20,13 @@ def main(exe):
                     while max(prev,p)+h<len(text) and text[p+h]==text[prev+h]:h+=1
                 frames.append(wire(p,h,text[p-1] if p else 256));prev=p
             stream=b''.join(frames)
+            if producer:
+                from overlap_resident_test import prepare
+                prepare(d,text);cmdp=[producer,d/'columns',flag,'200000000'];env=dict(os.environ,XSA_TEST_ROW43_FIXTURE='1',XSA_RESIDENT_PACKED='1',XSA_RESIDENT_WIDE_DICT='1')
+                prod=sp.run(cmdp,env=env,capture_output=True)
+                if len(set(text))<=254:
+                    assert prod.returncode==0 and prod.stdout==stream and b'RESIDENT_TRANSPORT row43=true text_width=8 lcp_width=8' in prod.stderr,prod.stderr
+                else:assert prod.returncode!=0 and b'two free codes' in prod.stderr and not prod.stdout
             def run(data):return sp.run(cmd,input=data,capture_output=True)
             r=run(stream);assert r.returncode==0 and f'ORACLE rows={len(sa)} independent_final_rank={len(sa)} all_adjacent_sa_lcp_bwt_verified=1'.encode() in r.stdout,r.stderr
             for bad in (stream[:-1],stream[:-12],stream+frames[0],b'\0'*12+stream[12:],wire(len(text)+(1<<32),0,text[-1])+stream[12:],wire(len(text),1<<32,text[-1])+stream[12:],wire(len(text),0,257)+stream[12:],wire(len(text),0,text[-1]^1)+stream[12:]):
@@ -26,4 +34,4 @@ def main(exe):
         flag.touch();assert run(stream).returncode==75;assert sp.run(cmd[:-1],input=stream,capture_output=True).returncode==70
     print('PASS 7 full brute row43 streams; truncated, extra, narrow, invalid wide extent, BWT and stop/rung refusals')
 
-if __name__=='__main__':main(Path(sys.argv[1]))
+if __name__=='__main__':main(*(Path(p) for p in sys.argv[1:]))

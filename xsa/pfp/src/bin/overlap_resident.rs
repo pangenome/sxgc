@@ -1,5 +1,5 @@
 //! Resident comparison from `parse.u32` and either raw text + dictionary refs
-//! or the self-contained length-tagged `dictionary.packed`. No on-disk sort columns. Stdout: LE u32 (pos, byte LCP, BWT),
+//! or the self-contained length-tagged `dictionary.packed`. No on-disk sort columns. Stdout: 12-byte (pos, byte LCP, BWT), tagged row43 at 10 GB,
 //! including END; an optional inherited FD gets the *same* blocks for audit.
 //! Deliberately limited to the measured rung/widths, not the Pile builder.
 use std::{
@@ -13,7 +13,25 @@ use std::{
 };
 #[path = "../overlap_min.rs"]
 mod ranges;
-use ranges::BlockMin;
+use ranges::{BlockMin, Value};
+#[path = "../overlap_row43.rs"]
+mod row43;
+trait Coord: Value + Default + std::fmt::Debug {
+    const WIDE: bool;
+    fn checked(x: usize) -> Self;
+}
+impl Coord for u32 {
+    const WIDE: bool = false;
+    fn checked(x: usize) -> Self {
+        u32::try_from(x).expect("wide text offset/LCP required")
+    }
+}
+impl Coord for u64 {
+    const WIDE: bool = true;
+    fn checked(x: usize) -> Self {
+        x as u64
+    }
+}
 #[path = "../overlap_dict_index.rs"]
 mod index;
 use index::{local_offset, RankStarts, Suffixes};
@@ -82,11 +100,11 @@ fn common(a: &[u8], b: &[u8]) -> usize {
     i
 }
 #[derive(Copy, Clone)]
-struct Word {
-    pos: u32,
+struct Word<C> {
+    pos: C,
     span: u32,
 }
-impl Word {
+impl<C: Coord> Word<C> {
     fn raw(self) -> usize {
         (self.span & 0x7fffffff) as usize
     }
@@ -103,7 +121,7 @@ impl Word {
 }
 // In a packed input Word.pos is relative to this tape, not to the corpus.
 // The grant is checked BEFORE loading the tape or allocating this index.
-fn packed_words(tape: &[u8], k: usize) -> Vec<Word> {
+fn packed_words<C: Coord>(tape: &[u8], k: usize) -> Vec<Word<C>> {
     let mut words = Vec::with_capacity(k);
     let mut i = 0;
     while i < tape.len() {
@@ -112,7 +130,7 @@ fn packed_words(tape: &[u8], k: usize) -> Vec<Word> {
             "invalid packed word count/header"
         );
         let w = Word {
-            pos: u32::try_from(i + 4).unwrap(),
+            pos: C::checked(i + 4),
             span: le(&tape[i..i + 4]),
         };
         i += 4;
@@ -121,8 +139,8 @@ fn packed_words(tape: &[u8], k: usize) -> Vec<Word> {
             "invalid packed word span"
         );
         if let Some(&prev) = words.last() {
-            let prev: Word = prev;
-            let a = prev.pos as usize;
+            let prev: Word<C> = prev;
+            let a = prev.pos.get();
             assert!(
                 (&tape[a..a + prev.raw()], prev.eof()) < (&tape[i..i + w.raw()], w.eof()),
                 "packed words not in strict lexical ID order"
@@ -144,11 +162,12 @@ fn le(a: &[u8]) -> u32 {
 fn size(p: &Path) -> usize {
     usize::try_from(fs::metadata(p).unwrap().len()).unwrap()
 }
-struct Lists {
+struct Lists<C> {
     loc: Vec<u32>,
-    pair: Vec<[u32; 2]>,
+    pos: Vec<C>,
+    next: Vec<u32>,
     pred: Vec<u8>,
-    min: BlockMin,
+    min: BlockMin<C>,
 }
 struct Dict {
     bytes: Vec<u8>,
@@ -172,10 +191,15 @@ struct Output<'a> {
     flag: &'a Path,
 }
 impl Output<'_> {
-    fn push(&mut self, p: u32, h: u32, b: u32) {
-        self.bytes.extend_from_slice(&p.to_le_bytes());
-        self.bytes.extend_from_slice(&h.to_le_bytes());
-        self.bytes.extend_from_slice(&b.to_le_bytes());
+    fn push<C: Coord>(&mut self, p: usize, h: usize, b: u32) {
+        if C::WIDE {
+            self.bytes
+                .extend_from_slice(&row43::encode(p as u64, h as u64, b));
+        } else {
+            self.bytes.extend_from_slice(&u32::checked(p).to_le_bytes());
+            self.bytes.extend_from_slice(&u32::checked(h).to_le_bytes());
+            self.bytes.extend_from_slice(&b.to_le_bytes());
+        }
         self.rows += 1;
         if self.bytes.len() == 65536 * 12 {
             self.send();
@@ -201,19 +225,25 @@ impl Output<'_> {
 // A cursor into one word's occurrences at one offset. Its first field orders
 // the heap by continuation rank (not word ID, occurrence index, or text pos).
 type Cursor = Reverse<(u32, u32, u32, u32, u32)>; // rank, index, end, offset, internal BWT
-fn flush(q: &mut BinaryHeap<Cursor>, lists: &Lists, len: usize, head: u32, out: &mut Output) {
+fn flush<C: Coord>(
+    q: &mut BinaryHeap<Cursor>,
+    lists: &Lists<C>,
+    len: usize,
+    head: u32,
+    out: &mut Output,
+) {
     let mut prior = None;
     while let Some(Reverse((mut rank, mut i, end, off, bwt))) = q.pop() {
         loop {
             let h = match prior {
-                None => head,
+                None => head as usize,
                 Some(p) => {
                     assert!(0 < p && p < rank && len > W);
-                    (len - W + lists.min.between(p as usize - 1, rank as usize - 1)) as u32
+                    len - W + lists.min.between(p as usize - 1, rank as usize - 1)
                 }
             };
-            let p = lists.pair[i as usize][0] + off;
-            out.push(
+            let p = lists.pos[i as usize].get() + off as usize;
+            out.push::<C>(
                 p,
                 h,
                 if off != 0 {
@@ -229,7 +259,7 @@ fn flush(q: &mut BinaryHeap<Cursor>, lists: &Lists, len: usize, head: u32, out: 
             if i == end {
                 break;
             }
-            rank = lists.pair[i as usize][1];
+            rank = lists.next[i as usize];
             if q.peek().is_some_and(|&Reverse((next, ..))| next < rank) {
                 q.push(Reverse((rank, i, end, off, bwt)));
                 break;
@@ -262,6 +292,37 @@ fn ranks_follow_text(pa: &[i32], ps: &[i32]) -> bool {
 mod rank_tests {
     use super::*;
     #[test]
+    fn wide_positions_and_lcp_survive_group_merge() {
+        let base = 1u64 << 32;
+        let lists = Lists {
+            loc: vec![0, 2],
+            pos: vec![base + 3, base + 7],
+            next: vec![1, 2],
+            pred: vec![0, 0],
+            min: BlockMin::new(vec![0u64, base + 9]),
+        };
+        let mut out = Output {
+            sink: std::io::stdout().lock(),
+            audit: None,
+            bytes: Vec::new(),
+            rows: 0,
+            sink_time: Duration::ZERO,
+            audit_time: Duration::ZERO,
+            progress: false,
+            flag: Path::new("unused"),
+        };
+        let mut q = BinaryHeap::from([Reverse((1, 0, 2, 4, 127))]);
+        flush(&mut q, &lists, W + 2, 5, &mut out);
+        assert_eq!(
+            row43::decode(out.bytes[..12].try_into().unwrap()),
+            (base + 7, 5, 127)
+        );
+        assert_eq!(
+            row43::decode(out.bytes[12..].try_into().unwrap()),
+            (base + 11, base + 11, 127)
+        );
+    }
+    #[test]
     fn finite_recurrence_and_permutation() {
         let p = [1, 1, 2, 1];
         assert!(ranks_follow_text(&p, &[3, 0, 1, 2]));
@@ -271,6 +332,16 @@ mod rank_tests {
     }
 }
 fn main() {
+    let ten = std::env::var("XSA_GATE_PACKED_10G").as_deref() == Ok("1");
+    let fixture = std::env::var("XSA_TEST_ROW43_FIXTURE").as_deref() == Ok("1");
+    assert!(!(ten && fixture));
+    if ten || fixture {
+        run::<u64>(ten, fixture)
+    } else {
+        run::<u32>(false, false)
+    }
+}
+fn run<C: Coord>(ten: bool, fixture: bool) {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     assert!(
         args.len() == 3 || args.len() == 4,
@@ -294,11 +365,25 @@ fn main() {
                 && args.len() == 3),
         "3 GB gate requires packed input, wide dictionary, independent rank recurrence"
     );
+    assert!(
+        !C::WIDE
+            || (!three
+                && packed
+                && args.len() == 3
+                && std::env::var("XSA_RESIDENT_WIDE_DICT").as_deref() == Ok("1")),
+        "row43 requires packed input, wide dictionary and rank recurrence"
+    );
     let mb = size(&dir.join("parse.u32"));
     let m = mb / 4;
     assert!(
         m > 0
-            && m <= if three { 100_000_000 } else { 32_000_000 }
+            && m <= if ten {
+                318_164_488
+            } else if three {
+                100_000_000
+            } else {
+                32_000_000
+            }
             && mb == 4 * m
             && grant >= 2 * mb,
         "invalid parse size/grant"
@@ -309,7 +394,16 @@ fn main() {
         .map(|r| i32::try_from(le(r)).unwrap())
         .collect();
     let k = 1 + *pa.iter().max().unwrap() as usize;
-    assert!(k <= m && k <= if three { 80_000_000 } else { 26_000_000 });
+    assert!(
+        k <= m
+            && k <= if ten {
+                234_472_723
+            } else if three {
+                80_000_000
+            } else {
+                26_000_000
+            }
+    );
     let data_path = dir.join(if packed {
         "dictionary.packed"
     } else {
@@ -319,16 +413,18 @@ fn main() {
     let (words, tape, n) = if packed {
         assert!(
             source_bytes
-                <= if three {
+                <= if ten {
+                    11_942_962_780
+                } else if three {
                     u32::MAX as usize
                 } else {
                     1_500_000_000
                 }
-                && grant >= source_bytes + 8 * k + mb,
+                && grant >= source_bytes + std::mem::size_of::<Word<C>>() * k + mb,
             "packed tape exceeds array grant"
         );
         let bytes = fs::read(&data_path).unwrap();
-        let words = packed_words(&bytes, k);
+        let words = packed_words::<C>(&bytes, k);
         let n: usize = pa.iter().map(|&v| words[v as usize].width()).sum();
         (words, Some(bytes), n)
     } else {
@@ -341,7 +437,7 @@ fn main() {
             .unwrap()
             .chunks_exact(8)
             .map(|r| Word {
-                pos: le(&r[..4]),
+                pos: C::checked(le(&r[..4]) as usize),
                 span: le(&r[4..]),
             })
             .collect();
@@ -349,7 +445,11 @@ fn main() {
     };
     assert!(
         n > 0
-            && (if three {
+            && (if ten {
+                n == 10_000_000_000
+            } else if fixture {
+                n <= 101_000_000
+            } else if three {
                 n == 3_000_000_000
             } else {
                 n <= 1_000_000_665
@@ -362,7 +462,7 @@ fn main() {
     let mut d = 1;
     let mut descriptors = 0;
     for (i, &w) in words.iter().enumerate() {
-        assert!(w.eof() == (i == eof) && w.width() > 0 && w.pos as usize + w.raw() <= source_bytes);
+        assert!(w.eof() == (i == eof) && w.width() > 0 && w.pos.get() + w.raw() <= source_bytes);
         d += w.raw() + 1;
         descriptors += w.width();
     }
@@ -372,6 +472,13 @@ fn main() {
         _ => panic!("XSA_RESIDENT_WIDE_DICT must be 0 or 1"),
     };
     assert_eq!(usize::BITS, 64, "resource plan requires 64-bit addressing");
+    if ten {
+        assert_eq!(
+            (m, k, d, source_bytes),
+            (318_164_488, 234_472_723, 11_239_544_612, 11_942_962_780),
+            "10 GB packed census mismatch"
+        );
+    }
     if three {
         assert!(
             d > i32::MAX as usize,
@@ -388,13 +495,25 @@ fn main() {
     // Bytes of simultaneously live arrays, not file-cache residency. Reserve
     // extra SA space for recursion, and bound doubled heap capacity by 2*k:
     // a finite equal key ends at a word boundary -> at most one offset/word.
-    let parse_bound = 8 * m + 8 * k + 24 * k + tape.as_ref().map_or(0, Vec::len);
-    let aux_bound = source_bytes + d + 25 * (k + 1) + 32 * m;
-    let retained = 12 * (k + 1) + 9 * m + 4 * m + 8 * m.div_ceil(16);
+    let cb = std::mem::size_of::<C>();
+    let parse_bound =
+        8 * m + (std::mem::size_of::<Word<C>>() + 24) * k + tape.as_ref().map_or(0, Vec::len);
+    let aux_bound = if C::WIDE {
+        source_bytes + d + 33 * (k + 1) + 56 * (m + 1)
+    } else {
+        source_bytes + d + 25 * (k + 1) + 32 * m
+    };
+    let retained = 12 * (k + 1) + (5 + 2 * cb) * m + 2 * cb * m.div_ceil(16);
     let sa_bytes = if wide { 8 * d } else { 4 * d };
     let owner_bytes = if wide { RankStarts::bytes(d) } else { 4 * d };
     let dict_bound = d + sa_bytes + retained + (64 << 20);
     let emit_bound = d + sa_bytes + owner_bytes + retained + 40 * k + (8 << 20);
+    eprintln!(
+        "RESIDENT_TRANSPORT row43={} text_width={} lcp_width={} rank_width=4",
+        C::WIDE,
+        cb,
+        cb
+    );
     eprintln!("RESIDENT_INDEX wide={wide} sa_bytes={sa_bytes} owner_bytes={owner_bytes} start_bytes={} native_above_i32={}",8*(k+1),d>i32::MAX as usize);
     eprintln!("RESIDENT_PLAN n={n} m={m} k={k} dict_symbols={d} descriptors={descriptors} parse_bound={parse_bound} aux_bound={aux_bound} dict_bound={dict_bound} emit_bound={emit_bound} array_grant={grant}");
     assert!(
@@ -446,7 +565,7 @@ fn main() {
     let mut used = [false; 256];
     if packed {
         for w in &words {
-            let i = w.pos as usize;
+            let i = w.pos.get();
             for &b in &source[i..i + w.raw()] {
                 used[b as usize] = true;
             }
@@ -479,7 +598,7 @@ fn main() {
     let mut last_owned = Vec::with_capacity(k);
     for &w in &words {
         dict.start.push(dict.bytes.len() as u64);
-        let i = w.pos as usize;
+        let i = w.pos.get();
         dict.bytes
             .extend(source[i..i + w.raw()].iter().map(|&b| encode[b as usize]));
         last_owned.push(source[i + w.width() - 1]);
@@ -496,7 +615,7 @@ fn main() {
 
     let p = phase("aligned_and_lists");
     let mut s = Vec::with_capacity(m + 1);
-    let mut pos = 0;
+    let mut pos: usize = 0;
     let mut loc = vec![0u32; k + 1];
     for (i, &id) in pa.iter().enumerate() {
         let v = id as usize;
@@ -509,25 +628,27 @@ fn main() {
                 "broken packed parse overlap"
             );
         }
-        s.push(pos);
-        pos = u32::checked_add(pos, words[v].width() as u32).expect("wide corpus offset required");
+        s.push(C::checked(pos));
+        pos = pos
+            .checked_add(words[v].width())
+            .expect("text extent overflow");
         loc[v + 1] += 1;
     }
-    s.push(pos);
-    assert_eq!(pos as usize, n);
+    s.push(C::checked(pos));
+    assert_eq!(pos, n);
     drop(words);
     let mut pl = vec![0; m];
     assert_eq!(
         unsafe { libsais_plcp_int(pa.as_ptr(), ps.as_ptr(), pl.as_mut_ptr(), m as i32) },
         0
     );
-    let mut aligned = vec![0; m];
+    let mut aligned = vec![C::default(); m];
     for r in 1..m {
         let (i, j) = (ps[r - 1] as usize, ps[r] as usize);
         let z = pl[j] as usize;
         let (x, y) = (pa[i + z] as usize, pa[j + z] as usize);
         assert!(x < y);
-        aligned[r] = s[i + z] - s[i] + common(dict.key(x), dict.key(y)) as u32;
+        aligned[r] = C::checked(s[i + z].get() - s[i].get() + common(dict.key(x), dict.key(y)));
     }
     drop(pl);
     let min = BlockMin::new(aligned);
@@ -536,14 +657,16 @@ fn main() {
         loc[v + 1] += loc[v];
     }
     let mut cur = loc.clone();
-    let mut pair = vec![[0; 2]; m];
+    let mut positions = vec![C::default(); m];
+    let mut ranks = vec![0u32; m];
     let mut pred = vec![0; m];
     let mut insert = |j: usize, next: u32| {
         let v = pa[j] as usize;
         let i = cur[v] as usize;
         cur[v] += 1;
         let pos = s[j];
-        pair[i] = [pos, next];
+        positions[i] = pos;
+        ranks[i] = next;
         if j > 0 {
             pred[i] = last_owned[pa[j - 1] as usize];
         }
@@ -561,7 +684,8 @@ fn main() {
     drop(s);
     drop(last_owned);
     let lists = Lists {
-        pair,
+        pos: positions,
+        next: ranks,
         pred,
         loc,
         min,
@@ -602,10 +726,10 @@ fn main() {
         rows: 0,
         sink_time: Duration::ZERO,
         audit_time: Duration::ZERO,
-        progress: three,
+        progress: three || ten,
         flag,
     };
-    out.push(n as u32, 0, last as u32);
+    out.push::<C>(n, 0, last as u32);
     let mut q = BinaryHeap::new();
     let (mut prev, mut len, mut head) = (0, 0, 0);
     let (mut seen, mut groups, mut max_group) = (0usize, 0usize, 0usize);
@@ -644,7 +768,7 @@ fn main() {
             dict.decode[dict.bytes[i - 1] as usize] as u32
         };
         q.push(Reverse((
-            lists.pair[idx as usize][1],
+            lists.next[idx as usize],
             idx,
             lists.loc[v + 1],
             off,
