@@ -31,7 +31,9 @@ def config(profile):
     raise ValueError('unknown rung: '+profile)
 
 # Select only gate controls (never persist unrelated inherited environment).
-CONTROL_KEYS=set('SS_LCP_SLICE_WINDOW CROSS_V2_PIECES CROSS_V2_PIECE_WINDOW PFCK_SPACING XSA_GATE_PACKED_10G XSA_GATE_PACKED_3G XSA_FINISH_SPOOL XSA_RESIDENT_RADIX_LANES XSA_RESIDENT_RADIX_STEP XSA_RESIDENT_DICT_THREADS OMP_NUM_THREADS OMP_THREAD_LIMIT OMP_DYNAMIC OMP_WAIT_POLICY GOMP_SPINCOUNT XSA_RESIDENT_PACKED XSA_RESIDENT_WIDE_DICT XSA_TEST_RESIDENT_TRIPLES XSA_BATCH_SXLS_ESCAPES XSA_PRIVATE_SXLS_RECLAIM'.split())
+CONTROL_KEYS=set('SS_LCP_SLICE_WINDOW CROSS_V2_PIECES CROSS_V2_PIECE_WINDOW PFCK_SPACING XSA_GATE_PACKED_10G XSA_GATE_PACKED_3G XSA_FINISH_SPOOL XSA_RESIDENT_RADIX_LANES XSA_RESIDENT_RADIX_STEP XSA_RESIDENT_DICT_THREADS OMP_NUM_THREADS OMP_THREAD_LIMIT OMP_DYNAMIC OMP_WAIT_POLICY GOMP_SPINCOUNT XSA_RESIDENT_PACKED XSA_RESIDENT_WIDE_DICT XSA_TEST_RESIDENT_TRIPLES XSA_BATCH_SXLS_ESCAPES XSA_PRIVATE_SXLS_RECLAIM XSA_RESIDENT_ASYNC_AUDIT'.split())
+
+AUDIT_PROFILE='packed-radix-4-batch';ASYNC_RESERVE=(2<<20)+(64<<10)
 
 def dict_extra(D,t):
     return t*(64+(4*256+2*24576)*(8 if D>=2**31 else 4))+3*4097 if t>1 and D>1 else 0
@@ -147,7 +149,7 @@ def oracle(d,tools,cfg,deadline=None):
 
 def radix_lanes(profile):return {'packed-radix-1':1,'packed-radix-2':2,'packed-radix-4':4}.get(profile.removesuffix('-batch'),1)
 
-def pack_front(d,tools,cfg,lanes=1,threads=1,deadline=None):
+def pack_front(d,tools,cfg,lanes=1,threads=1,deadline=None,async_audit=False):
     """Produce *fresh* columns from private cold raw text. The packer itself
     charges each bucket, assignment and output before writing (limit 2N).
     No active sink/finish until the new dictionary tape has been retired.
@@ -191,7 +193,8 @@ def pack_front(d,tools,cfg,lanes=1,threads=1,deadline=None):
         resident=12*(k+1)+21*m+16*((m+15)//16)
         bounds=dict(parse=tape+8*m+40*k,aux=tape+D+33*(k+1)+56*(m+1),sort=9*D+resident+(64<<20),emit=9*D+16*((D+63)//64)+resident+40*k+(8<<20))
         assert bounds==ref['proposed_array_bytes'] and v['D']==D and v['alphabet']<=254 and max(n,tape,D)<2**43
-    bounds['emit']+=emit_extra(D,lanes);bounds['sort']+=dict_extra(D,threads)
+    if async_audit:assert cfg==ONE and lanes==4
+    bounds['emit']+=emit_extra(D,lanes)+int(async_audit)*ASYNC_RESERVE;bounds['sort']+=dict_extra(D,threads)
     front.update(n=n,m=m,k=k,descriptors=descriptors,D=D,array_bounds=bounds,counted_front_peak=peak_counted,columns=sizes); save(d/'front-end.json',front)
     assert 0<k<=m and m+6*k<2**31 and max(bounds.values())<=cfg.arrays_gib*GIB
     if cfg!=TEN:assert m<=100_000_000 and k<=80_000_000 and tape<2**32
@@ -203,10 +206,14 @@ def pack_front(d,tools,cfg,lanes=1,threads=1,deadline=None):
     front.update(counted_front_peak=peak_counted,columns=sizes,cold_barrier_s=time.monotonic()-t)
     save(d/'front-end.json',front); say('PACKED_FRONT',m,k,peak_counted,round(front['wall_s'],3)); return front
 
-def build(d,tools,profile,deadline=None):
-    cfg=config(profile); N=cfg.n; matched=profile in TEN_ARMS
-    if matched!=(deadline is not None):raise ValueError('deadline required only for matched profiles')
-    if matched and expired(d,deadline):raise SystemExit(75)
+def build(d,tools,profile,deadline=None,audit_arm=None):
+    cfg=config(profile); N=cfg.n; matched=profile in TEN_ARMS;capture=matched or audit_arm is not None
+    if audit_arm is not None and (audit_arm not in ('sync','async') or profile!=AUDIT_PROFILE):raise ValueError('fixed 1 GB audit pair only')
+    if capture!=(deadline is not None):raise ValueError('deadline required only for matched profiles')
+    if capture and expired(d,deadline):raise SystemExit(75)
+    if audit_arm is not None:
+        assert stat.S_ISFIFO(os.fstat(1).st_mode) and (CG/'cpu.max').read_text().strip()=='400000 100000'
+        omp_settings(1)  # check the effective four-CPU grant; this 1 GB build does not enable OpenMP
     lanes,batch,threads,reclaim=TEN_ARMS.get(profile,(radix_lanes(profile),int(profile.endswith('-batch')),1,0))
     omp=omp_settings(threads) if matched else {};cpu_start=time.process_time()
     row_queue=lanes*2*65536*12 if lanes>1 else 0
@@ -215,7 +222,7 @@ def build(d,tools,profile,deadline=None):
     src=d/'in'; corpus=src/'corpus'; assert corpus.stat().st_size==N
     packed=profile.startswith('packed-'); raw_start=time.monotonic(); cg0=cg_info()
     if packed:
-        front=pack_front(d,tools,cfg,lanes,threads,deadline); producer_in=d/'columns'; retained=front['columns']['parse.u32'] # through finish
+        front=pack_front(d,tools,cfg,lanes,threads,deadline,async_audit=audit_arm=='async'); producer_in=d/'columns'; retained=front['columns']['parse.u32'] # through finish
     else:
         producer_in=src; retained=sum((src/f).stat().st_size for f in ('parse.u32','dictionary.refs'))
     retired=False
@@ -245,20 +252,21 @@ def build(d,tools,profile,deadline=None):
         temp=tempfile.TemporaryDirectory(prefix='xsa-volatile-',dir='/dev/shm'); ram=Path(temp.name)
         bands=ram/'bands'; extra_env={'XSA_GATE_VOLATILE_PIECES':str(ram/'pieces')}
         if bitmap:(ram/'bitmap').mkdir(mode=0o700)
-    bands.mkdir();prepared_cg=cg_info() if matched else None; start=time.monotonic()
+    bands.mkdir();prepared_cg=cg_info() if capture else None; start=time.monotonic()
     env={k:v for k,v in os.environ.items() if not k.startswith(('XSA_','SS_','CROSS_','PFCK_','TRIE_','LD_PRELOAD'))}
     env.update(SS_LCP_SLICE_WINDOW='64',CROSS_V2_PIECES='1',CROSS_V2_PIECE_WINDOW='32',PFCK_SPACING='22')
     common=['--corpus',corpus,'--remap',src/'remap','--threads','2']; pref=d/'merged/frag'
     w={}; proc={}; iofiles={}; exitcode={}; times={}; peaks={}; logs={}; started={}; tail=None
     controls={}
     def launch(name,cmd,**kwargs):
-        if matched:
+        if capture:
             settings=kwargs['env'];assert 'XSA_FINISH_SPOOL' not in settings
+            assert settings.get('XSA_RESIDENT_ASYNC_AUDIT')==('1' if name=='resident' and audit_arm=='async' else None)
             assert settings.get('XSA_PRIVATE_SXLS_RECLAIM')==('1' if name=='sink' and reclaim else None)
         logs[name]=(d/(name+'.log')).open('xb'); started[name]=time.monotonic()
         kwargs.setdefault('stdout',logs[name]); w[name]=sp.Popen(cmd,stderr=logs[name],**kwargs); peaks[name]=0
         iofiles[name]=open(f'/proc/{w[name].pid}/io')  # pin before any retry/wait at the exec boundary
-        if matched:
+        if capture:
             from overlap_ten_controls import stable_read
             requested={k:v for k,v in kwargs['env'].items() if k in CONTROL_KEYS}
             controls[name]=stable_read(w[name].pid,requested)
@@ -270,13 +278,16 @@ def build(d,tools,profile,deadline=None):
     audit=os.dup(1)
     if cfg==THREE: env['XSA_GATE_PACKED_3G']='1'
     if cfg==TEN: env['XSA_GATE_PACKED_10G']='1'
-    if matched:env={k:v for k,v in env.items() if not k.startswith(('OMP_','GOMP_'))}
+    if capture:env={k:v for k,v in env.items() if not k.startswith(('OMP_','GOMP_'))}
     if matched or profile.startswith('packed-radix-'):env.update(XSA_RESIDENT_RADIX_LANES=str(lanes),XSA_RESIDENT_RADIX_STEP='16384')
     rank_input=[d/'inverse.check'] if cfg==ONE else []
     binary_dir=tools if (tools/'overlap_resident').exists() else REPO/'xsa/target/release'
     if expired(d,deadline):raise SystemExit(75)
+    if audit_arm is not None and deadline-time.time()<180:
+        request('insufficient time before uninterruptible 1 GB native sort');raise SystemExit(75)
+    tee_opt={'XSA_RESIDENT_ASYNC_AUDIT':'1'} if audit_arm=='async' else {}
     launch('resident',[binary_dir/'overlap_resident',producer_in,flag,str(cfg.arrays_gib*GIB),*rank_input],
-           env=dict(env,**omp,XSA_RESIDENT_PACKED=str(int(packed)),XSA_RESIDENT_WIDE_DICT=str(int(profile!='narrow')),XSA_RESIDENT_AUDIT_FD=str(audit)),stdout=sp.PIPE,pass_fds=(audit,)); os.close(audit)
+           env=dict(env,**omp,**tee_opt,XSA_RESIDENT_PACKED=str(int(packed)),XSA_RESIDENT_WIDE_DICT=str(int(profile!='narrow')),XSA_RESIDENT_AUDIT_FD=str(audit)),stdout=sp.PIPE,pass_fds=(audit,)); os.close(audit)
     counted_peak=0; disk_peak=0; at_peak={}; each={}; last_disk=0; active='start'; samples={}
     with (d/'resident.log').open() as tail:
         while True:
@@ -316,9 +327,9 @@ def build(d,tools,profile,deadline=None):
             if time.monotonic()-last_disk>1 or len(exitcode)==len(w):
                 last_disk=time.monotonic(); whole,parts=footprint(d,0 if packed else retained); disk_peak=max(disk_peak,whole)
                 if ram is not None:
-                    markers=[0] if matched else None
+                    markers=[0] if capture else None
                     allocated,rparts=footprint(ram,0,ram=True,markers=markers); rparts.pop('prepared_refs_ids'); parts.update(rparts)
-                    if matched:marker_peak=max(marker_peak,markers[0])
+                    if capture:marker_peak=max(marker_peak,markers[0])
                     rampeak=max(rampeak,allocated); shmempeak=max(shmempeak,int(re.search(r'^shmem (\d+)$',(CG/'memory.stat').read_text(),re.M)[1]))
                     if max(allocated,sum(rparts.values()))>reserve:request('volatile scratch exceeded reserved RAM')
                     if bitmap and ('frag.chi-bitmap' in parts or rparts.get('ram_bitmap',0)>plan['bitmap']):request('wrong bitmap placement/extent')
@@ -332,6 +343,7 @@ def build(d,tools,profile,deadline=None):
             mem=int((CG/'memory.current').read_text()); samples[active]=max(samples.get(active,0),mem)
             if flag.exists():request('private flag')
             if sum(x['read_bytes'] for x in proc.values())>20*N or time.monotonic()-start>(12822 if cfg==TEN else 3600):request('runaway read/time guard')
+            if audit_arm is not None and (sum(x['write_bytes'] for x in proc.values())>16*N or shutil.disk_usage(d).free<256<<20):request('audit pair IO/space guard')
             if len(exitcode)==len(w):break
             time.sleep(.2)
     for f in (*logs.values(),*iofiles.values()):f.close()
@@ -339,14 +351,15 @@ def build(d,tools,profile,deadline=None):
             counted_sampled_peak=counted_peak,counted_at_peak=at_peak,individual_sampled_peaks=each,whole_dir_sampled_allocated=disk_peak,
             wall_s=time.monotonic()-start,shared_before=cg0,shared_after=cg_info(),stop=flag.exists())
     if profile.startswith('packed-radix-'):rc['sxls_batched']=profile.endswith('-batch')
-    if matched:rc.update(prepared_cgroup_before=prepared_cg,worker_controls=controls,sxls_batched=bool(batch),omp_settings=omp,cpu_affinity=sorted(os.sched_getaffinity(0)),harness_cpu_s=time.process_time()-cpu_start,deadline_unix=deadline)
+    if audit_arm is not None:rc.update(audit_pair_arm=audit_arm,tee_reserve_array_bytes=ASYNC_RESERVE if audit_arm=='async' else 0,verifier_transport='dedicated inherited FIFO')
+    if capture:rc.update(prepared_cgroup_before=prepared_cg,worker_controls=controls,sxls_batched=bool(batch),omp_settings=omp,cpu_affinity=sorted(os.sched_getaffinity(0)),harness_cpu_s=time.process_time()-cpu_start,deadline_unix=deadline)
     if packed:
         rc.update(raw_to_product_s=time.monotonic()-raw_start,raw_front_wall_s=front['wall_s'],packed_tape_retired=retired,
                   raw_counted_highwater=max(front['counted_front_peak'],counted_peak),raw_dir_sampled_allocated=max(front['sampled_allocated'],disk_peak),
                   raw_worker_io={k:front['process'][k]+sum(x[k] for x in proc.values()) for k in ('read_bytes','write_bytes')})
     if ram is not None:
         rc['volatile_handoff']=dict(reserved_bytes=reserve,sampled_tmpfs_allocated=rampeak,sampled_cgroup_shmem=shmempeak,swap_max=0,mode='replay from raw input' if packed else 'restart from prepared inputs, no handoff recovery')
-        if matched and not rc['stop'] and exitcode==dict(resident=0,sink=0,finish=0):
+        if capture and not rc['stop'] and exitcode==dict(resident=0,sink=0,finish=0):
             assert bands==ram/'bands' and not (d/'bands').exists() and not any(each.get(k,0) for k in ('slices','pieces','frag.chi-bitmap'))
             rc['sxls_markers']=dict(reclaim=bool(reclaim),sampled_peak=marker_peak,exact_final=final_markers(bands,rows,reclaim),bands_on_tmpfs=True)
         if bitmap:
@@ -377,5 +390,12 @@ if __name__=='__main__':
         profile=sys.argv[4] if len(sys.argv)>4 else 'narrow'
         if (profile in TEN_ARMS)!=(len(sys.argv)==6):raise ValueError('deadline required only for matched profiles')
         oracle(d,Path(sys.argv[3]),config(profile),int(sys.argv[5]) if len(sys.argv)==6 else None)
+    elif mode in ('build-audit','oracle-audit') and len(sys.argv)==6:
+        from overlap_async_pair import validate_arm
+        tools=Path(sys.argv[3]);arm=sys.argv[4];deadline=int(sys.argv[5]);validate_arm(d,tools,arm,deadline)
+        if mode=='build-audit':build(d,tools,AUDIT_PROFILE,deadline,arm)
+        else:
+            assert stat.S_ISFIFO(os.fstat(0).st_mode) and (CG/'cpu.max').read_text().strip()=='100000 100000'
+            oracle(d,tools,ONE,deadline)
     elif mode=='build' and len(sys.argv) in (4,5,6):build(d,Path(sys.argv[3]),sys.argv[4] if len(sys.argv)>4 else 'narrow',int(sys.argv[5]) if len(sys.argv)==6 else None)
     else:raise ValueError(mode)
