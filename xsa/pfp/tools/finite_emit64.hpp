@@ -10,7 +10,7 @@ struct Emit {
  unsigned ob=0,payload=0;bool pair=false,cached=false;U value_mask=0,arrays=0,packets=0,waves=0;double sort_wall=0,stream_wall=0,queue_blocked=0,tile_plan_s=0;Counts totals;Sink sink_stats;
  static constexpr U GRAIN=1536;
  struct Tile {U job,start,len;Span prev;bool last;};
- U tiles=0,extended_cuts=0,max_piece=0,max_piece_rows=0,over_queue=0;
+ U tiles=0,extended_cuts=0,max_piece=0,max_piece_rows=0,over_queue=0,slots=0,next_job=0;Span prev{};
  static Big tile_bytes(U slots,U team){return Big(divup(slots,GRAIN)+team)*sizeof(Tile)+team*(sizeof(TilePipe)>sizeof(Pipe)?sizeof(TilePipe)-sizeof(Pipe):0);}
  explicit Emit(const Route& index,const std::vector<U>* prefixes=nullptr):ix(index),learned(prefixes),plan(index),v(index.v),text(index.text),n(index.n),m(index.m),team(index.team),stop(index.stop){
   U longest=0;for(auto& s:ix.stripe)longest=std::max(longest,s.longest);need(longest,"no owned words");ob=std::bit_width(longest-1);unsigned rb=std::bit_width(m-1);
@@ -71,11 +71,12 @@ struct Emit {
 #pragma omp parallel num_threads(w)
   {int j=omp_get_thread_num();need(omp_get_num_threads()==w,"missing tile lane");auto& q=*pipes[j];for(U i=j;i<work.size();i+=w){auto& z=work[i];Counts c;q.begin(i);expand(plan.jobs[z.job],arena+z.start,z.prev,marks[j],q,c,z.len);add(results[j],c);}q.close();}
   cat.join();for(int j=0;j<w;++j){pipes[j]->drained();queue_blocked+=pipes[j]->blocked;add(totals,results[j]);}}
- void run(int sink,U max_slots,U grant,bool tiled=false,bool cache_order=false){cached=cache_order;need(n<(U(1)<<43) && max_slots,"row ABI or empty arena");stop.check();U slots=std::min(max_slots,v.stats.owned);
-  need(ix.bands.capacity()==CELL,"unexpected vector reservation");arrays=narrow(std::max<Big>(ix.array_bound,emit_arrays(n,m,team,ix.bands.size(),ix.pages.count,slots)+(learned?8*Big(learned->capacity()):0)+(tiled?tile_bytes(slots,team):0)+(cached?team*finitecache::PER_LANE:0)));need(arrays<=grant,"ordered stream array grant");plan.build(slots);const auto& jobs=plan.jobs;
+ void prepare(U max_slots,U grant,bool tiled,bool cache_order,Big extra=0){cached=cache_order;need(n<(U(1)<<43) && max_slots && !slots,"row ABI, repeated or empty arena");stop.check();slots=std::min(max_slots,v.stats.owned);
+  need(ix.bands.capacity()==CELL,"unexpected vector reservation");arrays=narrow(std::max<Big>(ix.array_bound,emit_arrays(n,m,team,ix.bands.size(),ix.pages.count,slots)+(learned?8*Big(learned->capacity()):0)+(tiled?tile_bytes(slots,team):0)+(cached?team*finitecache::PER_LANE:0)+extra));need(arrays<=grant,"ordered stream array grant");plan.build(slots);}
+ void emit_to(int sink,U through,bool tiled){const auto& jobs=plan.jobs;need(next_job<through && through<=jobs.size(),"epoch job coverage");stop.check();
   std::vector<U> arena(slots);std::vector<Marks> marks;marks.reserve(team);for(int i=0;i<team;++i)marks.emplace_back(m);
-  int flags=fcntl(sink,F_GETFL);need(flags>=0 && !fcntl(sink,F_SETFL,flags|O_NONBLOCK),"nonblocking row sink");Span prev{};Row first=row(n,0,text[n-1]);send(sink,&first,1,stop,sink_stats);
-  for(U lo=0,hi;lo<jobs.size();lo=hi){std::array<U,65> at{};hi=lo;while(hi<jobs.size() && hi-lo<U(team)){U i=hi-lo,d=jobs[hi].exact?0:jobs[hi].d;if(d>slots-at[i])break;at[i+1]=at[i]+d;++hi;}
+  if(!next_job){int flags=fcntl(sink,F_GETFL);need(flags>=0 && !fcntl(sink,F_SETFL,flags|O_NONBLOCK),"nonblocking row sink");Row first=row(n,0,text[n-1]);send(sink,&first,1,stop,sink_stats);}
+  for(U lo=next_job,hi;lo<through;lo=hi){std::array<U,65> at{};hi=lo;while(hi<through && hi-lo<U(team)){U i=hi-lo,d=jobs[hi].exact?0:jobs[hi].d;if(d>slots-at[i])break;at[i+1]=at[i]+d;++hi;}
    int lanes=int(hi-lo);need(lanes>0,"empty wave");++waves;std::vector<Counts> stats(lanes);double ts=omp_get_wtime();
 #pragma omp parallel for num_threads(lanes) schedule(static,1)
    for(int j=0;j<lanes;++j)order(jobs[lo+j],arena.data()+at[j],stats[j]);
@@ -87,6 +88,7 @@ struct Emit {
    {int j=omp_get_thread_num();need(omp_get_num_threads()==lanes,"missing emission lane");expand(jobs[lo+j],arena.data()+at[j],edges[j],marks[j],*pipes[j],stats[j],jobs[lo+j].d);}
    cat.join();stream_wall+=omp_get_wtime()-ts;for(auto& p:pipes)queue_blocked+=p->blocked;
    for(auto& c:stats)add(totals,c);}
-  stop.check();need(totals.rows==n && sink_stats.bytes==12*(n+1),"incomplete byte rows");}
+  next_job=through;stop.check();need(sink_stats.bytes==12*(totals.rows+1) && (through<jobs.size()?totals.rows<n:totals.rows==n),"incomplete byte rows");}
+ void run(int sink,U max_slots,U grant,bool tiled=false,bool cache_order=false){prepare(max_slots,grant,tiled,cache_order);emit_to(sink,plan.jobs.size(),tiled);}
 };
 }

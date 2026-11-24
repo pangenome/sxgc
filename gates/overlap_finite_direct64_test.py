@@ -18,14 +18,14 @@ def mix(x):
 
 def upper(u,v,b,t):return ceil(min(u*(l+1)+b*((v-1)>>l) for l in range(64)),8)+16*b*t
 
-def probe(text,inv,t,target):
+def probe(text,inv,t,target,images=False):
     n=len(text);m=len(inv);start=[0]+[i for i in range(1,n-7) if trigger(text[i:i+8])];groups={}
     for j,r in enumerate(inv):
         p=start[j];terminal=(j+1==m);word=text[p:n if terminal else start[j+1]+8];groups.setdefault((word,terminal),[]).append(r)
     head={min(rs):(w,terminal,len(rs)) for (w,terminal),rs in groups.items()};u=sum(len(w)-(0 if end else 8) for w,end,_ in head.values());pg=m+(u-len(head))//32;available=2*n-8*m
     ok=[b for b in range(1,1+min(16384,u,ceil(u,target))) if upper(u,32*pg,b,t)<=available]
-    if not ok:return None
-    b=max(ok);data=[];universes=[]
+    if not ok and not images:return None
+    b=min(16384,u,ceil(u,target)) if images else max(ok);data=[];universes=[]
     for lane in range(t):
         page=0
         for r in range(1+m*lane//t,1+m*(lane+1)//t):
@@ -39,8 +39,22 @@ def probe(text,inv,t,target):
     for j in range(ns):
         lo=u*j//ns;hi=u*(j+1)//ns;pick.append(data[lo+mix(j)%(hi-lo)][0])
     pick.sort();piv=sorted(set(pick[ns*i//b] for i in range(1,b))-{pick[0]});count=[[0]*t for _ in range(len(piv)+1)];last=[[0]*t for _ in count];mass=[0]*len(count)
+    posts=[[[] for _ in range(t)] for _ in count] if images else None
     for k,lane,x,f in data:
         z=bisect_right(piv,k);count[z][lane]+=1;last[z][lane]=x;mass[z]+=f
+        if images:posts[z][lane].append(x)
+    if images:
+        out=[]
+        for b,lanes in enumerate(posts):
+            main=bytearray();tail=bytearray();pop=0
+            for xs,v in zip(lanes,universes):
+                c=len(xs)
+                if not c:continue
+                _,l=bits(v,c);low=ceil(l*c,64);high=ceil(c+((v-1)>>l),64);pop+=8*(low+ceil(c+(xs[-1]>>l),64));mask=(1<<l)-1
+                for num,size in [(sum((x&mask)<<(l*i) for i,x in enumerate(xs)),low),(sum(1<<(i+(x>>l)) for i,x in enumerate(xs)),high)]:
+                    col=num.to_bytes(8*size,'little');cut=len(col)//4096*4096;main.extend(col[:cut]);tail.extend(col[cut:])
+            out.append((sum(count[b]),mass[b],bytes(main),bytes(tail),pop))
+        return out
     wire=pop=explicit=tails=0
     for cs,xs in zip(count,last):
         for c,x,v in zip(cs,xs,universes):

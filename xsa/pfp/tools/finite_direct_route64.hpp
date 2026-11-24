@@ -1,5 +1,6 @@
 #pragma once
 #include "finite_route64.hpp"
+#include <span>
 // Direct monotone postings to learned finite-key ranges. Sampling sets boundaries, NOT counts or equality.
 namespace routedirect {
 using namespace route64;
@@ -12,7 +13,7 @@ inline U allowed(U v,U d,U target,U team,U available){need(target && upper(v,d,1
 inline U mix(U x){x+=0x9e3779b97f4a7c15ull;x=(x^(x>>30))*0xbf58476d1ce4e5b9ull;x=(x^(x>>27))*0x94d049bb133111ebull;return x^(x>>31);}
 // The exact same total number of words as contiguous EF. Aligned whole-page interiors,
 // then one packed region of tails. No per-range 4 KiB disk padding, ever.
-inline U place(std::vector<Layout>& streams,U& boundary){Big at=0;for(auto& s:streams){s.low_at=narrow(at);at+=8*Big(s.fmt.low/BUF*BUF);s.high_at=narrow(at);at+=8*Big(s.fmt.high/BUF*BUF);}boundary=narrow(at);
+inline U place(std::span<Layout> streams,U& boundary){Big at=0;for(auto& s:streams){s.low_at=narrow(at);at+=8*Big(s.fmt.low/BUF*BUF);s.high_at=narrow(at);at+=8*Big(s.fmt.high/BUF*BUF);}boundary=narrow(at);
  for(auto& s:streams){s.low_tail=narrow(at);at+=8*(s.fmt.low%BUF);s.high_tail=narrow(at);at+=8*(s.fmt.high%BUF);}return narrow(at);}
 class Fragments {
  int fd;U begin,at,n=0;std::array<U,32768> buf;rawview::Stop stop;
@@ -54,9 +55,10 @@ struct Direct {
   skip.resize(pivots.size()+1);for(U i=1;i<pivots.size();++i)skip[i]=lcp(pivots[i-1],pivots[i]);
  }
  static Big work_arrays(U n,U m,U w,U nb,U pg,U sample){return Route::build_arrays(n,m,w,nb,pg)+Big(nb)*(sizeof(Key)+8)+Big(sample)*(sizeof(Key)+8)+Big(CELL)*sizeof(Bounds)+Big(nb)*w*sizeof(Load)+(1<<20);}
- void build(const char* file,U target,U arrays,U other){double t=omp_get_wtime();stop.check();need(other>=8*m && Big(other)<Big(2)*n && d>=view.stats.groups,"direct scratch inputs");
-  U pg=narrow(Big(m)+(d-view.stats.groups)/PAGE),vmax=narrow(Big(pg)*PAGE);target_bands=allowed(vmax,d,target,team,narrow(2*Big(n)-other));file_upper=narrow(upper(vmax,d,target_bands,team));
-  ix.array_bound=narrow(work_arrays(n,m,team,target_bands,pg,std::min(d,OVER*target_bands)));need(ix.array_bound<=arrays,"direct splitter/EF array grant");learn();double ts=omp_get_wtime();sample_s=ts-t;U nb=pivots.size()+1;
+ Big retained()const{return Big(pivots.capacity())*sizeof(Key)+Big(cells.capacity())*sizeof(Bounds);}
+ void prepare(U target,U arrays,U other,bool epochs=false,Big extra=0){double t=omp_get_wtime();stop.check();need(target && other>=8*m && Big(other)<Big(2)*n && d>=view.stats.groups,"direct scratch inputs");
+  U pg=narrow(Big(m)+(d-view.stats.groups)/PAGE),vmax=narrow(Big(pg)*PAGE);target_bands=epochs?std::min(MAX_BANDS,divup(d,target)):allowed(vmax,d,target,team,narrow(2*Big(n)-other));file_upper=narrow(upper(vmax,d,target_bands,team));
+  ix.array_bound=narrow(work_arrays(n,m,team,target_bands,pg,std::min(d,OVER*target_bands))+extra);need(ix.array_bound<=arrays,"direct splitter/EF array grant");learn();double ts=omp_get_wtime();sample_s=ts-t;U nb=pivots.size()+1;
   ix.stripe.resize(team);ix.bands.reserve(CELL);ix.bands.resize(nb);std::vector<Load> counts(team*nb);
 #pragma omp parallel num_threads(team)
   {int lane=omp_get_thread_num();need(omp_get_num_threads()==team,"direct census team");auto& s=ix.stripe[lane];s.lo=rawview::cut(m,lane,team);s.hi=rawview::cut(m,lane+1,team);s.pages=s.hi-s.lo;auto* local=counts.data()+lane*nb;
@@ -64,15 +66,19 @@ struct Direct {
     ix.offsets(w,stride,[&](U o,unsigned c){auto& z=local[classify(w,o,c)];++z.d;z.rows+=freq;});});}
   double tc=omp_get_wtime();U pages=0;for(auto& s:ix.stripe){s.base=pages;pages+=s.pages;}need(pages<=pg,"actual page geometry");ix.pages.allocate(pages);ix.slices.resize(nb*team);U found=0,mass=0;
   for(U b=0;b<nb;++b){auto& z=ix.bands[b];z.lo=0;z.hi=CELL;for(int lane=0;lane<team;++lane){auto c=counts[lane*nb+b];z.load.d+=c.d;z.load.rows+=c.rows;auto& s=ix.slices[b*team+lane];s.count=c.d;s.rows=c.rows;s.fmt=shape(ix.stripe[lane].pages*PAGE,c.d);}need(z.load.d,"empty learned range");found+=z.load.d;mass+=z.load.rows;max_desc=std::max(max_desc,z.load.d);max_rows=std::max(max_rows,z.load.rows);}
-  need(found==d && mass==n,"learned range coverage");std::vector<Load>().swap(counts);U boundary=0;ix.wire=place(ix.slices,boundary);need(ix.wire<=file_upper && Big(other)+ix.wire<=Big(2)*n && ix.wire<=INT64_MAX,"direct payload bounds");stop.check();
-  int fd=open(file,O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);need(fd>=0 && !ftruncate(fd,off_t(ix.wire)),"new direct payload");std::vector<Encoder> enc(nb*team);double tp=omp_get_wtime();
+  need(found==d && mass==n,"learned range coverage");ix.census_s=tc-ts;ix.plan_s=omp_get_wtime()-tc;}
+ U band_wire(U b)const{Big z=0;for(int lane=0;lane<team;++lane){auto& s=ix.slices.at(b*team+lane);z+=8*(Big(s.fmt.low)+s.fmt.high);}return narrow(z);}
+ U layout(U lo,U hi,U& boundary){need(lo<hi && hi<=ix.bands.size() && ix.fd==-1,"direct layout/lifetime");ix.active_lo=lo;ix.active_hi=hi;return place(std::span(ix.slices).subspan(lo*team,(hi-lo)*team),boundary);}
+ template<bool Rolling>void encode(int fd,U lo,U hi,U bytes,U boundary){stop.check();U nb=hi-lo;double start=omp_get_wtime();std::vector<Encoder> enc(nb*team);double tp=omp_get_wtime();ix.plan_s+=tp-start;
 #pragma omp parallel num_threads(team)
-  {int lane=omp_get_thread_num();auto& s=ix.stripe[lane];U extra=0;ix.heads(s,[&](U r,auto w,U stride){U page=s.base+(r-1-s.lo)+extra,more=(stride-1)/PAGE;ix.pages.extras(page+1,more,stop);extra+=more;U rel=PAGE*(page-s.base);
-    ix.offsets(w,stride,[&](U o,unsigned c){unsigned b=classify(w,o,c);enc[lane*nb+b].put(fd,ix.slices[b*team+lane],s.pages*PAGE,rel+o,stop);});});need(s.hi-s.lo+extra==s.pages,"direct stripe extent");
-   for(U b=0;b<nb;++b)enc[lane*nb+b].finish(fd,ix.slices[b*team+lane]);}
-  Fragments tails(fd,boundary,stop);for(U b=0;b<nb;++b){for(int lane=0;lane<team;++lane){auto& s=ix.slices[b*team+lane];auto& e=enc[lane*nb+b];tails.append(e.low,s.fmt.low,s.low_tail);tails.append(e.high,s.fmt.high,s.high_tail);explicit_write+=8*(e.low.sent+e.high.sent);ix.transferred+=8*(s.fmt.low+s.used_high);}}
-  fragment_bytes=tails.finish(ix.wire);explicit_write+=fragment_bytes;need(ix.transferred<=explicit_write && explicit_write<=ix.wire,"direct logical write bounds");ix.pages.finish(m,stop);double te=omp_get_wtime();std::vector<Key>().swap(pivots);std::vector<Bounds>().swap(cells);
-  struct stat a{},b{};need(!fsync(fd) && !fstat(fd,&a) && U(a.st_size)==ix.wire && a.st_nlink==1,"direct sync/shape");ix.fd=open(file,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);need(ix.fd>=0 && !fstat(ix.fd,&b) && a.st_ino==b.st_ino && a.st_dev==b.st_dev && a.st_size==b.st_size && b.st_nlink==1 && !close(fd),"direct handoff");stop.check();ix.census_s=tc-ts;ix.plan_s=tp-tc;ix.encode_s=te-tp;ix.fsync_s=omp_get_wtime()-te;
+  {int lane=omp_get_thread_num();auto& s=ix.stripe[lane];U extra=0;ix.heads(s,[&](U r,auto w,U stride){U page=s.base+(r-1-s.lo)+extra,more=(stride-1)/PAGE;if(!Rolling || !lo)ix.pages.extras(page+1,more,stop);extra+=more;U rel=PAGE*(page-s.base);
+    ix.offsets(w,stride,[&](U o,unsigned c){if constexpr(Rolling){if(cells[c].lo>=hi || cells[c].hi<lo)return;}unsigned b=classify(w,o,c);if constexpr(Rolling){if(b<lo || b>=hi)return;}enc[lane*nb+b-lo].put(fd,ix.slices[b*team+lane],s.pages*PAGE,rel+o,stop);});});need(s.hi-s.lo+extra==s.pages,"direct stripe extent");
+   for(U b=lo;b<hi;++b)enc[lane*nb+b-lo].finish(fd,ix.slices[b*team+lane]);}
+  Fragments tails(fd,boundary,stop);for(U b=lo;b<hi;++b){for(int lane=0;lane<team;++lane){auto& s=ix.slices[b*team+lane];auto& e=enc[lane*nb+b-lo];tails.append(e.low,s.fmt.low,s.low_tail);tails.append(e.high,s.fmt.high,s.high_tail);explicit_write+=8*(e.low.sent+e.high.sent);ix.transferred+=8*(s.fmt.low+s.used_high);}}
+  U tails_written=tails.finish(bytes);fragment_bytes+=tails_written;explicit_write+=tails_written;ix.wire=narrow(Big(ix.wire)+bytes);need(ix.transferred<=explicit_write && explicit_write<=ix.wire && ix.wire<=file_upper,"direct logical write bounds");if(!lo)ix.pages.finish(m,stop);ix.encode_s+=omp_get_wtime()-tp;}
+ void drop_splitters(){std::vector<Key>().swap(pivots);std::vector<Bounds>().swap(cells);}
+ void build(const char* file,U target,U arrays,U other){prepare(target,arrays,other);double t=omp_get_wtime();U boundary=0,nb=ix.bands.size(),bytes=layout(0,nb,boundary);need(bytes<=file_upper && Big(other)+bytes<=Big(2)*n && bytes<=INT64_MAX,"direct payload bounds");stop.check();
+  int fd=open(file,O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);need(fd>=0 && !ftruncate(fd,off_t(bytes)),"new direct payload");ix.plan_s+=omp_get_wtime()-t;encode<false>(fd,0,nb,bytes,boundary);double te=omp_get_wtime();drop_splitters();struct stat a{},b{};need(!fsync(fd) && !fstat(fd,&a) && U(a.st_size)==ix.wire && a.st_nlink==1,"direct sync/shape");ix.fd=open(file,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);need(ix.fd>=0 && !fstat(ix.fd,&b) && a.st_ino==b.st_ino && a.st_dev==b.st_dev && a.st_size==b.st_size && b.st_nlink==1 && !close(fd),"direct handoff");stop.check();ix.fsync_s=omp_get_wtime()-te;
  }
 };
 }

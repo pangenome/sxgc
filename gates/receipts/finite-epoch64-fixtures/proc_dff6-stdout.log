@@ -1,0 +1,6 @@
+build=/tmp/finite-epoch64-initial-TKDn8x
+PASS 43 independent complete byte streams/epoch images (13 multi-epoch, 2 mixed interior/tail); predicted pre-open refusals {'epoch walk bound': 5, 'wave exceeds scratch': 6, 'range exceeds slots': 9}; no overwrite, one END, exact seams and stalled STOP after reuse
+PASS 45 exact sampled layouts/full byte streams at 1/2/4 workers, 6 certified pre-open scratch refusals, 1 mixed page/fragment payloads, 10 budget-limited splitter counts and 3 skewed >8192-slot ties
+PASS 39 byte-identical tiled streams, 0 predicted refusals; 9 multi-tile cases, whole 8311-descriptor classes and >9200-row tiles, exact bypass, stalled publication STOP
+EPOCH_PLAN desired_bands=2605 total_wire_upper=178543136719 live_posting_cap=50000000000 other_reserved=150000000000 max_walks=8 array_upper=149898703072 conditional_on_wave_fit=1
+EPOCH_PLAN desired_bands=2486 total_wire_upper=169973472 live_posting_cap=50000251 other_reserved=150000755 max_walks=8 array_upper=251389144 conditional_on_wave_fit=1

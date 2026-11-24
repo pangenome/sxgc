@@ -7,7 +7,7 @@ struct Stripe {U lo=0,hi=0,base=0,pages=0,longest=0;}; // rank-1 slices; virtual
 struct Route {
  const rawview::View& v;const uint8_t* text;U n,m;int team;rawview::Stop stop;
  std::vector<Stripe> stripe;std::vector<unsigned> band_for;std::vector<Band> bands;std::vector<Layout> slices;Pages pages;
- int fd=-1;U wire=0,transferred=0,array_bound=0;double census_s=0,plan_s=0,encode_s=0,fsync_s=0;
+ int fd=-1;U active_lo=0,active_hi=UINT64_MAX,wire=0,transferred=0,array_bound=0;double census_s=0,plan_s=0,encode_s=0,fsync_s=0;
  Route(const rawview::View& view,const uint8_t* src,U len,U ranks,int workers,rawview::Stop guard):v(view),text(src),n(len),m(ranks),team(workers),stop(guard){}
  Route(const Route&)=delete;~Route(){if(fd!=-1)close(fd);}
  static unsigned cell_at(const uint8_t* raw,U len,U off){return raw[off]*257u+(off+1<len?1u+raw[off+1]:0u);}
@@ -59,7 +59,7 @@ struct Route {
   need(fd>=0 && !fstat(fd,&b) && a.st_dev==b.st_dev && a.st_ino==b.st_ino && a.st_size==b.st_size && b.st_nlink==1 && !close(writer),"posting handoff");
   stop.check();census_s=tc-t;plan_s=tp-tc;encode_s=te-tp;fsync_s=omp_get_wtime()-te;
  }
- template<class Visit>void visit(U b,Visit action)const{need(b<bands.size() && fd>=0,"route band bounds");stop.check();
+ template<class Visit>void visit(U b,Visit action)const{need(b>=active_lo && b<active_hi && b<bands.size() && fd>=0,"route band bounds");stop.check();
   for(int lane=0;lane<team;++lane){auto& s=slices[b*team+lane];auto& span=stripe[lane];
    decode(fd,s,span.pages*PAGE,stop,[&](U rel){U token=span.base*PAGE+rel;auto [rank,off]=pages.locate(token);
     need(rank>span.lo && rank<=span.hi && v.is_head(rank),"posting does not name a head");action(rank,off,token);});}}

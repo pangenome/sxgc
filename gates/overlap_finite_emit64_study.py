@@ -81,8 +81,9 @@ def meter(d,end,w,role,until):
     p=authority(d,end);tools(d);checked_inputs(d);need(w in (4,1) and role in ('emit','oracle') and load(d,f'cold{w}.json')['arm_deadline']==until<=end and not (d/f'{role}{w}.json').exists(),'arm identity');stop=d/'stop.requested'
     cmd=[d/'emit',d/'raw',d/'inverse.u64',d/f'route{w}.ef',w,ARRAYS,OTHER,TARGET,SLOTS,stop,until] if role=='emit' else [d/'oracle','--component-100m',d/'oracle-raw',stop]
     native(d,w,role,until,p['cores'],cmd,BOUND)
-def native(d,w,role,until,cores,cmd,bound):
-    prod=role=='emit';mem,cpu=(RAM,4) if prod else (ORACLE,1);aff=cores[:4] if prod else cores[4:];caps=(12*N,bound+(8<<20)) if prod else (2*N,4<<20);before=s.grant(mem,cpu);stop=d/'stop.requested';name=f'{role}{w}';ph=None;reason=None;rss=count=alloc=0
+def native(d,w,role,until,cores,cmd,bound,traffic_bound=None):
+    # A rolling file can write more in total than it occupies simultaneously.
+    prod=role=='emit';mem,cpu=(RAM,4) if prod else (ORACLE,1);aff=cores[:4] if prod else cores[4:];caps=(12*N,(bound if traffic_bound is None else traffic_bound)+(8<<20)) if prod else (2*N,4<<20);before=s.grant(mem,cpu);stop=d/'stop.requested';name=f'{role}{w}';ph=None;reason=None;rss=count=alloc=0
     for path in (s.CG,*s.CG.parents):
         if path==Path('/sys/fs/cgroup'):break
         lim=(path/'memory.max').read_text().strip();quota,period=(path/'cpu.max').read_text().split();need((lim=='max' or int(lim)>=mem) and (quota=='max' or int(quota)>=cpu*int(period)),'ancestor resource limit')

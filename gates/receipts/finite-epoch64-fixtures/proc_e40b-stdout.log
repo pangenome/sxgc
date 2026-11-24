@@ -1,0 +1,42 @@
+build=/tmp/finite-epoch-sanitized-DLoHd6
+PASS >u32 wave/offset plan and same named inode at unchanged, shrinking and regrown extents with zero stale data
+PASS 43 independent complete byte streams/epoch images (13 multi-epoch, 2 mixed interior/tail); predicted pre-open refusals {'epoch walk bound': 5, 'wave exceeds scratch': 6, 'range exceeds slots': 9}; no overwrite, one END, exact seams and stalled STOP after reuse
+PASS 39 byte-identical cached streams, 0 predicted refusals; 9 multi-tile cases, whole 8311-descriptor classes and >9200-row tiles, exact bypass, stalled publication STOP
+PASS 57 complete independent byte-SA row43 streams; 1/2/4 ordered lanes, 3 predicted scratch refusals, 3 actual 8311-word ties beyond old cursor limit, synthetic wire/seam/backpressure/STOP and no-row-file checks
+PASS four-epoch width/fit prediction, independent traffic/live guards, no hidden rewalk or seam gap, full posting witness required; slow arm retained
+PASS one sort treatment, unchanged tiled evidence/geometry, span-work and time misses retained, invalid bounded refill refused
+PASS pinned whole-range control, one tile arm, mechanism and wall misses retained; changed routing and invalid packet coverage refused
+PASS one-shot direct gate bounds, prior score unchanged, mechanism miss retained, invalid wire bound refused
+PASS matched stream controls, timing miss preserved, no promotion on missing raw-row witness, fixed source and scratch proofs
+{
+  "conditional_100g_upper": {
+    "actual_counted_upper_if_fit": 75454870208,
+    "desired_bands": 2605,
+    "epoch_upper_if_every_range_fits": 4,
+    "k_assumed": 1,
+    "m": 3181334488,
+    "n": 100000000000,
+    "posting_cap": 50000000000,
+    "slots": 192000000,
+    "total_file_upper": 178543136719,
+    "u_assumed": 100000000000,
+    "unspent_finish_reserve": 124545129792,
+    "whole_wave_upper": 336634375
+  },
+  "measured_100m_geometry": {
+    "actual_counted_upper_if_fit": 79558803,
+    "desired_bands": 2486,
+    "epoch_upper_if_every_range_fits": 4,
+    "k_assumed": 2689467,
+    "m": 3170531,
+    "n": 100000503,
+    "posting_cap": 50000251,
+    "slots": 192001,
+    "total_file_upper": 165974592,
+    "u_assumed": 95434516,
+    "unspent_finish_reserve": 120442203,
+    "whole_wave_upper": 335670
+  },
+  "not_product_admission": true
+}
+PASS private rolling slot failure paths, immutable control receipts, fixed time refusals

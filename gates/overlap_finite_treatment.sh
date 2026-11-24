@@ -1,10 +1,11 @@
-# Sourced by the two fixed sampled-range follow-ups. The launcher identity and deadline stay
+# Sourced by the fixed sampled-range follow-ups. The launcher identity and deadline stay
 # on argv for the lifetime of the timing lease. No corpus path, binary or grant overrides.
 finite_treatment() {
     local mode=$1 study control label now end sandbox d p trappath;shift
     case "$mode" in
         tiled) study=tiles64;control=direct64;label=FINITE_TILES64_STUDY;;
         cached) study=cache64;control=tiles64;label=FINITE_CACHE64_STUDY;;
+        epochs) study=epoch64;control=tiles64;label=FINITE_EPOCH64_STUDY;;
         *) exit 75;;
     esac
     now=$(date +%s);[[ $# == 1 && $1 =~ ^[1-9][0-9]{9}$ ]] && (( $1 > now+600 && $1 <= now+1000 )) || exit 75
@@ -18,7 +19,8 @@ finite_treatment() {
     /usr/bin/python3 -BE "$p" admit "$d" "$end"
     { git rev-parse HEAD;g++ --version;local -a flags=(-std=c++20 -O3 -Wall -Wextra -Werror -fopenmp);g++ "${flags[@]}" xsa/pfp/tools/finite_emit64.cpp -lcrypto -o "$d/emit"
       if [[ $mode == cached ]];then g++ "${flags[@]}" gates/overlap_finite_cache64_unit.cpp -lcrypto -o "$d/order-test";"$d/order-test";fi
-      python3 -BE gates/overlap_finite_tiles64_test.py "$d/emit" "$mode";"$d/emit" "$mode" plan 100000503 3170531 2689467 95434516 38400 192001 4; } >"$d/build-and-test.log" 2>&1
+      if [[ $mode == epochs ]];then python3 -BE gates/overlap_finite_epoch64_test.py "$d/emit";"$d/emit" epochs plan 100000503 3170531 2689467 95434516 38400 192001 4 150000755
+      else python3 -BE gates/overlap_finite_tiles64_test.py "$d/emit" "$mode";"$d/emit" "$mode" plan 100000503 3170531 2689467 95434516 38400 192001 4;fi; } >"$d/build-and-test.log" 2>&1
     /usr/bin/python3 -BE - "$d" <<'PY'
 import shutil,sys
 from pathlib import Path

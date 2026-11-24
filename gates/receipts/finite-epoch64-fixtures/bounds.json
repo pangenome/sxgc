@@ -1,0 +1,31 @@
+{
+  "conditional_100g_upper": {
+    "actual_counted_upper_if_fit": 75454870208,
+    "desired_bands": 2605,
+    "epoch_upper_if_every_range_fits": 4,
+    "k_assumed": 1,
+    "m": 3181334488,
+    "n": 100000000000,
+    "posting_cap": 50000000000,
+    "slots": 192000000,
+    "total_file_upper": 178543136719,
+    "u_assumed": 100000000000,
+    "unspent_finish_reserve": 124545129792,
+    "whole_wave_upper": 336634375
+  },
+  "measured_100m_geometry": {
+    "actual_counted_upper_if_fit": 79558803,
+    "desired_bands": 2486,
+    "epoch_upper_if_every_range_fits": 4,
+    "k_assumed": 2689467,
+    "m": 3170531,
+    "n": 100000503,
+    "posting_cap": 50000251,
+    "slots": 192001,
+    "total_file_upper": 165974592,
+    "u_assumed": 95434516,
+    "unspent_finish_reserve": 120442203,
+    "whole_wave_upper": 335670
+  },
+  "not_product_admission": true
+}
