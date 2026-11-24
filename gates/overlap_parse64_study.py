@@ -46,9 +46,9 @@ def copy_file(src,dest,n,phase):
 def grant(mem,cpu):
     g=cg_info();need((g['memory.max'],g['cpu.max'],g['memory.swap.max'])==(str(mem),f'{cpu*100000} 100000','0') and (CG/'cgroup.procs').read_text().split()==[str(os.getpid())] and {'oom 0','oom_kill 0'}<=set(g['memory.events'].splitlines()),'dedicated resource grant');return g
 
-def measure(d,label,args,end,capr,capw,affinity,mem,cpus):
+def measure(d,label,args,end,capr,capw,affinity,mem,cpus,*,ledger=None):
     before=grant(mem,cpus);r=dict(before=before,argv=list(map(str,args)),affinity=affinity,io_caps=[capr,capw],status='INCOMPLETE');p=None
-    env=dict(PATH=os.defpath,LC_ALL='C',OMP_DYNAMIC='FALSE',OMP_THREAD_LIMIT='4',OMP_STACKSIZE='1M',OMP_PROC_BIND='FALSE');expected=load(d,'tools.json');need(sha(Path(args[0]))==expected[Path(args[0]).name],'tool drift');stop=d/'stop.requested';rss=whole=0;reason=None
+    env=dict(PATH=os.defpath,LC_ALL='C',OMP_DYNAMIC='FALSE',OMP_THREAD_LIMIT='4',OMP_STACKSIZE='1M',OMP_PROC_BIND='FALSE');expected=load(d,'tools.json');need(sha(Path(args[0]))==expected[Path(args[0]).name],'tool drift');stop=d/'stop.requested';rss=whole=sampled=0;reason=None
     try:
         guard(d,end);t0=time.monotonic()
         with (d/(label+'.log')).open('xb') as log:
@@ -59,11 +59,12 @@ def measure(d,label,args,end,capr,capw,affinity,mem,cpus):
                     for path in d.iterdir():
                         try:s=path.stat();stats[(s.st_dev,s.st_ino)]=s
                         except FileNotFoundError:pass
-                    logical=sum(s.st_size for s in stats.values());whole=max(whole,sum(512*s.st_blocks for s in stats.values()));di=io_delta(stat_io(before['io.stat']),current_io(CG));bounds=[(x['read_bytes'],x['write_bytes'])]+[(a['rbytes'],a['wbytes']) for a in (di or {}).values()]
+                    logical,alloc=(ledger() if ledger else (sum(s.st_size for s in stats.values()),sum(512*s.st_blocks for s in stats.values())))
+                    whole=max(whole,alloc);sampled=max(sampled,logical);di=io_delta(stat_io(before['io.stat']),current_io(CG));bounds=[(x['read_bytes'],x['write_bytes'])]+[(a['rbytes'],a['wbytes']) for a in (di or {}).values()]
                     if time.time()>=end or stop.exists() or logical>2*N or shutil.disk_usage(d).free<MARGIN or any(a>capr or b>capw for a,b in bounds):reason='time/IO/scratch/stop';stop.touch(exist_ok=True)
                     if done:break
                     time.sleep(.2)
-            rc=p.wait();r.update(wall_s=time.monotonic()-t0,rc=rc,stop=reason,process=x,sampled_rss=rss,whole_dir_sampled_allocated=whole)
+            rc=p.wait();r.update(wall_s=time.monotonic()-t0,rc=rc,stop=reason,process=x,sampled_rss=rss,whole_dir_sampled_allocated=whole,counted_dir_sampled=sampled)
         after=grant(mem,cpus);r.update(after=after,per_device_io=io_delta(stat_io(before['io.stat']),stat_io(after['io.stat'])));need(rc==0 and reason is None and int(after['memory.peak'])<=mem,label+' failed');r['status']='COMPLETED'
     finally:
         if p is not None and p.poll() is None:stop.touch(exist_ok=True);p.wait()
