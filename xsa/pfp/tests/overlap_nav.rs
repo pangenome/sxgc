@@ -119,15 +119,27 @@ fn fixture(t: &[u8], w: usize, trigger: impl Fn(&[u8]) -> bool) -> bool {
             .collect();
         let mut rows = vec![(n as u64, 0, t.last().map(|&b| b as u16).unwrap_or(256))];
         let mut groups = std::collections::BTreeMap::new();
-        for (i, &j) in sa.iter().enumerate() {
-            let j = j as usize;
-            for off in 0..s[j + 1] - s[j] {
-                groups
-                    .entry(&words[j][off..])
-                    .or_insert_with(Vec::new)
-                    .push((nav.successor(i as u32 + 1).unwrap(), i as u32 + 1, off));
+        let heads = Heads::from_sorted(dict.len(), m, sa.iter().map(|&j| ids[j as usize])).unwrap();
+        for (id, word) in dict.iter().enumerate() {
+            let slots = heads.slots(id).unwrap();
+            assert_eq!(
+                slots.len(),
+                ids.iter().filter(|&&x| x as usize == id).count()
+            );
+            let owned = if id as u32 == ids[m - 1] {
+                word.len() - 1
+            } else {
+                word.len() - w
+            };
+            for off in 0..owned {
+                let group = groups.entry(&word[off..]).or_insert_with(Vec::new);
+                for i in slots.clone() {
+                    assert_eq!(ids[sa[i] as usize] as usize, id);
+                    group.push((nav.successor(i as u32 + 1).unwrap(), i as u32 + 1, off));
+                }
             }
         }
+        assert!(heads.slots(dict.len()).is_none());
         let mut last_key: &[u8] = &[];
         for (key, mut list) in groups {
             list.sort();
@@ -191,9 +203,56 @@ fn raw_oracles() {
 }
 #[test]
 fn refusals() {
+    for (k, m, in_ids) in [
+        (2, 2, vec![0, 0]),
+        (1, 1, vec![1]),
+        (2, 3, vec![0, 1, 0]),
+        (1, 1, vec![0, 0]),
+        (1, 2, vec![0]),
+        (1, 1, vec![0, 1]),
+    ] {
+        assert!(Heads::from_sorted(k, m, in_ids).is_err());
+    }
+    for heavy in [0usize, 63, 64, 127, 136] {
+        let ids: Vec<_> = (0u32..137)
+            .flat_map(|id| std::iter::repeat_n(id, if id as usize == heavy { 800 } else { 1 }))
+            .collect();
+        let h = Heads::from_sorted(137, ids.len(), ids.clone()).unwrap();
+        for id in 0..137 {
+            let r = h.slots(id).unwrap();
+            assert_eq!(r.len(), if id == heavy { 800 } else { 1 });
+            assert!(ids[r].iter().all(|&x| x as usize == id));
+        }
+        assert!(h.slots(usize::MAX).is_none());
+    }
     assert!(Successors::build(&[0, 0], &[0, 1], Some(2)).is_err());
     assert!(Successors::build(&[0, 1], &[1, 1], None).is_err());
     let nav = Successors::build(&[1, 0], &[1, 0], Some(2)).unwrap();
+    let heads = Heads::from_sorted(2, 2, [0, 1]).unwrap();
+    for (ids, eof, n, stride, common) in [
+        ([1, 0], 1, 10, 5, 0),
+        ([1, 1], 1, 10, 5, 0),
+        ([0, 1], 1, 10, 5, 0),
+        ([1, 0], 0, 10, 4, 0),
+        ([1, 0], 0, 10, 5, u64::MAX),
+    ] {
+        assert!(Aligned::from_parse(
+            &nav,
+            &heads,
+            &ids,
+            eof,
+            n,
+            2,
+            |_| Ok(stride),
+            |_, _| Ok(common)
+        )
+        .is_err());
+    }
+    assert!(nav.predecessor_bytes(&heads, &[0, 1], |_| Ok(5)).is_err());
+    let bare = Successors::build(&[1, 0], &[1, 0], None).unwrap();
+    assert!(
+        Aligned::from_parse(&bare, &heads, &[1, 0], 0, 10, 2, |_| Ok(5), |_, _| Ok(0)).is_err()
+    );
     for (n, w, s, p) in [
         (8, 2, [1, 2], [0, 0]),
         (8, 2, [0, 7], [0, 0]),

@@ -115,6 +115,49 @@ impl Monotone {
         None
     }
 }
+/// Boundaries in the *certified* parse SA. Each dense head ID occurs at least
+/// once, so loc(h)-h is monotone with inclusive universe m-k. No dense counts
+/// or temporary loc array. The caller owns certification of the source ranks.
+pub struct Heads(Monotone);
+impl Heads {
+    pub fn from_sorted(k: usize, m: usize, heads: impl IntoIterator<Item = u32>) -> R<Self> {
+        if k == 0 || k > m || m >= u32::MAX as usize {
+            return Err("head extent");
+        }
+        let mut it = heads.into_iter().peekable();
+        let mut seen = 0;
+        let cols = Monotone::generate(
+            k + 1,
+            (m - k) as u64,
+            (0..=k).map(|h| {
+                if h != 0 {
+                    let id = (h - 1) as u32;
+                    if it.peek() != Some(&id) {
+                        return Err("missing or out-of-order head");
+                    }
+                    while it.peek() == Some(&id) {
+                        it.next();
+                        seen += 1;
+                        if seen > m {
+                            return Err("too many slots");
+                        }
+                    }
+                }
+                Ok((seen - h) as u64)
+            }),
+        )?;
+        if seen != m || it.next().is_some() {
+            return Err("wrong head coverage");
+        }
+        Ok(Self(cols))
+    }
+    /// Half-open flat list slots, zero-based. Parse rank = slot+1; END separate.
+    pub fn slots(&self, head: usize) -> Option<std::ops::Range<usize>> {
+        let lo = self.0.get(head)? as usize + head;
+        let hi = self.0.get(head + 1)? as usize + head + 1;
+        Some(lo..hi)
+    }
+}
 struct Samples {
     step: u32,
     bits: Vec<u64>,
@@ -124,6 +167,7 @@ struct Samples {
 pub struct Successors {
     psi: Vec<u32>,
     samples: Option<Samples>,
+    text_first: u32,
 }
 impl Successors {
     /// Lexical word IDs and zero-based parse SA. Check permutation and recurrence before use.
@@ -177,7 +221,41 @@ impl Successors {
                 n += x.count_ones();
             }
         }
-        Ok(Self { psi, samples })
+        Ok(Self {
+            psi,
+            samples,
+            text_first: inverse[0],
+        })
+    }
+    /// Scatter in text order to the already certified head/list slots, without
+    /// retaining a dense SA or dense occurrence positions. Caller overrides
+    /// the byte at text start by the virtual BWT code 256, never raw byte 0.
+    pub fn predecessor_bytes(
+        &self,
+        heads: &Heads,
+        ids: &[u32],
+        mut last_owned: impl FnMut(u32) -> R<u8>,
+    ) -> R<Vec<u8>> {
+        if self.psi.len() != ids.len() {
+            return Err("wrong parse length");
+        }
+        let mut pred = filled(ids.len(), 0u8)?;
+        let (mut r, mut prev) = (self.text_first, 0);
+        for (j, &id) in ids.iter().enumerate() {
+            let i = r.checked_sub(1).ok_or("premature END")? as usize;
+            if !heads.slots(id as usize).ok_or("head id")?.contains(&i) {
+                return Err("parse head mismatch");
+            }
+            pred[i] = prev;
+            if j + 1 < ids.len() {
+                prev = last_owned(id)?;
+            }
+            r = self.successor(r).ok_or("rank missing")?;
+        }
+        if r != 0 {
+            return Err("unterminated Psi");
+        }
+        Ok(pred)
     }
     pub fn successor(&self, rank: u32) -> Option<u32> {
         self.psi.get(rank.checked_sub(1)? as usize).copied()
@@ -230,6 +308,95 @@ impl<'a> Aligned<'a> {
         starts: impl IntoIterator<Item = u64>,
         plcp: impl IntoIterator<Item = u64>,
     ) -> R<Self> {
+        let starts = Monotone::build(nav.psi.len(), n, starts)?;
+        let mut values = plcp.into_iter();
+        let col = Self::with_starts(nav, n, w, starts, |_, _| values.next().ok_or("short PLCP"))?;
+        if values.next().is_some() {
+            return Err("long PLCP");
+        }
+        Ok(col)
+    }
+    /// Stream byte PLCP in text order. Rank(j+1)=Psi(rank(j)); recover the
+    /// adjacent aligned predecessor q by a bounded sampled walk from rank(j)-1.
+    /// Kasai carry counts *tokens*. Convert them to bytes with succinct starts,
+    /// then compare only the first differing words. No SA, inverse, or dense
+    /// token/byte PLCP is borrowed or retained here. The dictionary callbacks
+    /// must validate owned strides/EOF and raw LCP (END excluded).
+    pub fn from_parse(
+        nav: &'a Successors,
+        heads: &Heads,
+        ids: &[u32],
+        eof_id: u32,
+        n: u64,
+        w: u64,
+        mut stride: impl FnMut(u32) -> R<u64>,
+        mut common: impl FnMut(u32, u32) -> R<u64>,
+    ) -> R<Self> {
+        let m = nav.psi.len();
+        if m != ids.len() || nav.samples.is_none() {
+            return Err("sampled complete parse required");
+        }
+        if ids.last() != Some(&eof_id) || ids[..m - 1].contains(&eof_id) {
+            return Err("nonunique or misplaced EOF token");
+        }
+        let mut sum = 0u64;
+        let starts = Monotone::generate(
+            m,
+            n,
+            ids.iter().map(|&id| {
+                let s = sum;
+                let a = stride(id)?;
+                if a == 0 {
+                    return Err("empty stride");
+                }
+                sum = sum.checked_add(a).ok_or("stride overflow")?;
+                Ok(s)
+            }),
+        )?;
+        if sum != n {
+            return Err("owned byte coverage");
+        }
+        let (mut r, mut z) = (nav.text_first, 0usize);
+        let out = Self::with_starts(nav, n, w, starts, |j, s| {
+            let i = r.checked_sub(1).ok_or("premature END")? as usize;
+            if !heads.slots(ids[j] as usize).ok_or("head id")?.contains(&i) {
+                return Err("parse head mismatch");
+            }
+            let p = if r == 1 {
+                z = 0;
+                0
+            } else {
+                let q = nav.position(r - 1).ok_or("predecessor position")? as usize;
+                let limit = (m - j).min(m - q);
+                while z < limit && ids[j + z] == ids[q + z] {
+                    z += 1;
+                }
+                if z >= limit {
+                    return Err("missing distinct EOF token");
+                }
+                let a = s.get(j + z).unwrap() - s.get(j).unwrap();
+                if s.get(q + z).unwrap() - s.get(q).unwrap() != a {
+                    return Err("equal tokens, unequal stride");
+                }
+                a.checked_add(common(ids[j + z], ids[q + z])?)
+                    .ok_or("byte PLCP overflow")?
+            };
+            z = z.saturating_sub(1);
+            r = nav.successor(r).ok_or("rank missing")?;
+            Ok(p)
+        })?;
+        if r != 0 {
+            return Err("unterminated Psi");
+        }
+        Ok(out)
+    }
+    fn with_starts(
+        nav: &'a Successors,
+        n: u64,
+        w: u64,
+        starts: Monotone,
+        mut value: impl FnMut(usize, &Monotone) -> R<u64>,
+    ) -> R<Self> {
         let m = nav.psi.len();
         let slack = w.checked_sub(1).ok_or("empty trigger")?;
         let ceiling = n
@@ -239,13 +406,13 @@ impl<'a> Aligned<'a> {
                     .ok_or("adjustment overflow")?,
             )
             .ok_or("adjustment overflow")?;
-        let starts = Monotone::build(m, n, starts)?;
         let first = nav.position(1).ok_or("invalid first rank")? as usize;
         let mut previous = (0u64, 0u64);
         let adjusted = Monotone::generate(
             m,
             ceiling,
-            plcp.into_iter().enumerate().map(|(j, p)| {
+            (0..m).map(|j| {
+                let p = value(j, &starts)?;
                 let s = starts.get(j).ok_or("bad start")?;
                 if (j == 0 && s != 0)
                     || (j > 0 && (starts.get(j - 1) == Some(s) || w > n - s))

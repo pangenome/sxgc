@@ -43,6 +43,37 @@ def minimum(cells,max_ranges):
         else:lo=mid+1
     return dict(descriptor_slots=lo,payload_bytes=8*lo,**greedy(cells,lo))
 
+def ef_capacity(n,maximum):
+    """Requested block-64 payload capacity of the fixture Monotone column."""
+    if min(n,maximum)<0:raise ValueError('negative monotone extent')
+    if not n:return 0
+    L=((maximum+n-1)//n).bit_length()
+    return 48*((n+63)//64)+8*((n*L+63)//64)
+
+def lexical_block_model(n,m,k,u,longest,reference):
+    """Measured lexical-block wire counts on THIS tape. Arithmetic at 10× is sensitivity only."""
+    if not (1<=k<=m<=n<2**43 and k<=u<=n and 1<=longest<=1<<20):raise ValueError('invalid measured census')
+    out={};ceil=lambda a,b:(a+b-1)//b
+    for span in (4,8,16):
+        payload,directory,lit,block=(int(reference[f'lex{span}_{x}']) for x in ('payload','directory','literals','maxblock'))
+        q=ceil(k,span);headers=2*k-q
+        if not (0<lit<=u+8*(k-1) and lit+headers<=payload<=lit+4*headers and directory==8*(1+q) and
+                0<block<=min(payload,span*(longest+8)) and block*q>=payload):raise ValueError('lexical block ledger')
+        r=dict(payload=payload,directory=directory,literal_bytes=lit,max_block_bytes=block);out[str(span)]=r
+        for scale,label in ((1,'measured_dimensions_model'),(10,'tenfold_sensitivity_only')):
+            N,M,K=n*scale,m*scale,k*scale
+            # Linear payload density for sensitivity ONLY, not equality even for a concatenated text.
+            lex=scale*payload+8*(1+ceil(K,span));heads=ef_capacity(K+1,M-K);starts=ef_capacity(M,N);adjusted=ef_capacity(M,N+7*(M-1))
+            psi=4*M;samples=12*ceil(M,64)+4*ceil(M,8);tree=16*ceil(M,16);pred=M
+            core=lex+heads+starts+adjusted+psi+samples+pred
+            r[label]=dict(lexical_payload_and_directory=lex,heads=heads,starts=starts,adjusted_byte_plcp=adjusted,psi=psi,sample_b8=samples,
+                predecessor_bytes=pred,rank_block_tree=tree,old_packed_T=scale*u+12*K-8,
+                parse_4k_no_dict=20*M+32*K,parse_6k_no_dict=20*M+48*K,
+                build_psi_before_dictionary=12*M+psi+samples+heads,alignment_with_ids_no_SA=core+4*M,
+                emit_before_order=core+tree,arrays_compare_gib=140,preorder_room=(140<<30)-core-tree,
+                rank_sample_extent_ok=M<2**32-1)
+    return dict(lexical_blocks=out,scope='Only wire sizes at original dimensions are exact. Modeled payloads exclude orderer, heaps, buffers, stacks, allocator and consumers. No large compressed loader/producer, no time or launch claim.')
+
 def study(n,m,k,u,d,desc,occ):
     """desc / occ are full dense arrays with END-second=0, raw-second+1.
     No assumption about random disk IO, distribution at another N or full product fit.

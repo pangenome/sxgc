@@ -37,13 +37,25 @@ struct Reader{
             auto cnt=std::min(n,lim-cur);std::memcpy(p,buf.data()+cur,cnt);p+=cnt;cur+=cnt;n-=cnt;}}
 };
 std::string text(const fs::path& p){std::ifstream s(p);std::string v;need(bool(std::getline(s,v)),"missing cgroup setting");return v;}
+// Exact wire-size ledger for the independently tested random-access lexical block proposal.
+// A payload count and directory size only; no compressed dictionary is built by this verifier.
+struct LexBlock{
+    U span;Q bytes=0,literals=0,maxblock=0,block=0,records=0;
+    static U uv(U v){U n=1;while(v>=128){v>>=7;++n;}return n;}
+    void accept(Q id,U common,U len,bool eof){bool restart=id%span==0;if(restart)block=0;
+        U pre=restart?0:common,lit=len-pre,rec=lit+uv(2*lit+U(eof))+(restart?0:uv(pre));
+        block+=rec;maxblock=std::max(maxblock,block);bytes+=rec;literals+=lit;++records;}
+    void print()const{auto q=[](Q v){return static_cast<unsigned long long>(v);};std::printf(" lex%u_payload=%llu lex%u_directory=%llu lex%u_literals=%llu lex%u_maxblock=%llu",span,q(bytes),span,q(8*((records+span-1)/span+1)),span,q(literals),span,q(maxblock));}
+};
 void verify(const fs::path& file,const Guard& g,bool exact){
     g.poll();if(exact){need(file==source,"reference pathname");const auto group=text("/proc/self/cgroup");need(group.rfind("0::/",0)==0,"expected cgroup v2");const auto cg=fs::path("/sys/fs/cgroup")/group.substr(4);need(text(cg/"cpu.max")=="100000 100000"&&text(cg/"memory.max")=="201326592"&&text(cg/"memory.swap.max")=="0","dedicated verifier grant");}
     int fd=::open(file.c_str(),O_RDONLY|O_NOFOLLOW|O_CLOEXEC);need(fd>=0,"open packed tape");struct stat st{};need(::fstat(fd,&st)==0&&S_ISREG(st.st_mode)&&st.st_size>0,"not a packed file");
     Q size=Q(st.st_size);need(exact?size==11942962780ULL:size<=16u<<20,"wrong tape extent");Reader in(fd,size,g);
-    std::array<Q,256*257> cells{};Q k=0,descriptors=0,eofs=0;U longest=0;std::vector<unsigned char> now,prev;bool prev_end=false;
+    std::array<Q,256*257> cells{};Q k=0,descriptors=0,eofs=0;U longest=0;std::vector<unsigned char> now,prev;bool prev_end=false;LexBlock models[]={{4},{8},{16}};
     while(in.left){if(!(k%65536))g.poll();U tag;in.take(&tag,4);const bool end=tag>>31;const U len=tag&0x7fffffffu;need(len>(end?0u:8u)&&len<=1u<<20,"invalid word length");
-        now.resize(len);in.take(now.data(),len);if(k)need(prev<now||(prev==now&&!prev_end&&end),"word order/density");
+        now.resize(len);in.take(now.data(),len);const U common=U(std::mismatch(prev.begin(),prev.end(),now.begin(),now.end()).first-prev.begin());
+        if(k)need(common==prev.size()?(common<len||(!prev_end&&end)):(common<len&&prev[common]<now[common]),"word order/density");
+        for(auto &model:models)model.accept(k,common,len,end);
         const U owned=end?len:len-8;for(U j=0;j<owned;++j){const unsigned code=(j+1==len)?0u:unsigned(now[j+1])+1; ++cells[now[j]*257u+code];}
         descriptors+=owned;++k;eofs+=end;longest=std::max(longest,len);prev.swap(now);prev_end=end;
     }
@@ -51,7 +63,7 @@ void verify(const fs::path& file,const Guard& g,bool exact){
     need(!in.unread && k && eofs==1,"missing or repeated EOF word");const Q D=descriptors+9*k-7;need(D+3*k-1==size,"packed extent mismatch");
     Q sum=0,terminal=0,peak=0;size_t nonempty=0;for(size_t i=0;i<cells.size();++i){sum+=cells[i];terminal+=(i%257==0)?cells[i]:0;nonempty+=cells[i]>0;peak=std::max(peak,cells[i]);}need(sum==descriptors&&terminal==1,"descriptor coverage");
     if(exact)need(k==234472723&&descriptors==9129290112ULL&&D==11239544612ULL&&longest==88468,"banked census mismatch");
-    Hash h;h.update(cells.data(),cells.size()*sizeof(Q));std::printf("VOCAB_REFERENCE k=%llu descriptors=%llu D=%llu tape=%llu max_phrase=%u nonempty=%zu largest=%llu tape_sha256=%s descriptor_cells_sha256=%s\n",(unsigned long long)k,(unsigned long long)descriptors,(unsigned long long)D,(unsigned long long)size,longest,nonempty,(unsigned long long)peak,in.hash.finish().c_str(),h.finish().c_str());
+    Hash h;h.update(cells.data(),cells.size()*sizeof(Q));std::printf("VOCAB_REFERENCE k=%llu descriptors=%llu D=%llu tape=%llu max_phrase=%u nonempty=%zu largest=%llu tape_sha256=%s descriptor_cells_sha256=%s",(unsigned long long)k,(unsigned long long)descriptors,(unsigned long long)D,(unsigned long long)size,longest,nonempty,(unsigned long long)peak,in.hash.finish().c_str(),h.finish().c_str());for(const auto &model:models)model.print();std::putchar('\n');
 }
 int main(int ac,char** av)try{
     need(ac==5,"usage: reference --ten-reference TAPE STOP DEADLINE");bool exact=std::string(av[1])=="--ten-reference";

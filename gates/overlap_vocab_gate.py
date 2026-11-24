@@ -17,7 +17,7 @@ from overlap_ten_matched_score import metrics
 from overlap_scaling_policy import one_series
 from overlap_published import published_main
 from overlap_timing_idle import WORKERS,exclusive
-from overlap_vocab_plan import CELLS,counts,digest,study
+from overlap_vocab_plan import CELLS,counts,digest,lexical_block_model,study
 
 WORKERS.update(('overlap_ten_series.sh','overlap_ten_dict_grid.py','overlap_ten_dict_grid.sh','overlap_bounded_packed'))
 SOURCE=RUNGS['10g'][1];TAPE=SANDBOX/'packed-front-10g-YebiCY/columns/dictionary.packed'
@@ -124,6 +124,7 @@ def worker(d,deadline,report,verify):
     v,dc,oc=readout(d/'census.out');result=study(v['n'],v['m'],v['k'],v['U'],v['D'],dc,oc);line=(d/'reference.out').read_text().split();need(line[0]=='VOCAB_REFERENCE','missing bank witness');r=dict(x.split('=') for x in line[1:])
     need(tuple(inputs['tape_stat'])==identity(TAPE) and r['descriptor_cells_sha256']==result['distinct_cells_sha256']==front['distinct_digest'] and oc==counts(c['cells']) and
          all(int(r[a])==v[b] for a,b in [('k','k'),('descriptors','U'),('D','D'),('tape','tape'),('max_phrase','max_phrase')]),'packed descriptor witness mismatch')
+    result['lexical_codec_and_navigation']=lexical_block_model(v['n'],v['m'],v['k'],v['U'],v['max_phrase'],r)
     save(d/'model.json',result);report.update(status='VERIFIED_10G_VOCABULARY_ONLY',packed_tape_sha256=r['tape_sha256'],reference_cold_claim=False,model_sha256=sha(d/'model.json'))
 
 if __name__=='__main__':
