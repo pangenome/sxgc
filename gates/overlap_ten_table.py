@@ -2,11 +2,25 @@
 Only additive decompositions below: phases of a single producer, and measured
 blocked/write vs other time *within* its emit clock. Concurrent walls never sum.
 """
+import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import sys
 from overlap_ten_score import verified_arm
+
+def certificate(p):
+    """Optional independent inotify observation; never use it in arm selection."""
+    path=p/'certification-clock.json'
+    if not path.is_file():return 'post-service certificate interval not instrumented'
+    c=json.loads(path.read_text());src=json.loads((p/'source.json').read_text())['source']
+    assert c['source']==src and c['kind']=='post-service certification envelope; not SHA kernel time' and c['profile']==p.name
+    ev=c['close_events'];assert set(ev)=={'exits.log','identity.json'}
+    for k,e in ev.items():assert len(e)==3 and hashlib.sha256((p/k).read_bytes()).hexdigest()==e[2]
+    i,j=ev['exits.log'],ev['identity.json'];wall=(j[0]-i[0])/1e9;fs=(j[1]-i[1])/1e9
+    assert math.isfinite(wall) and wall>=0 and fs>=0 and wall==c['observed_close_to_close_s'] and fs==c['filesystem_mtime_delta_s']
+    return f'post-service certificate envelope {wall:.3f} s (mtime cross-check {fs:.3f} s)'
 
 def table(dirs):
     print('10 GB private-cold v8, same raw/rows/reference, 4 build CPUs + 1 oracle. Worker timings are concurrent.\n')
@@ -26,9 +40,13 @@ def table(dirs):
         cpu=cg_cpu(b['shared_after'])-cg_cpu(b['shared_before']);child=sum(j['cpu_s'] for j in b['process'].values())+f['process']['cpu_s']
         post=[sum(j[k] for j in b['process'].values())/1e9 for k in ('read_bytes','write_bytes')];raw=[b['raw_worker_io'][k]/1e9 for k in ('read_bytes','write_bytes')]
         oracle=json.loads((p/'oracle.json').read_text())
-        print(f"- `{b['profile']}`: raw attributed worker R/W {raw[0]:.3f}/{raw[1]:.3f} GB; prepared {post[0]:.3f}/{post[1]:.3f} GB. Raw shared cgroup {cpu:.1f} CPU-s ({cpu/b['raw_to_product_s']:.2f} average CPUs); front + resident/sink/finish {child:.1f} CPU-s; difference {cpu-child:.1f}, not necessarily all monitor. Oracle separately {oracle['process']['cpu_s']:.2f} CPU-s.")
+        monitor=f" Measured harness CPU {b['harness_cpu_s']:.1f} s." if 'harness_cpu_s' in b else ''
+        print(f"- `{b['profile']}`: raw attributed worker R/W {raw[0]:.3f}/{raw[1]:.3f} GB; prepared {post[0]:.3f}/{post[1]:.3f} GB. Raw shared cgroup {cpu:.1f} CPU-s ({cpu/b['raw_to_product_s']:.2f} average CPUs); front + resident/sink/finish {child:.1f} CPU-s; difference {cpu-child:.1f}, not necessarily all monitor.{monitor}")
+        v=oracle['process'];print(f"  Separate raw oracle: {oracle['wall_including_wait_s']:.2f} s including upstream wait, {v['cpu_s']:.2f} CPU-s, {v['read_bytes']/1e9:.3f}/{v['write_bytes']/1e9:.3f} GB attributed R/W. After both services: {certificate(p)}. Oracle wall overlaps construction; the later certification envelope is outside raw build wall.")
+        print(f"  Cold raw front {f['wall_s']:.2f} s + cold handoff {f['cold_barrier_s']:.2f} s; prepared counted observed/reserved {b['counted_sampled_peak']:,}/{json.loads((p/'scratch-plan.json').read_text())['counted_bound']:,} B; whole raw directory sampled {b['raw_dir_sampled_allocated']:,} B incl. input copies/output. Front and prepared phases have distinct scratch peaks.")
         if w is not None:
-            print(f"  Ordered join waited {w:.2f} s for worker packets; downstream writes {s+a:.2f} s. These timers are inside emit, concurrent with lane computation. Do not infer worker compute by subtracting them.")
+            log=(p/'resident.log').read_text();plan=float(re.search(r' plan_s=([0-9.]+)',log)[1]);join=re.search(r'^RESIDENT_RADIX_JOIN .*?ranges=(\d+) blocks=(\d+).*lane_rows=(\[[^\]]+\]) serial_row_comparisons=0$',log,re.M);lane_rows=json.loads(join[3]);n=sum(lane_rows)
+            print(f"  {int(join[1]):,} ordered ranges, {int(join[2]):,} blocks, {12*n/int(join[2]):,.0f} mean payload B/block (one separate END), zero join row comparisons. Plan {plan:.2f} s, packet waits {w:.2f} s ({1e9*w/n:.2f} ns/owned row), downstream sink + verifier write calls {s+a:.2f} s ({100*(s+a)/ph['emit']:.1f}% of emit). These timers are inside emit, concurrent with lane computation. Wait includes successful receives; do not infer worker compute by subtraction or call this a cat baseline.")
         else:print(f"  Serial emission outside the two measured write calls: {ph['emit']-s-a:.2f} s (not an isolated compute benchmark).")
 
 def study(bank):
