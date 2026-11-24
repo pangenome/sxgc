@@ -6,7 +6,7 @@ The [sampled 100 MB arm](../../gates/receipts/finite-direct64-100m/) spent 34.12
 
 Assignment is static tile ordinal modulo actual lanes. Each lane receives increasing ordinals and holds no cross-lane resource, so a later full ring can't prevent the current head tile from continuing. Publish exactly one tile's packets at a time, each with ordinal/count/final flag; the last packet can be full. Every slice checks row bounds and each original range's aggregate must match its independent census before crossing its end. A giant, very hot class can still serialize its own expansion. No packet copying into a second reorder buffer, no row file and no external merge. Interruptible producer and consumer waits and nonblocking writes retain STOP checks. A pipe-only precondition still applies. Don't assume this reduces sort wall; it changes no compare/gather work.
 
-**Measured:** [the fixed 100 MB arm passed](../../gates/receipts/finite-tiles64-100m/): publication 14.572 s and 3.005 unblocked expansion lanes, 76.964 s to independently verified EOF. +5.9% producer CPU, matched attributed IO and exact posting identity. Ordering now takes 57.469 s. No change in product defaults.
+**Measured:** [the fixed 100 MB arm passed](../../gates/receipts/finite-tiles64-100m/): publication 14.572 s and 3.005 unblocked expansion lanes, 76.964 s to independently verified EOF. +5.9% producer CPU, matched attributed IO and exact posting identity. Ordering now takes 57.469 s. The [span-cache sorter](FINITE_CACHE64.md) targets repeated aligned-word lookups on projected-prefix collisions. No change in product defaults.
 
 ## Fixed component test, not an admission for a larger rung
 

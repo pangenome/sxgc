@@ -1,0 +1,6 @@
+build=/tmp/finite-cache-orders-gWBurr
+PASS 65 complete finite orders incl 11..64 payload bits, partial last bytes, exhaustion/terminal/zero extension, huge common prefixes, bounded refills, equality filters and exact load counters
+PASS 39 byte-identical cached streams, 0 predicted refusals; 9 multi-tile cases, whole 8311-descriptor classes and >9200-row tiles, exact bypass, stalled publication STOP
+PASS 39 byte-identical tiled streams, 0 predicted refusals; 9 multi-tile cases, whole 8311-descriptor classes and >9200-row tiles, exact bypass, stalled publication STOP
+DIRECT_PLAN max_bands=2605 bands_if_upper_dimensions=1992 files_if_upper_dimensions=199990580220 route_array_upper=146832308320 emit_array_upper=149897143104 array_upper=149897143104
+DIRECT_PLAN max_bands=2486 bands_if_upper_dimensions=2486 files_if_upper_dimensions=199532024 route_array_upper=247981272 emit_array_upper=161307184 array_upper=247981272

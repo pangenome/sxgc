@@ -1,0 +1,5 @@
+gates/overlap_finite_cache64_unit.cpp: In member function ‘void Case::run(unsigned int, rawview::U, std::mt19937_64&, finitecache::Stats&) const’:
+gates/overlap_finite_cache64_unit.cpp:8:75: error: comparison of integer expressions of different signedness: ‘unsigned int’ and ‘std::_If_is_unsigned_integer<long unsigned int, int>’ {aka ‘int’} [-Werror=sign-compare]
+    8 |  void run(unsigned p,U skip,std::mt19937_64& rng,Stats& total)const{need(p>=std::bit_width(keys.size()-1) && p<=64,"unit id geometry");U mask=p==64?UINT64_MAX:(U(1)<<p)-1;std::vector<U> a;std::vector<bool> used(keys.size());
+      |                                                                          ~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+cc1plus: all warnings being treated as errors

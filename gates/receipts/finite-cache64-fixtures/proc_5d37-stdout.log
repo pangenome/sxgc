@@ -1,0 +1,7 @@
+build=/tmp/finite-cache-sanitized-LEr9ei
+PASS 65 complete finite orders incl 11..64 payload bits, partial last bytes, exhaustion/terminal/zero extension, huge common prefixes, bounded refills, equality filters and exact load counters
+PASS 39 byte-identical cached streams, 0 predicted refusals; 9 multi-tile cases, whole 8311-descriptor classes and >9200-row tiles, exact bypass, stalled publication STOP
+PASS one sort treatment, unchanged tiled evidence/geometry, span-work and time misses retained, invalid bounded refill refused
+PASS pinned whole-range control, one tile arm, mechanism and wall misses retained; changed routing and invalid packet coverage refused
+PASS one-shot direct gate bounds, prior score unchanged, mechanism miss retained, invalid wire bound refused
+PASS three archived scores unchanged, time/repeat refusals

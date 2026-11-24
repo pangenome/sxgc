@@ -1,12 +1,13 @@
 #pragma once
 #include "finite_emit_refine.hpp"
 #include "finite_tile_pipe64.hpp"
+#include "finite_cache_order64.hpp"
 #include <memory>
 namespace finiteemit {
-struct Counts {U rows=0,groups=0,multi=0,bitmaps=0,max_tie=0,max_mass=0;double sort=0,gather=0,produce=0;};
+struct Counts {U rows=0,groups=0,multi=0,bitmaps=0,max_tie=0,max_mass=0;double sort=0,gather=0,produce=0;finitecache::Stats order;};
 struct Emit {
  const Route& ix;const std::vector<U>* learned;Planner plan;const rawview::View& v;const uint8_t* text;U n,m;int team;rawview::Stop stop;
- unsigned ob=0,payload=0;bool pair=false;U value_mask=0,arrays=0,packets=0,waves=0;double sort_wall=0,stream_wall=0,queue_blocked=0,tile_plan_s=0;Counts totals;Sink sink_stats;
+ unsigned ob=0,payload=0;bool pair=false,cached=false;U value_mask=0,arrays=0,packets=0,waves=0;double sort_wall=0,stream_wall=0,queue_blocked=0,tile_plan_s=0;Counts totals;Sink sink_stats;
  static constexpr U GRAIN=1536;
  struct Tile {U job,start,len;Span prev;bool last;};
  U tiles=0,extended_cuts=0,max_piece=0,max_piece_rows=0,over_queue=0;
@@ -30,7 +31,7 @@ struct Emit {
  U skip(U b)const{if(learned)return learned->at(b);const auto& z=ix.bands[b];return z.hi==z.lo+1 && z.lo%257!=0?2:(z.lo/257==(z.hi-1)/257?1:0);}
  void order(const Job& j,U* a,Counts& c)const{if(j.exact)return;double ts=omp_get_wtime();const U d=j.d;U i=0,known=std::max<U>(skip(j.band),j.depth);
   plan.visit(j,[&](U r,U off,U tok,Span s){need(i<d,"sort arena overrun");a[i++]=pack(r,off,tok,known,s);});need(i==d,"sort arena underflow");
-  c.gather=omp_get_wtime()-ts;U compares=0;std::sort(a,a+d,[&](U x,U y){if(!(++compares%32768))stop.check();U hx=x&~value_mask,hy=y&~value_mask;return hx!=hy?hx<hy:cmp(span(x),span(y))<0;});c.sort=omp_get_wtime()-ts;}
+  c.gather=omp_get_wtime()-ts;if(cached){finitecache::Sorter sorter(text,payload,value_mask,[&](U x){return span(x);},[&](){stop.check();},c.order);sorter.run(a,d,known);c.sort=omp_get_wtime()-ts;return;}U compares=0;std::sort(a,a+d,[&](U x,U y){if(!(++compares%32768))stop.check();U hx=x&~value_mask,hy=y&~value_mask;return hx!=hy?hx<hy:cmp(span(x),span(y))<0;});c.sort=omp_get_wtime()-ts;}
  template<class Out,class Feed>void union_group(Span key,U h0,Marks& marks,Out& out,Counts& c,Feed feed)const{
   need(!key.terminal && key.len>8,"shared EOF/short ordinary key");++c.multi;std::array<U,16> small;U num=0,start=c.rows;
   feed([&](U head){U end=v.after_head(head);for(U r=head;r<end;++r){if(!(num%16384))stop.check();U s=v.successor(r);
@@ -54,7 +55,7 @@ struct Emit {
  }
  static Big emit_arrays(U n,U m,U team,U nb,U pg,U slots){Big live=Big(rawview::budget(n,m,team))+Pages::bytes(pg)+Big(team)*nb*sizeof(Layout)+CELL*(sizeof(Band)+sizeof(unsigned))+team*sizeof(Stripe);
   return live+8*Big(slots)+team*(Marks::bytes(m)+sizeof(Pipe)+(256<<10))+2*Big(Planner::LIMIT)*sizeof(Job)+(2<<20);}
- static void add(Counts& dst,const Counts& c){dst.rows+=c.rows;dst.groups+=c.groups;dst.multi+=c.multi;dst.bitmaps+=c.bitmaps;dst.sort+=c.sort;dst.gather+=c.gather;dst.produce+=c.produce;dst.max_tie=std::max(dst.max_tie,c.max_tie);dst.max_mass=std::max(dst.max_mass,c.max_mass);}
+ static void add(Counts& dst,const Counts& c){dst.order.add(c.order);dst.rows+=c.rows;dst.groups+=c.groups;dst.multi+=c.multi;dst.bitmaps+=c.bitmaps;dst.sort+=c.sort;dst.gather+=c.gather;dst.produce+=c.produce;dst.max_tie=std::max(dst.max_tie,c.max_tie);dst.max_mass=std::max(dst.max_mass,c.max_mass);}
  void tile_wave(int sink,U lo,int lanes,const std::array<U,65>& at,const U* arena,Span& prev,std::vector<Marks>& marks){
   double start=omp_get_wtime();std::vector<Tile> work;U bound=divup(at[lanes],GRAIN)+U(lanes);work.reserve(bound);
   for(int j=0;j<lanes;++j){const auto& job=plan.jobs[lo+j];if(job.exact){work.push_back({lo+j,at[j],job.d,prev,true});prev=job.anchor;continue;}
@@ -70,8 +71,8 @@ struct Emit {
 #pragma omp parallel num_threads(w)
   {int j=omp_get_thread_num();need(omp_get_num_threads()==w,"missing tile lane");auto& q=*pipes[j];for(U i=j;i<work.size();i+=w){auto& z=work[i];Counts c;q.begin(i);expand(plan.jobs[z.job],arena+z.start,z.prev,marks[j],q,c,z.len);add(results[j],c);}q.close();}
   cat.join();for(int j=0;j<w;++j){pipes[j]->drained();queue_blocked+=pipes[j]->blocked;add(totals,results[j]);}}
- void run(int sink,U max_slots,U grant,bool tiled=false){need(n<(U(1)<<43) && max_slots,"row ABI or empty arena");stop.check();U slots=std::min(max_slots,v.stats.owned);
-  need(ix.bands.capacity()==CELL,"unexpected vector reservation");arrays=narrow(std::max<Big>(ix.array_bound,emit_arrays(n,m,team,ix.bands.size(),ix.pages.count,slots)+(learned?8*Big(learned->capacity()):0)+(tiled?tile_bytes(slots,team):0)));need(arrays<=grant,"ordered stream array grant");plan.build(slots);const auto& jobs=plan.jobs;
+ void run(int sink,U max_slots,U grant,bool tiled=false,bool cache_order=false){cached=cache_order;need(n<(U(1)<<43) && max_slots,"row ABI or empty arena");stop.check();U slots=std::min(max_slots,v.stats.owned);
+  need(ix.bands.capacity()==CELL,"unexpected vector reservation");arrays=narrow(std::max<Big>(ix.array_bound,emit_arrays(n,m,team,ix.bands.size(),ix.pages.count,slots)+(learned?8*Big(learned->capacity()):0)+(tiled?tile_bytes(slots,team):0)+(cached?team*finitecache::PER_LANE:0)));need(arrays<=grant,"ordered stream array grant");plan.build(slots);const auto& jobs=plan.jobs;
   std::vector<U> arena(slots);std::vector<Marks> marks;marks.reserve(team);for(int i=0;i<team;++i)marks.emplace_back(m);
   int flags=fcntl(sink,F_GETFL);need(flags>=0 && !fcntl(sink,F_SETFL,flags|O_NONBLOCK),"nonblocking row sink");Span prev{};Row first=row(n,0,text[n-1]);send(sink,&first,1,stop,sink_stats);
   for(U lo=0,hi;lo<jobs.size();lo=hi){std::array<U,65> at{};hi=lo;while(hi<jobs.size() && hi-lo<U(team)){U i=hi-lo,d=jobs[hi].exact?0:jobs[hi].d;if(d>slots-at[i])break;at[i+1]=at[i]+d;++hi;}
