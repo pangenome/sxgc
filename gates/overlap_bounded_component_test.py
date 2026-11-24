@@ -101,7 +101,7 @@ def paired_supervisor(tmp,fail):
         return [sys.executable,'-c',code]
     with contextlib.ExitStack() as ctx:
         for key,val in [('N',2),('M',1),('K',1),('T',6),('U',2),('PREP_BOUND',14),('DIGEST','tiny'),('exclusive',lambda:None),
-                        ('unit',fake_unit),('private_raw',lambda dst,digest:dst.write_bytes(b'hi')),('cold',lambda _:None)]:
+                        ('unit',fake_unit),('private_raw',lambda dst,digest,*_:dst.write_bytes(b'hi')),('cold',lambda _:None)]:
             ctx.enter_context(patch.object(g,key,val))
         fn=lambda:g.study(d,time.time()+1000,{'raw_sha256':'fake'})
         if fail: rejects(fn)

@@ -126,7 +126,8 @@ def admitted(deadline: int) -> dict:
              git('ls-tree','-r',rev,'--','gates/receipts').splitlines()), 'nonregular receipt in bank')
     files = {}
     for name in (*DOCS, DEFAULT, SCAN, FRONT):
-        mode, kind, obj, path = git('ls-tree',rev,'--',name).split()
+        entry=git('ls-tree',rev,'--',name).split();need(len(entry)==4,'missing published evidence: '+name)
+        mode, kind, obj, path = entry
         need((mode,kind,path)==('100644','blob',name), 'unpublished evidence')
         need(int(git('cat-file','-s',obj)) <= 8<<20, 'oversize admission document/receipt')
         files[name] = subprocess.check_output(['git','-C',ROOT,'cat-file','blob',obj])

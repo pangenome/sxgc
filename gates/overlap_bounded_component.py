@@ -55,7 +55,9 @@ def before(d, deadline, reserve=0):
 
 def preflight(d, deadline):
     before(d,deadline,900); exclusive()
-    p = pin(); rev = published_main(REPO)
+    p = pin(); rev = published_main(Path.home()/'sxgc')
+    check(sp.check_output(['git','-C',REPO,'rev-parse','HEAD'],text=True).strip()==rev and not sp.check_output(['git','-C',REPO,'status','--porcelain']),'pin drift')
+    check(deadline<=1795531169,'outside experiment window')
     emit,batch,_ = one_series(BANK/'radix-full-1g')
     check(emit['matched_speed_io_pass'] and batch['matched_batch_pass'], '1 GB comparison did not pass')
     ref=json.loads((BANK/'radix-emit-100m/result.json').read_text())
@@ -83,9 +85,14 @@ def shape(log):
     return peak
 
 
-def private_raw(dst, digest):
-    with SOURCE.open('rb') as src, dst.open('xb') as out: shutil.copyfileobj(src,out,1<<20)
-    check(dst.stat().st_size==N and sha(dst)==digest,'private raw pin mismatch'); cold(dst)
+def private_raw(dst, digest, run, deadline):
+    from hashlib import sha256
+    before(run,deadline);h=sha256();left=N
+    with open(SOURCE,'rb',opener=lambda p,f:os.open(p,f|os.O_NOFOLLOW)) as src, dst.open('xb') as out:
+        while left:
+            before(run,deadline);block=src.read(min(left,1<<20));check(block,'short source');left-=len(block);out.write(block);h.update(block)
+        check(not src.read(1),'long source')
+    dst.chmod(0o400);check(dst.stat().st_size==N and h.hexdigest()==digest,'private raw pin mismatch'); cold(dst)
 
 
 def grant(cg, role):
@@ -184,7 +191,7 @@ def study(d,deadline,p):
     results={}; identity=None
     for arm in ('control','candidate'):
         before(d,deadline,420); exclusive(); a=d/arm; a.mkdir(); col=a/'columns'
-        private_raw(a/'oracle-raw',p['raw_sha256']); private_raw(a/'raw',p['raw_sha256']); before(d,deadline,420); exclusive()
+        private_raw(a/'oracle-raw',p['raw_sha256'],d,deadline); private_raw(a/'raw',p['raw_sha256'],d,deadline); before(d,deadline,420); exclusive()
         save(a/'cold-raw.json',dict(raw_bytes=N,oracle_bytes=N,raw_sha256=p['raw_sha256'],mincore_resident_pages=0))
         with (a/'prep.log').open('xb') as log:
             t=time.monotonic(); sp.run(unit(d,arm,'prep',deadline),stdout=log,stderr=sp.STDOUT,check=True); prep=time.monotonic()-t
@@ -228,7 +235,8 @@ def build(d,deadline):
     # Compilation is outside the construction scratch and scored clocks.
     with tempfile.TemporaryDirectory(prefix='bounded-component-build-') as tmp, (d/'build.log').open('xb') as log:
         def run(args):
-            before(d,deadline); sp.run(args,check=True,cwd=REPO,stdout=log,stderr=sp.STDOUT,timeout=deadline-time.time())
+            before(d,deadline); env={k:v for k,v in os.environ.items() if not k.startswith(('XSA_','OMP_','GOMP_')) and k not in ('CFLAGS','CC','RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','LD_PRELOAD')}
+            sp.run(args,check=True,cwd=REPO,stdout=log,stderr=sp.STDOUT,timeout=deadline-time.time(),env=env)
         run(['cargo','build','-j1','--locked','--offline','--release','--manifest-path','xsa/pfp/Cargo.toml','--target-dir',tmp,
              '--bin','overlap_resident','--bin','overlap_bounded_packed'])
         for name in ('overlap_resident','overlap_bounded_packed'): shutil.copy2(Path(tmp)/'release'/name,tools/name)
