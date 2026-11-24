@@ -108,3 +108,5 @@ is closed on success or failure. Same chunk kernel, fixtures, IO guards and
 192 MiB / one CPU / no swap grant as calibration. `MEASURED_100G_SCAN_ONLY`
 records census, conservative packing bounds and separately metered phases;
 no dictionary, product, rank, verification, or larger launch is implied.
+
+If an admitted scan actually completes, `python3 -BE gates/overlap_hundred_result.py RUN/scan.json` reviews the small receipt and its admitting git objects offline (no corpus access). It verifies both decisions, the bank tree, clock/cold/IO/SHA, row coverage and END, then separates measured `m` and histograms from unknown `k`/distinct descriptor loads. It reports where the i32 parse extent is ruled out by `m` alone, and hypothetical four-/six-k workspace thresholds at the **10 GB** array reference, not a new grant. The ratio of ten times measured 10 GB v8 wall to time left at scan close is only a sensitivity: a v10 product has different consumers and no demonstrated end-to-end fit. `overlap_hundred_result_test.py` tests positive and corrupted **in-memory shapes only**.

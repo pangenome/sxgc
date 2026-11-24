@@ -212,14 +212,14 @@ def scan(d: Path, deadline: int, pin: str, report: dict) -> None:
                           whole_run_allocated_before_receipt=alloc+sum(p.stat().st_blocks*512 for p in [d,*d.iterdir()]),
                           free_after_scan=shutil.disk_usage(d).free)
     after = report['cgroup_after'] = gate.cg_info(); cg_check(after); live()
-    report['status'] = 'MEASURED_100G_SCAN_ONLY'
+    report.update(status='MEASURED_100G_SCAN_ONLY', closed_unix_ns=time.time_ns())
 
 
 def worker(deadline, pin):
     with defaults.timing_lease():
         d = Path(tempfile.mkdtemp(prefix='scanplan-100g-',dir=gate.SANDBOX))
         print(f'scan-only receipt={d}', flush=True)
-        report = dict(status='REFUSED',deadline=deadline,launch_authorized=False)
+        report = dict(status='REFUSED',deadline=deadline,opened_unix_ns=time.time_ns(),launch_authorized=False)
         try:
             scan(d,deadline,pin,report)
         except Exception as exc:
