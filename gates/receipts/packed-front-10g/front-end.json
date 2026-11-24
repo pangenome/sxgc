@@ -1,0 +1,57 @@
+{
+  "bitmap_bytes": 1250000001,
+  "census": {
+    "D": 11239544612,
+    "alphabet": 243,
+    "descriptors": 9129290112,
+    "dictionary_bytes": 11942962780,
+    "k": 234472723,
+    "m": 318164488,
+    "max_bucket": 26107917,
+    "max_phrase": 88468,
+    "n": 10000000000,
+    "peak_counted": 15090631800,
+    "read_bytes": 37612232704,
+    "starts_above_u32": 181581998,
+    "write_bytes": 33635041280
+  },
+  "cgroup": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 351613090\nuser_usec 306120278\nsystem_usec 45492811\ncore_sched.force_idle_usec 0\nnr_periods 3575\nnr_throttled 608\nthrottled_usec 17215035\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 168447\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "201326592",
+    "memory.swap.max": "0"
+  },
+  "columns": {
+    "dictionary.packed": 11942962780,
+    "parse.u32": 1272657952
+  },
+  "parse_sort_extent": 1725000826,
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 69632,
+    "cpu_s": 337.93,
+    "rchar": 17636143924,
+    "read_bytes": 37612232704,
+    "syscr": 313682,
+    "syscw": 3599581,
+    "wchar": 30851568695,
+    "write_bytes": 33635045376
+  },
+  "proposed_array_bytes": {
+    "aux": 48737318668,
+    "emit": 123166376628,
+    "parse": 23867187604,
+    "sort": 111036301804
+  },
+  "rc": 0,
+  "sampled_counted_bytes": 15086377063,
+  "sampled_dir_allocated": 30647046144,
+  "sampled_peak_rss": 194187264,
+  "wall_s": 357.75729836616665,
+  "worker_scope": "raw input to packed columns only; no suffix ordering, row or container check"
+}

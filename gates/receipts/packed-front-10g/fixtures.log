@@ -1,0 +1,1 @@
+PASS compact lexical buckets: 6 independent byte-exact word tapes and ID strings; wrong rung, reuse and stop refused
