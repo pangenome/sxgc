@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import struct
 import shutil
 import tempfile
@@ -22,7 +23,36 @@ ROOT=Path('/mnt/nvme2n1/erikg/TAPEREADER')
 ONE=Rung(1_000_000_665,'b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3',ROOT/'climb/rung1/run_wide/product.sxi2',Path('/tmp/xsa_finish_cur'),('--with-chi','--container-stream'),20,14,1400)
 THREE=Rung(3_000_000_000,'3935e8f1d220092d2cd12081938748e8a62f02e882bd021781ec7c3d0cabe7f3',ROOT/'bins-p1/run14e/reader/product.sxi2',ROOT/'bins-p1/bin/xsa_finish',(),60,42,4200)
 TEN=Rung(10_000_000_000,'26cfb2de0cccab8a8712a332956d58693dcbbb34373a9031a7bbaaa08cc504c9',ROOT.parent/'lcpruns-gate/g3/scratch/pf-10gb.sxi2',Path('/tmp/xsa_finish_cur'),('--with-chi','--container-stream'),200,140,14000)
-def config(profile): return TEN if profile=='packed-10g-bitmap' else THREE if profile in ('packed-3g','packed-3g-bitmap') else ONE
+TEN_ARMS={f'packed-10g-l{l}-b{b}-t{t}-r{r}':(l,b,t,r) for l in (1,2,4) for b in (0,1) for t in (1,2,4) for r in (0,1)}
+def config(profile):
+    if profile in TEN_ARMS or profile=='packed-10g-bitmap':return TEN
+    if profile in ('packed-3g','packed-3g-bitmap'):return THREE
+    if profile in ('narrow','wide','wide-handoff','packed-raw','packed-radix-1','packed-radix-2','packed-radix-4','packed-radix-2-batch','packed-radix-4-batch'):return ONE
+    raise ValueError('unknown rung: '+profile)
+
+# Select only gate controls (never persist unrelated inherited environment).
+CONTROL_KEYS=set('SS_LCP_SLICE_WINDOW CROSS_V2_PIECES CROSS_V2_PIECE_WINDOW PFCK_SPACING XSA_GATE_PACKED_10G XSA_GATE_PACKED_3G XSA_FINISH_SPOOL XSA_RESIDENT_RADIX_LANES XSA_RESIDENT_RADIX_STEP XSA_RESIDENT_DICT_THREADS OMP_NUM_THREADS OMP_THREAD_LIMIT OMP_DYNAMIC OMP_WAIT_POLICY GOMP_SPINCOUNT XSA_RESIDENT_PACKED XSA_RESIDENT_WIDE_DICT XSA_TEST_RESIDENT_TRIPLES XSA_BATCH_SXLS_ESCAPES XSA_PRIVATE_SXLS_RECLAIM'.split())
+
+def dict_extra(D,t):
+    return t*(64+(4*256+2*24576)*(8 if D>=2**31 else 4))+3*4097 if t>1 and D>1 else 0
+
+def emit_extra(D,lanes):
+    return 104*((D+16383)//16384)+lanes*2*65536*12+lanes*(3<<20)+(1<<20) if lanes>1 else 0
+
+def expired(d,deadline):
+    if deadline is not None and time.time()>=deadline:
+        (d/'stop.requested').touch(exist_ok=True);return True
+    return False
+
+def omp_settings(t):
+    cap=len(os.sched_getaffinity(0))
+    for path in (CG,*CG.parents):
+        if path==Path('/sys/fs'):break
+        if (path/'cpu.max').is_file():
+            quota,period=(path/'cpu.max').read_text().split()
+            if quota!='max':cap=min(cap,int(quota)//int(period))
+    if cap<4 or t>cap:raise RuntimeError(f'matched arm requires four available CPUs; effective grant {cap}')
+    return dict(XSA_RESIDENT_DICT_THREADS=str(t),OMP_NUM_THREADS=str(t),OMP_THREAD_LIMIT=str(t),OMP_DYNAMIC='FALSE',OMP_WAIT_POLICY='PASSIVE',GOMP_SPINCOUNT='0')
 GIB = 1 << 30
 CG = Path('/sys/fs/cgroup')/Path('/proc/self/cgroup').read_text().strip().split('::/')[1]
 
@@ -60,7 +90,7 @@ def finished(p):
     # Read final /proc/io and CPU counters *before* wait reaps the zombie.
     return os.waitid(os.P_PID,p.pid,os.WEXITED|os.WNOHANG|os.WNOWAIT) is not None
 
-def footprint(d,retained,ram=False):
+def footprint(d,retained,ram=False,markers=None):
     # Logical sizes count even if sparse. Sample allocated bytes separately,
     # including private copies, logs and the partial/final product.
     whole=0; parts={'prepared_refs_ids':retained}; stack=[d]
@@ -74,13 +104,28 @@ def footprint(d,retained,ram=False):
             if e.is_dir(follow_symlinks=False):stack.append(e.path);continue
             rel=Path(e.path).relative_to(d); f=e.name
             if rel.parts[0]=='in' or len(rel.parts)==1 and (f in ('oracle-corpus','inverse.check','product.sxi2','product.sxi2.partial','stop.requested') or f.endswith(('.log','.json','.sha'))):continue
+            if markers is not None and rel.parts[0]=='bands' and f.endswith(('.lcp.done','.lcp.consumed')):markers[0]+=1
             if ram: group={'pieces':'ram_pieces','bands':'ram_slices','bitmap':'ram_bitmap'}[rel.parts[0]]
             elif rel.parts[0]=='columns': group='generated_lexparse'
             else: group=rel.parts[0] if len(rel.parts)==1 else ('pieces' if '.pieces' in str(rel.parent) else 'slices' if rel.parts[0]=='bands' else f)
             parts[group]=parts.get(group,0)+st.st_size
     return whole,parts
 
-def oracle(d,tools,cfg):
+def final_markers(bands,rows,reclaim):
+    """Only after both workers exit. Unique directory names + exact count
+    prove both empty markers for every expected tail ID, without a set."""
+    slices=(rows+262143)//262144;first=max(0,slices-64) if reclaim else 0;count=0
+    with os.scandir(bands) as entries:
+        for e in entries:
+            st=e.stat(follow_symlinks=False);assert stat.S_ISREG(st.st_mode) and st.st_size==0 and st.st_nlink==1
+            if e.name=='producer.done':continue
+            m=re.fullmatch(r'band_(0|[1-9][0-9]*)\.lcp\.(done|consumed)',e.name)
+            assert m and first<=int(m[1])<slices;count+=1
+    assert count==2*(slices-first) and (bands/'producer.done').is_file()
+    return count
+
+def oracle(d,tools,cfg,deadline=None):
+    if expired(d,deadline):raise SystemExit(75)
     assert (CG/'memory.max').read_text().strip()==str(cfg.oracle_mib<<20) and (CG/'memory.swap.max').read_text().strip()=='0'
     start=time.monotonic(); peak=0
     with (d/'oracle.log').open('xb') as f:
@@ -88,14 +133,15 @@ def oracle(d,tools,cfg):
         if cfg==TEN:args.append(d/'stop.requested')
         p=sp.Popen(args,stdout=f,stderr=f)
         with open(f'/proc/{p.pid}/io') as io:
-            while not finished(p): peak=max(peak,proc_info(p.pid,io)['VmHWM']); time.sleep(.5)
+            while not finished(p):
+                expired(d,deadline);peak=max(peak,proc_info(p.pid,io)['VmHWM']); time.sleep(.5)
             stats=proc_info(p.pid,io); rc=p.wait()
     save(d/'oracle.json',dict(rc=rc,process=stats,sampled_peak_rss=peak,cgroup=cg_info(),wall_including_wait_s=time.monotonic()-start))
     assert rc==0 and f'ORACLE rows={cfg.n+1} independent_final_rank={cfg.n+1} all_adjacent_sa_lcp_bwt_verified=1' in (d/'oracle.log').read_text()
 
 def radix_lanes(profile):return {'packed-radix-1':1,'packed-radix-2':2,'packed-radix-4':4}.get(profile.removesuffix('-batch'),1)
 
-def pack_front(d,tools,cfg,lanes=1):
+def pack_front(d,tools,cfg,lanes=1,threads=1,deadline=None):
     """Produce *fresh* columns from private cold raw text. The packer itself
     charges each bucket, assignment and output before writing (limit 2N).
     No active sink/finish until the new dictionary tape has been retired.
@@ -106,9 +152,11 @@ def pack_front(d,tools,cfg,lanes=1):
     with (d/'pack.log').open('xb') as log:
         args=[tools/'lexparse',d/'in/corpus',cols]
         if cfg!=TEN:args.append('--packed-3g' if cfg==THREE else '--packed')
+        if expired(d,deadline):raise SystemExit(75)
         p=sp.Popen(args,stdout=log,stderr=log)
         with open(f'/proc/{p.pid}/io') as io:
             while not finished(p):
+                expired(d,deadline)
                 peak=max(peak,proc_info(p.pid,io)['VmHWM']); wh,parts=footprint(d,0); allocated=max(allocated,wh)
                 if sum(parts.values())>2*cfg.n or time.monotonic()-start>(1200 if cfg==TEN else 600):(d/'stop.requested').touch()
                 time.sleep(.25)
@@ -137,9 +185,7 @@ def pack_front(d,tools,cfg,lanes=1):
         resident=12*(k+1)+21*m+16*((m+15)//16)
         bounds=dict(parse=tape+8*m+40*k,aux=tape+D+33*(k+1)+56*(m+1),sort=9*D+resident+(64<<20),emit=9*D+16*((D+63)//64)+resident+40*k+(8<<20))
         assert bounds==ref['proposed_array_bytes'] and v['D']==D and v['alphabet']<=254 and max(n,tape,D)<2**43
-    if lanes>1:
-        # 64-bit Probe (3 Fence) + Tile, fixed row credits, stacks and shared heap slack.
-        bounds['emit']+=104*((D+16383)//16384)+lanes*2*65536*12+lanes*(3<<20)+(1<<20)
+    bounds['emit']+=emit_extra(D,lanes);bounds['sort']+=dict_extra(D,threads)
     front.update(n=n,m=m,k=k,descriptors=descriptors,D=D,array_bounds=bounds,counted_front_peak=peak_counted,columns=sizes); save(d/'front-end.json',front)
     assert 0<k<=m and m+6*k<2**31 and max(bounds.values())<=cfg.arrays_gib*GIB
     if cfg!=TEN:assert m<=100_000_000 and k<=80_000_000 and tape<2**32
@@ -151,15 +197,19 @@ def pack_front(d,tools,cfg,lanes=1):
     front.update(counted_front_peak=peak_counted,columns=sizes,cold_barrier_s=time.monotonic()-t)
     save(d/'front-end.json',front); say('PACKED_FRONT',m,k,peak_counted,round(front['wall_s'],3)); return front
 
-def build(d,tools,profile):
-    assert profile in ('narrow','wide','wide-handoff','packed-raw','packed-3g','packed-3g-bitmap','packed-10g-bitmap','packed-radix-1','packed-radix-2','packed-radix-4','packed-radix-2-batch','packed-radix-4-batch'); cfg=config(profile); N=cfg.n
-    lanes=radix_lanes(profile);row_queue=lanes*2*65536*12 if lanes>1 else 0
-    bitmap=profile in ('packed-3g-bitmap','packed-10g-bitmap') or profile.startswith('packed-radix-')
+def build(d,tools,profile,deadline=None):
+    cfg=config(profile); N=cfg.n; matched=profile in TEN_ARMS
+    if matched!=(deadline is not None):raise ValueError('deadline required only for matched profiles')
+    if matched and expired(d,deadline):raise SystemExit(75)
+    lanes,batch,threads,reclaim=TEN_ARMS.get(profile,(radix_lanes(profile),int(profile.endswith('-batch')),1,0))
+    omp=omp_settings(threads) if matched else {};cpu_start=time.process_time()
+    row_queue=lanes*2*65536*12 if lanes>1 else 0
+    bitmap=matched or profile in ('packed-3g-bitmap','packed-10g-bitmap') or profile.startswith('packed-radix-')
     assert (CG/'memory.max').read_text().strip()==str(cfg.shared_gib*GIB) and (CG/'memory.swap.max').read_text().strip()=='0'
     src=d/'in'; corpus=src/'corpus'; assert corpus.stat().st_size==N
     packed=profile.startswith('packed-'); raw_start=time.monotonic(); cg0=cg_info()
     if packed:
-        front=pack_front(d,tools,cfg,lanes); producer_in=d/'columns'; retained=front['columns']['parse.u32'] # through finish
+        front=pack_front(d,tools,cfg,lanes,threads,deadline); producer_in=d/'columns'; retained=front['columns']['parse.u32'] # through finish
     else:
         producer_in=src; retained=sum((src/f).stat().st_size for f in ('parse.u32','dictionary.refs'))
     retired=False
@@ -171,7 +221,7 @@ def build(d,tools,profile):
     plan=dict(retained=retained,pfck=64+8*(rows//22+2),bitmap=(rows+7)//8,sparse=refs[11][2],
               lcp_runs=refs[14][2],ef_spools=refs[5][2],pieces=104*(per_piece+40),
               slices=64*(48+17*262144),control_margin=8<<20)
-    if profile.startswith('packed-radix-'):plan['row_queue']=row_queue
+    if matched or profile.startswith('packed-radix-'):plan['row_queue']=row_queue
     bound=sum(plan.values()); assert bound<2*N
     before_emit=sum(front['columns'].values())+plan['control_margin']+row_queue if packed else bound
     post_bound=max(before_emit,bound); assert post_bound<=2*N
@@ -180,7 +230,7 @@ def build(d,tools,profile):
     (d/'merged').mkdir(); flag=d/'stop.requested'; ram=None; temp=None; extra_env={}; bands=d/'bands'
     # Bitmap already charged once in plan/bound. A tmpfs copy does not
     # coexist with a disk copy. Additionally reserve its RAM until unlink.
-    reserve=plan['pieces']+plan['slices']+plan['control_margin']+(plan['bitmap'] if bitmap else 0); rampeak=shmempeak=0
+    reserve=plan['pieces']+plan['slices']+plan['control_margin']+(plan['bitmap'] if bitmap else 0); rampeak=shmempeak=marker_peak=0
     if profile=='wide-handoff' or packed:
         # PFCK, m14, EF spools, retained parse and product always on NVMe.
         # Bitmap stays there too except in the explicit one-file A/B.
@@ -189,14 +239,21 @@ def build(d,tools,profile):
         temp=tempfile.TemporaryDirectory(prefix='xsa-volatile-',dir='/dev/shm'); ram=Path(temp.name)
         bands=ram/'bands'; extra_env={'XSA_GATE_VOLATILE_PIECES':str(ram/'pieces')}
         if bitmap:(ram/'bitmap').mkdir(mode=0o700)
-    bands.mkdir(); start=time.monotonic()
+    bands.mkdir();prepared_cg=cg_info() if matched else None; start=time.monotonic()
     env={k:v for k,v in os.environ.items() if not k.startswith(('XSA_','SS_','CROSS_','PFCK_','TRIE_','LD_PRELOAD'))}
     env.update(SS_LCP_SLICE_WINDOW='64',CROSS_V2_PIECES='1',CROSS_V2_PIECE_WINDOW='32',PFCK_SPACING='22')
     common=['--corpus',corpus,'--remap',src/'remap','--threads','2']; pref=d/'merged/frag'
     w={}; proc={}; iofiles={}; exitcode={}; times={}; peaks={}; logs={}; started={}; tail=None
+    controls={}
     def launch(name,cmd,**kwargs):
+        if matched:
+            settings=kwargs['env'];assert 'XSA_FINISH_SPOOL' not in settings
+            assert settings.get('XSA_PRIVATE_SXLS_RECLAIM')==('1' if name=='sink' and reclaim else None)
         logs[name]=(d/(name+'.log')).open('xb'); started[name]=time.monotonic()
         kwargs.setdefault('stdout',logs[name]); w[name]=sp.Popen(cmd,stderr=logs[name],**kwargs); peaks[name]=0
+        if matched:
+            environ=Path(f'/proc/{w[name].pid}/environ').read_bytes().split(b'\0')
+            controls[name]={os.fsdecode(k):os.fsdecode(v) for k,_,v in (item.partition(b'=') for item in environ) if os.fsdecode(k) in CONTROL_KEYS}
         iofiles[name]=open(f'/proc/{w[name].pid}/io')
     def request(reason):
         if not flag.exists():say('STOP_REQUEST',reason); flag.write_text(reason+'\n')
@@ -205,17 +262,22 @@ def build(d,tools,profile):
     audit=os.dup(1)
     if cfg==THREE: env['XSA_GATE_PACKED_3G']='1'
     if cfg==TEN: env['XSA_GATE_PACKED_10G']='1'
-    if profile.startswith('packed-radix-'):env.update(XSA_RESIDENT_RADIX_LANES=str(lanes),XSA_RESIDENT_RADIX_STEP='16384')
+    if matched:env={k:v for k,v in env.items() if not k.startswith(('OMP_','GOMP_'))}
+    if matched or profile.startswith('packed-radix-'):env.update(XSA_RESIDENT_RADIX_LANES=str(lanes),XSA_RESIDENT_RADIX_STEP='16384')
     rank_input=[d/'inverse.check'] if cfg==ONE else []
     binary_dir=tools if (tools/'overlap_resident').exists() else REPO/'xsa/target/release'
+    if expired(d,deadline):raise SystemExit(75)
     launch('resident',[binary_dir/'overlap_resident',producer_in,flag,str(cfg.arrays_gib*GIB),*rank_input],
-           env=dict(env,XSA_RESIDENT_PACKED=str(int(packed)),XSA_RESIDENT_WIDE_DICT=str(int(profile!='narrow')),XSA_RESIDENT_AUDIT_FD=str(audit)),stdout=sp.PIPE,pass_fds=(audit,)); os.close(audit)
+           env=dict(env,**omp,XSA_RESIDENT_PACKED=str(int(packed)),XSA_RESIDENT_WIDE_DICT=str(int(profile!='narrow')),XSA_RESIDENT_AUDIT_FD=str(audit)),stdout=sp.PIPE,pass_fds=(audit,)); os.close(audit)
     counted_peak=0; disk_peak=0; at_peak={}; each={}; last_disk=0; active='start'; samples={}
     with (d/'resident.log').open() as tail:
         while True:
             for l in tail.readlines():
                 if l.startswith('RESIDENT_'):say(l.rstrip())
                 if l.startswith('RESIDENT_BEGIN'):active=l.strip().split('=')[-1]
+            if expired(d,deadline):
+                request('deadline')
+                if 'sink' not in w:w['resident'].stdout.close()  # do not strand a blocked pipe writer
             if active=='emit' and 'sink' not in w and not flag.exists():
                 # Only this invocation's newly created packed tape. The binary
                 # has closed it and starts emitting only from anonymous arrays.
@@ -223,8 +285,9 @@ def build(d,tools,profile):
                     tape=producer_in/'dictionary.packed'; assert tape.stat().st_size==front['columns'][tape.name]
                     tape.unlink(); retired=True; say('PACKED_RETIRE bytes='+str(front['columns'][tape.name]))
                 # Don't charge a sort's idle wall to the finish. Frozen data path.
+                if reclaim:extra_env['XSA_PRIVATE_SXLS_RECLAIM']='1'
                 launch('sink',[binary_dir/'pfp_sort_r',*common,'--out-prefix',pref,'--bands',bands,'--scratch-budget-bytes',str(2*N-retained)],
-                       env=dict(env,**extra_env,XSA_TEST_RESIDENT_TRIPLES='1',XSA_BATCH_SXLS_ESCAPES=str(int(profile.endswith('-batch')))),stdin=w['resident'].stdout,stdout=sp.DEVNULL); w['resident'].stdout.close()
+                       env=dict(env,**extra_env,XSA_TEST_RESIDENT_TRIPLES='1',XSA_BATCH_SXLS_ESCAPES=str(batch)),stdin=w['resident'].stdout,stdout=sp.DEVNULL); w['resident'].stdout.close()
                 finish_env=dict(env,LD_PRELOAD=str(tools/'monitor.so'),XSA_GATE_PRIVATE_STOP=str(flag)); fds=()
                 if bitmap:
                     # Only this finish child can create the one mapped file in
@@ -245,7 +308,9 @@ def build(d,tools,profile):
             if time.monotonic()-last_disk>1 or len(exitcode)==len(w):
                 last_disk=time.monotonic(); whole,parts=footprint(d,0 if packed else retained); disk_peak=max(disk_peak,whole)
                 if ram is not None:
-                    allocated,rparts=footprint(ram,0,ram=True); rparts.pop('prepared_refs_ids'); parts.update(rparts)
+                    markers=[0] if matched else None
+                    allocated,rparts=footprint(ram,0,ram=True,markers=markers); rparts.pop('prepared_refs_ids'); parts.update(rparts)
+                    if matched:marker_peak=max(marker_peak,markers[0])
                     rampeak=max(rampeak,allocated); shmempeak=max(shmempeak,int(re.search(r'^shmem (\d+)$',(CG/'memory.stat').read_text(),re.M)[1]))
                     if max(allocated,sum(rparts.values()))>reserve:request('volatile scratch exceeded reserved RAM')
                     if bitmap and ('frag.chi-bitmap' in parts or rparts.get('ram_bitmap',0)>plan['bitmap']):request('wrong bitmap placement/extent')
@@ -266,12 +331,16 @@ def build(d,tools,profile):
             counted_sampled_peak=counted_peak,counted_at_peak=at_peak,individual_sampled_peaks=each,whole_dir_sampled_allocated=disk_peak,
             wall_s=time.monotonic()-start,shared_before=cg0,shared_after=cg_info(),stop=flag.exists())
     if profile.startswith('packed-radix-'):rc['sxls_batched']=profile.endswith('-batch')
+    if matched:rc.update(prepared_cgroup_before=prepared_cg,worker_controls=controls,sxls_batched=bool(batch),omp_settings=omp,cpu_affinity=sorted(os.sched_getaffinity(0)),harness_cpu_s=time.process_time()-cpu_start,deadline_unix=deadline)
     if packed:
         rc.update(raw_to_product_s=time.monotonic()-raw_start,raw_front_wall_s=front['wall_s'],packed_tape_retired=retired,
                   raw_counted_highwater=max(front['counted_front_peak'],counted_peak),raw_dir_sampled_allocated=max(front['sampled_allocated'],disk_peak),
                   raw_worker_io={k:front['process'][k]+sum(x[k] for x in proc.values()) for k in ('read_bytes','write_bytes')})
     if ram is not None:
         rc['volatile_handoff']=dict(reserved_bytes=reserve,sampled_tmpfs_allocated=rampeak,sampled_cgroup_shmem=shmempeak,swap_max=0,mode='replay from raw input' if packed else 'restart from prepared inputs, no handoff recovery')
+        if matched and not rc['stop'] and exitcode==dict(resident=0,sink=0,finish=0):
+            assert bands==ram/'bands' and not (d/'bands').exists() and not any(each.get(k,0) for k in ('slices','pieces','frag.chi-bitmap'))
+            rc['sxls_markers']=dict(reclaim=bool(reclaim),sampled_peak=marker_peak,exact_final=final_markers(bands,rows,reclaim),bands_on_tmpfs=True)
         if bitmap:
             marks=[l for l in (d/'finish.log').read_text().splitlines() if l.startswith('GATE_BITMAP ')] if (d/'finish.log').exists() else []
             rc['bitmap_placement']=dict(bytes_reserved=plan['bitmap'],sampled_bytes=each.get('ram_bitmap',0),events=marks,
@@ -295,7 +364,10 @@ def certify(d,cfg):
 
 if __name__=='__main__':
     mode=sys.argv[1]; d=Path(sys.argv[2]);
-    if mode=='certify':certify(d,config(sys.argv[3] if len(sys.argv)>3 else 'narrow'))
-    elif mode=='oracle':oracle(d,Path(sys.argv[3]),config(sys.argv[4] if len(sys.argv)>4 else 'narrow'))
-    elif mode=='build':build(d,Path(sys.argv[3]),sys.argv[4] if len(sys.argv)>4 else 'narrow')
+    if mode=='certify' and len(sys.argv) in (3,4):certify(d,config(sys.argv[3] if len(sys.argv)>3 else 'narrow'))
+    elif mode=='oracle' and len(sys.argv) in (4,5,6):
+        profile=sys.argv[4] if len(sys.argv)>4 else 'narrow'
+        if (profile in TEN_ARMS)!=(len(sys.argv)==6):raise ValueError('deadline required only for matched profiles')
+        oracle(d,Path(sys.argv[3]),config(profile),int(sys.argv[5]) if len(sys.argv)==6 else None)
+    elif mode=='build' and len(sys.argv) in (4,5,6):build(d,Path(sys.argv[3]),sys.argv[4] if len(sys.argv)>4 else 'narrow',int(sys.argv[5]) if len(sys.argv)==6 else None)
     else:raise ValueError(mode)
