@@ -85,7 +85,8 @@ def verified_arm(d):
             rows=json.loads(re.search(r'lane_rows=(\[[^\]]*\])',join)[1]);assert len(rows)==lanes and sum(rows)==TEN.n and j['serial_row_comparisons']==0
     return b,f,ident
 
-def score(d):
+def measured_goals(d):
+    """Side-effect-free score for replay from either live or published receipts."""
     root=Path(__file__).resolve().parent/'receipts'; b,f,_=verified_arm(d)
     ratios={}; raw_io={}; post_io={}
     for cfg,folder in [(ONE,'packed-raw-1g'),(THREE,'packed-3g-bitmap')]:
@@ -98,6 +99,9 @@ def score(d):
     result=dict(relative_to='normalized cross-rung, not same-text A/B; v8 profile, rung-specific frozen finish/remap',normalized_wall=ratios,
                 normalized_raw_io=raw_io,normalized_prepared_io=post_io,target_under_2x=high<2,promotion_under_3x=high<3,
                 prepared_read_bytes=reads,cold_input_bytes=cold,prepared_write_bytes=writes,normalized_write_ratio_vs_wide_disk=wr,normalized_io_pass=ok)
-    save(d/'goals.json',result); print('TEN_PRODUCT_SCORE',result,flush=True)
-    if b['profile'] not in TEN_ARMS and not(ok and high<3):raise SystemExit(75)
+    return result
+
+def score(d):
+    result=measured_goals(d);save(d/'goals.json',result); print('TEN_PRODUCT_SCORE',result,flush=True)
+    if get(d,'build.json')['profile'] not in TEN_ARMS and not(result['normalized_io_pass'] and result['promotion_under_3x']):raise SystemExit(75)
 if __name__=='__main__':score(Path(sys.argv[1]))

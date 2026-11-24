@@ -12,7 +12,7 @@ from pathlib import Path
 from overlap_radix_product_score import metrics as one_metrics, score as score_lanes, score_batch
 from overlap_resident_gate import ONE, TEN, TEN_ARMS, save
 from overlap_ten_matched_score import compare
-from overlap_ten_score import get, verified_arm
+from overlap_ten_score import get, measured_goals, verified_arm
 
 
 def one_series(pair):
@@ -44,7 +44,8 @@ def one_series(pair):
 
 
 def experiment_order(pair,grid):
-    emit,batch,_=one_series(pair);g=get(grid,'result.json');t=g['selected_threads']; assert t in (1,2,4)
+    from overlap_ten_dict_grid import replay
+    emit,batch,_=one_series(pair);g=replay(grid);t=g['selected_threads']; assert t in (1,2,4)
     assert [a['threads'] for a in g['arms']]==[1,4,2] and len({a['sha256'] for a in g['arms']})==1
     # Test parallelism at the actual 10 GB shared CPU quota. Favor two for the
     # FIRST experiment if four did not win the 1 GB end-to-end comparison.
@@ -71,7 +72,8 @@ def evaluate(control,pair,grid,arms):
         b,_,_=verified_arm(p);assert b['profile'] in order
         c=compare('historical',control,p);cross.append(c)
         if len(arms)>1 and p!=arms[0]:single.append(compare('single-knob',arms[0],p))
-        goals=get(p,'goals.json');norm={k:(b[name]/TEN.n)/(one[k]/ONE.n) for k,name in [('raw','raw_to_product_s'),('prepared','wall_s')]}
+        goals=measured_goals(p);assert goals==get(p,'goals.json'),'10 GB goals did not replay'
+        norm={k:(b[name]/TEN.n)/(one[k]/ONE.n) for k,name in [('raw','raw_to_product_s'),('prepared','wall_s')]}
         def cpu(s):return int(dict(l.split() for l in s['cpu.stat'].splitlines())['usage_usec'])/1e6
         ratio=c['trial_over_control_wall']['raw']; post=c['trial_over_control_prepared_io']; high=max(norm.values())
         ok=(ratio<=0.95 and high<3 and max(post.values())<=1.05 and goals['promotion_under_3x'] and goals['normalized_io_pass'])

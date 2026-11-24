@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 
-from overlap_resident_gate import ROOT, TEN, cg_info, save
+from overlap_resident_gate import ROOT, TEN, cg_info, dict_extra, save
 from overlap_scaling_policy import one_series
 from overlap_ten_matched_score import metrics as certified_ten
 from private_cold import cold
@@ -69,6 +69,24 @@ def score(log, entries):
              all(r[k] <= rows[0][k] for k in ('read_bytes','write_bytes'))]
     return dict(arms=rows, selected_threads=min(picks, default=None), scope='in-memory dictionary sort only; no product, prep or hash time in arm wall')
 
+
+def replay(d):
+    """Read-only attestation and score replay. Does not open either dictionary."""
+    assert not (d/'stop.requested').exists()
+    exit=load(d,'exit.json');inputs=load(d,'inputs.json');ref=load(REPO/'gates/receipts/packed-front-10g','front-end.json')
+    assert exit['rc']==0 and inputs['env']==GRID and inputs['columns']==ref['columns'] and inputs['array_grant']==140<<30
+    for cg in (inputs['cgroup'],exit['cgroup']):
+        assert (cg['memory.max'],cg['cpu.max'],cg['memory.swap.max'])==(str(200<<30),'400000 100000','0')
+        assert {'oom 0','oom_kill 0'}<=set(cg['memory.events'].splitlines()) and 0<int(cg['memory.peak'])<=200<<30
+    assert (d/'cold.log').read_text().strip()=='private column copies: mincore zero resident pages'
+    assert (d/'fixtures.log').read_text().startswith('PASS naive SHA-256 of all LE i64 entries x3 arms; no rows;')
+    tool=(d/'binaries.log').read_text().splitlines();assert re.fullmatch('[0-9a-f]{40}',tool[0]) and re.fullmatch(r'[0-9a-f]{64}  /[^\n]*/overlap_resident',tool[1])
+    log=(d/'resident.log').read_text();entries=ref['census']['D']
+    assert 'RESIDENT_STREAM' not in log and f"RESIDENT_CHECK recurrence_ranks={ref['census']['m']} virtual_end=0" in log.splitlines()
+    assert [line for line in log.splitlines() if line.startswith('RESIDENT_DICT_SORT ')]==[f'RESIDENT_DICT_SORT kernel=native_wide wide=true selected_threads={t} fs=0 thread_workspace_bytes={dict_extra(entries,t)}' for t in (1,4,2)]
+    assert re.search(r'^RESIDENT_PHASE phase=aligned_and_lists seconds=',log,re.M) and entries>2**32
+    result=score(log,entries);assert result==load(d,'result.json') and result['selected_threads'] in (1,2,4),'native grid score did not replay'
+    return result
 
 def worker(d, exe, ten, pair, deadline):
     ref = prerequisites(ten, pair, deadline)

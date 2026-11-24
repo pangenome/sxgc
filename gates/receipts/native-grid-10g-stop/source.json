@@ -1,0 +1,14 @@
+{
+  "scored": false,
+  "sha256": {
+    "binaries.log": "4c141435433077f1ae4aff4aaae8e7855d254e0470cc8890215d510132a48eeb",
+    "build.log": "9f300049a2898ac944d80ddd4f6227a3d8d73cde5e05e4c86b4e982c65481d12",
+    "cold.log": "c62bd42e7f055a944994ef055454c2990e21e06211ae0fa7dbe7c243deab1567",
+    "exit.json": "5458135635baeb6e5c935775329272d137fa668adde44eb6ba27b09d4039a9e0",
+    "fixtures.log": "8444ca0bf1cadb755a61932050a16dc9379bcd8c11f992ce1781cd27ae8ce8e1",
+    "inputs.json": "d7789e76cc5e948d6fe8204b043ce4967bf8a13753d51db9d9a118ec100200f5",
+    "resident.log": "87dd344b9613575d58d42bef476de40526d8258067daaf1ad069271ebe1bc177",
+    "stop.requested": "50650ea091bcfc235fea7ea39041872001f80814dc6ee067a7614083d9230fb6"
+  },
+  "source": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/dict-grid-10g-SMRhr1"
+}
