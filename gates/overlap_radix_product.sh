@@ -3,6 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/..";s=/mnt/nvme2n1/erikg/TAPEREADER/sandbox
 case $#:${1:-} in 0:) batch=0;; 1:--include-batch) batch=1;; *) echo 'usage: overlap_radix_product.sh [--include-batch]' >&2;exit 64;;esac
+source gates/overlap_pin.sh
+overlap_pin_series gates/overlap_radix_product.sh "$@"
 if ((batch));then python3 - <<'PY'
 import json
 from pathlib import Path
