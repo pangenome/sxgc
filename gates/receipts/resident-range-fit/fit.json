@@ -1,0 +1,70 @@
+{
+  "plan_sha256": "7cc0a8a7fd7359e78693c4e2675e60212d89d3bfaa9f6e39acfbefd63a64fdfa",
+  "intervals": 3340,
+  "resident_dict_lists_rmq_bytes": 1899333479,
+  "heap_bound_bytes": 10485760,
+  "routing_model": "one full physical-order dictionary traversal per macro batch, no disk IO inferred",
+  "excludes": "source parser, finish, allocator, control, cache, oracle; not a speed or cgroup pass",
+  "profiles": [
+    {
+      "arena": 268435456,
+      "record_bytes": 8,
+      "copy_tail_bytes": false,
+      "batches": 29,
+      "peak_payload": 268320576,
+      "largest_batch_rows": 36823866,
+      "logical_dictionary_scan_bytes": 33820066945,
+      "distinct_output_rows_plus_end": 1000000666
+    },
+    {
+      "arena": 268435456,
+      "record_bytes": 16,
+      "copy_tail_bytes": false,
+      "batches": 57,
+      "peak_payload": 268319056,
+      "largest_batch_rows": 18973099,
+      "logical_dictionary_scan_bytes": 66473924685,
+      "distinct_output_rows_plus_end": 1000000666
+    },
+    {
+      "arena": 268435456,
+      "record_bytes": 16,
+      "copy_tail_bytes": true,
+      "batches": 216,
+      "peak_payload": 268415132,
+      "largest_batch_rows": 5084528,
+      "logical_dictionary_scan_bytes": 251901188280,
+      "distinct_output_rows_plus_end": 1000000666
+    },
+    {
+      "arena": 1073741824,
+      "record_bytes": 8,
+      "copy_tail_bytes": false,
+      "batches": 7,
+      "peak_payload": 1073644176,
+      "largest_batch_rows": 143504562,
+      "logical_dictionary_scan_bytes": 8163464435,
+      "distinct_output_rows_plus_end": 1000000666
+    },
+    {
+      "arena": 1073741824,
+      "record_bytes": 16,
+      "copy_tail_bytes": false,
+      "batches": 15,
+      "peak_payload": 1073644816,
+      "largest_batch_rows": 72457637,
+      "logical_dictionary_scan_bytes": 17493138075,
+      "distinct_output_rows_plus_end": 1000000666
+    },
+    {
+      "arena": 1073741824,
+      "record_bytes": 16,
+      "copy_tail_bytes": true,
+      "batches": 53,
+      "peak_payload": 1073362906,
+      "largest_batch_rows": 20139400,
+      "logical_dictionary_scan_bytes": 61809087865,
+      "distinct_output_rows_plus_end": 1000000666
+    }
+  ]
+}
