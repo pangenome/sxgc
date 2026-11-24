@@ -1,0 +1,90 @@
+{
+  "actual_m_over_tenfold_10g": 0.9999024429149994,
+  "admitted_revision": "3b0fcc0d0833c52dfcc52641983f85b07e3a19d9",
+  "conservative_whole_occurrence_ranges": {
+    "1073741824": null,
+    "17179869184": null,
+    "2147483648": null,
+    "268435456": null,
+    "34359738368": 25,
+    "4294967296": null
+  },
+  "copy_and_cold": {
+    "per_device_io": null,
+    "read_cap": 100067108864,
+    "wall_s": 140.62175804097205,
+    "worker_cpu_s": 97.08167023,
+    "worker_io": {
+      "read_bytes": 99999424512,
+      "write_bytes": 100000002048
+    },
+    "write_cap": 100067108864
+  },
+  "copy_inclusive_reservation": 100268435456,
+  "copy_plus_scan_per_byte_vs_10g": 0.8934085734523752,
+  "default_10g": "packed-10g-l2-b1-t4-r1",
+  "dimensions": {
+    "D_upper": 128632010385,
+    "U_lower": 201606,
+    "U_upper": 100000000000,
+    "alphabet": 243,
+    "conservative_unsplit_cell_arena_bytes": 18481588744,
+    "encoded_bytes_fit_254_alphabet": true,
+    "eof_owned": 16,
+    "eof_start": 99999999984,
+    "hypothetical_largest_k_for_140gib_parse_arrays": {
+      "4": 2709286425,
+      "6": 1806190950
+    },
+    "largest_k_for_i32_extent": null,
+    "largest_occurrence_cell": 25990,
+    "largest_occurrence_mass": 2310198593,
+    "largest_tape_plus_parse_ids_bound": 150901351800,
+    "lexical_k_upper": 3181334488,
+    "m": 3181334488,
+    "max_raw_phrase": 201614,
+    "max_stride": 201606,
+    "n": 100000000000,
+    "narrow_parse_impossible_from_m_alone": true,
+    "nonempty_occurrence_cells": 36590,
+    "observed_m_allows_u32_sampled_ranks": true,
+    "occurrence_histogram_sha256": "fd9cff659591001f72a7806169d3a11a7f7d70b70915a0556be68d995c3e77ae",
+    "packed_tape_upper": 138176013848,
+    "parse_ids_bytes": 12725337952,
+    "raw_positions_above_u32_including_END": 95705032705,
+    "row43_extent_ok": true,
+    "separate_worst_complete_group_cursors_bytes": 46203971860,
+    "starts_above_u32": 3044751998
+  },
+  "hypothetical_vocab_file_ledger_only": {
+    "counted_bound": 163899319512,
+    "counted_limit": 200000000000,
+    "created_segments_upper": 35086,
+    "first_pass_bytes": 138176013848,
+    "logical_peak_upper": 163895125208,
+    "logical_scratch_traffic_upper": 1912618925216,
+    "max_raw_segments_per_bucket": 4144,
+    "merge_levels_upper": 5,
+    "one_count_run_pass_upper": 163626689752,
+    "small_control_reserve": 4194304
+  },
+  "note": "10\u00d7 measured v8 time is a sensitivity, not a v10 ETA or impossibility proof. 140 GiB is the 10 GB array comparison only. k and descriptor loads require full-word dedup; an occurrence upper-bound refusal does not prove a large tie. No admitted 100 GB vocabulary backend or measured full product fit.",
+  "raw_scan": {
+    "per_device_io": null,
+    "read_cap": 100067108864,
+    "wall_s": 546.7391787162051,
+    "worker_cpu_s": 533.391895614,
+    "worker_io": {
+      "read_bytes": 100000002048,
+      "write_bytes": 0
+    },
+    "write_cap": 67108864
+  },
+  "raw_sha256": "de79fe96057b604a71513770111f246ab0e936d3cf56415bcc5a43bba60bbbfd",
+  "scan_wall_per_byte_vs_10g": 0.8912019390912276,
+  "scope": "100 GB immutable raw scan only. No distinct vocabulary, product, default or Pile launch.",
+  "seconds_left_at_scan_close": 12015.407639867,
+  "speed_factor_needed_vs_linear_just_to_fit_clock": 3.0398963792805973,
+  "tenfold_measured_v8_wall_s": 36525.59418001212,
+  "whole_private_allocated": 100000018432
+}

@@ -1,0 +1,2 @@
+SCAN_ONLY_DISPATCH commit=3b0fcc0d0833c52dfcc52641983f85b07e3a19d9 start=1795518461 cutoff_remaining_s=12708 deadline=1795520261; 192MiB/1CPU/no-swap, copy-inclusive reserve 100268435456, private STOP + phase IO caps; no product
+scan-only receipt=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/scanplan-100g-kghb21jm

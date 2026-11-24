@@ -1,0 +1,12 @@
+{
+  "process": "proc_cb0e",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/scanplan-100g-kghb21jm",
+  "launcher_rc": 0,
+  "argv": ["bash", "gates/overlap_scanplan_hundred.sh", "1795520261"],
+  "published_revision": "3b0fcc0d0833c52dfcc52641983f85b07e3a19d9",
+  "original_scan_sha256": "49370600ae37702965c4a736a2de118566e87c00f70cf487484366051094be69",
+  "native_chunk_so_sha256": "d15f59590f9a03fe67eef545aaf8c6596255cd192b61fba90b5b59be72786503",
+  "launcher_stdout_sha256": "17a13f767852162197bd4c7fc4988a10bd61484d5156ed988b774f5933a14fcb",
+  "launcher_stderr_bytes": 0,
+  "scope": "one fixed raw copy/cold/scan; no distinct-word sort, product, or larger admission"
+}

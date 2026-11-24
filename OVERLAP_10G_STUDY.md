@@ -2,7 +2,7 @@
 
 **Decision window:** 2026-11-24 04:49–14:49 UTC on the rehearsal host. The operator conditionally authorizes the 100 GB rung, not the Pile. This is a measurement plan; a running process, prepared hash microbenchmark, or lower-bound model is **not** a product result. See [100 GB contract](OVERLAP_100G_CONTRACT.md) and [small exact v10 rehearsal](OVERLAP_V10_FIXTURE.md).
 
-**Matched study complete.** The published 1 GB profile is `packed-radix-4-batch`; the complete 10 GB sweep selects **`packed-10g-l2-b1-t4-r1`**. [Decision files, digests and replay commands](OVERLAP_DEFAULTS.md) · [full measured table](gates/receipts/scale-10g/study.md) · [machine-readable final score](gates/receipts/scale-10g/score-3.json). These are resident v8 defaults on the stated grants, not Pile defaults.
+**Matched study complete.** The published 1 GB profile is `packed-radix-4-batch`; the complete 10 GB sweep selects **`packed-10g-l2-b1-t4-r1`**. [Decision files, digests and replay commands](OVERLAP_DEFAULTS.md) · [full measured table](gates/receipts/scale-10g/study.md) · [machine-readable final score](gates/receipts/scale-10g/score-3.json). These are resident v8 defaults on the stated grants, not Pile defaults. The subsequent [100 GB raw scan](gates/receipts/scanplan-100g/) verified the input SHA, measured `m=3,181,334,488` and ruled out the narrow parse path. The full v10 product remains on hold for separate fit, timing and verification proof.
 
 ### Original schedule and decision rules
 

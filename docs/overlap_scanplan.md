@@ -1,5 +1,7 @@
 # Cold scan-only census (separate 10 GB calibration and conditional 100 GB gates)
 
+**Measured:** [10 GB calibration](../gates/receipts/scanplan-10g/) and [100 GB scan-only receipt](../gates/receipts/scanplan-100g/). The latter checked the full raw SHA and measured `m=3,181,334,488`, 36,590 nonempty occurrence cells, in 546.739 s scan after 140.622 s copy/cold. No distinct-word or product verdict; use the offline review, do not rerun the scan to reproduce it.
+
 No product mode. The parent schedules at most one calibrated study; nothing
 here dispatches another stage. Tiny tests in a worktree, no real raw input:
 
