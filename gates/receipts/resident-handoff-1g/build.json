@@ -1,0 +1,124 @@
+{
+  "counted_at_peak": {
+    "frag.chi-bitmap": 125000084,
+    "frag.lcpruns": 251680200,
+    "frag.pfck2": 363636648,
+    "frag.pieces": 37,
+    "frag.runcols.consumed": 5,
+    "frag.sparse2": 2844272,
+    "prepared_refs_ids": 329829376,
+    "ram_pieces": 45877700,
+    "ram_slices": 332336
+  },
+  "counted_sampled_peak": 1119200658,
+  "individual_sampled_peaks": {
+    "frag.bits-high": 97912158,
+    "frag.bits-low": 35412116,
+    "frag.chi-bitmap": 125000084,
+    "frag.lcpruns": 257880088,
+    "frag.pfck2": 363636648,
+    "frag.pieces": 37,
+    "frag.runcols.consumed": 5,
+    "frag.runexc": 16,
+    "frag.sparse2": 2875288,
+    "prepared_refs_ids": 329829376,
+    "ram_pieces": 56528340,
+    "ram_slices": 12924568
+  },
+  "phase_sampled_shared": {
+    "aligned_and_lists": 4854915072,
+    "check_ranks": 1051164672,
+    "dictionary_sort": 12717322240,
+    "emit": 14515449856,
+    "load_ids": 727973888,
+    "owner_map": 13009350656,
+    "pack_dictionary": 4276015104,
+    "parse_sort": 1405886464,
+    "start": 8839168
+  },
+  "process": {
+    "finish": {
+      "RssAnon": 0,
+      "VmHWM": 0,
+      "VmRSS": 0,
+      "cancelled_write_bytes": 281296896,
+      "cpu_s": 376.18,
+      "rchar": 10599593956,
+      "read_bytes": 0,
+      "syscr": 155480,
+      "syscw": 1776810,
+      "wchar": 2136038718,
+      "write_bytes": 3295301632
+    },
+    "resident": {
+      "RssAnon": 0,
+      "VmHWM": 0,
+      "VmRSS": 0,
+      "cancelled_write_bytes": 0,
+      "cpu_s": 324.71,
+      "rchar": 1456988509,
+      "read_bytes": 1456975872,
+      "syscr": 148,
+      "syscw": 45962,
+      "wchar": 24000017574,
+      "write_bytes": 20480
+    },
+    "sink": {
+      "RssAnon": 0,
+      "VmHWM": 0,
+      "VmRSS": 0,
+      "cancelled_write_bytes": 12288,
+      "cpu_s": 85.34,
+      "rchar": 12000042764,
+      "read_bytes": 4096,
+      "syscr": 194442,
+      "syscw": 26967431,
+      "wchar": 5816885675,
+      "write_bytes": 897024
+    }
+  },
+  "profile": "wide-handoff",
+  "rc": {
+    "finish": 0,
+    "resident": 0,
+    "sink": 0
+  },
+  "sampled_peak_rss": {
+    "finish": 530534400,
+    "resident": 11524874240,
+    "sink": 11096064
+  },
+  "sampled_wall_s": {
+    "finish": 358.5627068262547,
+    "resident": 416.27780095953494,
+    "sink": 345.7292227791622
+  },
+  "shared_after": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 840926696\nuser_usec 659972610\nsystem_usec 180954085\ncore_sched.force_idle_usec 0\nnr_periods 4294\nnr_throttled 4\nthrottled_usec 1504727\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "21474836480",
+    "memory.peak": "14519468032",
+    "memory.swap.max": "0"
+  },
+  "shared_before": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 39902\nuser_usec 27932\nsystem_usec 11970\ncore_sched.force_idle_usec 0\nnr_periods 0\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "21474836480",
+    "memory.peak": "8720384",
+    "memory.swap.max": "0"
+  },
+  "stop": false,
+  "volatile_handoff": {
+    "mode": "restart from prepared inputs, no handoff recovery",
+    "reserved_bytes": 378809888,
+    "sampled_cgroup_shmem": 58900480,
+    "sampled_tmpfs_allocated": 58073088,
+    "swap_max": 0
+  },
+  "wall_s": 429.37537887506187,
+  "whole_dir_sampled_allocated": 3922644992
+}

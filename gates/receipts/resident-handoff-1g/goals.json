@@ -1,0 +1,13 @@
+{
+  "target_under_2x": true,
+  "promotion_under_3x": true,
+  "target_s": 931.3385410886258,
+  "promotion_limit_s": 1397.0078116329387,
+  "attributed_reads_ratio": 1.0,
+  "attributed_writes_ratio": 0.3547985748819639,
+  "note": "Traffic ratios exclude verifier; not seek counts or proof of a disk improvement.",
+  "write_ratio_vs_wide_disk": 0.34117135324125947,
+  "read_ratio_vs_wide_disk": 0.9999775101485455,
+  "wall_ratio_vs_wide_disk": 0.7642899585612186,
+  "handoff_io_pass": true
+}
