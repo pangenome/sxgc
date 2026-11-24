@@ -13,6 +13,7 @@ import tempfile
 import time
 import threading
 
+import overlap_bounded_shortest as shortest
 from overlap_published import published_main
 from overlap_resident_gate import ROOT, REPO, CG, cg_info, finished, proc_info, save, sha
 from overlap_scaling_policy import one_series
@@ -126,19 +127,23 @@ def lease(d,deadline):
     lock=Path(f'/run/user/{os.getuid()}/overlap-ten-timing.lock')
     check(owner['deadline']==deadline and (proc/'fd'/str(fd)).samefile(lock) and
           re.search(r'^lock:\s+\d+: FLOCK\s+ADVISORY\s+WRITE '+str(pid)+r' ',(proc/'fdinfo'/str(fd)).read_text(),re.M),'no live coordinator lease')
-    check((proc/'cmdline').read_bytes().split(b'\0')[-3:-1]==[os.fsencode(Path(__file__).resolve()),str(deadline).encode()],'not component coordinator')
+    argv=[os.fsencode(Path(__file__).resolve())]+([b'--shortest-100m'] if d.name.startswith(shortest.PREFIX) else [])+[str(deadline).encode(),b'']
+    check(owner['directory']==str(d) and (proc/'cmdline').read_bytes().split(b'\0')[-len(argv):]==argv,'not this fixed component coordinator')
 
 
 def worker(d, arm, role, deadline):
     # This internal meter has no file, command, grant or profile arguments.
-    check(d.parent==S and d.resolve()==d and d.name.startswith('bounded-component-100m-') and arm in ('candidate','control') and role in ('prep',arm,'oracle'),'private stage')
+    follow=d.name.startswith(shortest.PREFIX)
+    check(d.parent==S and d.resolve()==d and (follow or d.name.startswith('bounded-component-100m-')) and arm in (('candidate',) if follow else ('candidate','control')) and role in ('prep',arm,'oracle'),'private stage')
     a=d/arm; col=a/'columns'; flag=d/'stop.requested'; rec={}; child=None; start=time.monotonic()
     try:
         lease(d,deadline); before(d,deadline); cg=cg_info(); grant(cg,role); rec['before']=cg; rec['effective']=hierarchy(role)
+        if follow:
+            base=shortest.load(shortest.RUNG/'candidate'/(role+'.json')); check(rec['effective']['affinity']==base['effective']['affinity'],'different CPU set from measured arm')
         env=dict(PATH=os.defpath,LC_ALL='C',OMP_NUM_THREADS='1',OMP_THREAD_LIMIT='1',RAYON_NUM_THREADS='1')
         if role=='prep': cmd=['lexparse',a/'raw',col,'--packed']
         elif role=='oracle': cmd=['oracle','--component-100m',a/'oracle-raw',flag]
-        elif role=='candidate': cmd=['overlap_bounded_packed','--component-100m',col,flag]
+        elif role=='candidate': cmd=['overlap_bounded_packed','--component-shortest-100m' if follow else '--component-100m',col,flag]
         else:
             cmd=['overlap_resident',col,flag,str(1536*MIB)]
             env.update(XSA_TEST_ROW43_FIXTURE='1',XSA_RESIDENT_PACKED='1',XSA_RESIDENT_WIDE_DICT='1')
@@ -162,6 +167,7 @@ def worker(d, arm, role, deadline):
         reader=threading.Thread(target=drain); reader.start()
         try:
             check(rec['text_pipe_bytes']<=MIB,'text pipe exceeds reservation')
+            if follow: check(rec['text_pipe_bytes']==base['text_pipe_bytes'],'text pipe capacity differs from baseline')
             with open(f'/proc/{child.pid}/io') as io:
                 try:
                     idle_check=0
@@ -193,8 +199,9 @@ def unit(d,arm,role,deadline):
 
 
 def study(d,deadline,p):
-    results={}; identity=None
-    for arm in ('control','candidate'):
+    follow=d.name.startswith(shortest.PREFIX)
+    results={}; identity=shortest.load(d/'reference.json')['columns'] if follow else None
+    for arm in (('candidate',) if follow else ('control','candidate')):
         before(d,deadline,420); exclusive(); a=d/arm; a.mkdir(); col=a/'columns'
         private_raw(a/'oracle-raw',p['raw_sha256'],d,deadline); private_raw(a/'raw',p['raw_sha256'],d,deadline); before(d,deadline,420); exclusive()
         save(a/'cold-raw.json',dict(raw_bytes=N,oracle_bytes=N,raw_sha256=p['raw_sha256'],mincore_resident_pages=0))
@@ -211,6 +218,7 @@ def study(d,deadline,p):
             start=time.monotonic(); prod=sp.Popen(unit(d,arm,arm,deadline),stdout=sp.PIPE,stderr=pl); oracle=None
             try:
                 pipe_bytes=fcntl.fcntl(prod.stdout,fcntl.F_GETPIPE_SZ); check(pipe_bytes<=MIB,'row pipe exceeds reservation')
+                if follow: check(pipe_bytes==shortest.load(shortest.RUNG/'candidate/result.json')['row_pipe_bytes'],'row pipe capacity differs from baseline')
                 oracle=sp.Popen(unit(d,arm,'oracle',deadline),stdin=prod.stdout,stdout=ol,stderr=sp.STDOUT)
                 prod.stdout.close()
                 while prod.poll() is None or oracle.poll() is None:
@@ -230,6 +238,9 @@ def study(d,deadline,p):
             'cpu_s':r['process']['cpu_s'],'sampled_hwm':r['sampled_hwm'],'cgroup_peak':int(r['after']['memory.peak'])} for name,r in meter.items()}
         results[arm]['row_pipe_bytes']=pipe_bytes
         save(a/'result.json',results[arm]); shutil.rmtree(col); (a/'oracle-raw').unlink()
+    if follow:
+        save(d/'result.json',dict(scope='new shortest-tail candidate only; compare to archived component, not to a product',arms=results))
+        return
     ratios={k:results['candidate'][k]/results['control'][k] for k in ('prep_s','prepared_to_verified_EOF_s','raw_to_verified_EOF_s')}
     save(d/'result.json',dict(scope='component only, unequal producer RAM; not construction or scale clearance',arms=results,
                               candidate_over_control_wall=ratios))
@@ -251,17 +262,25 @@ def build(d,deadline):
     save(d/'binaries.json',{f.name:sha(f) for f in tools.iterdir()})
 
 
-def main(deadline):
-    d=Path(tempfile.mkdtemp(prefix='bounded-component-100m-',dir=S)); print('component receipt:',d,flush=True)
+def main(deadline,follow=False):
+    prefix=shortest.PREFIX if follow else 'bounded-component-100m-'
+    d=Path(tempfile.mkdtemp(prefix=prefix,dir=S)); print('component receipt:',d,flush=True)
     flag=d/'stop.requested'
     for sig in (signal.SIGTERM,signal.SIGINT): signal.signal(sig,lambda *_:flag.touch())
     rec={'deadline':deadline,'qualified':False}
     try:
         with (Path(os.environ['XDG_RUNTIME_DIR'])/'overlap-ten-timing.lock').open('a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            p=preflight(d,deadline); build(d,deadline)
-            save(d/'lease.json',dict(pid=os.getpid(),fd=lock.fileno(),deadline=deadline))
+            p=preflight(d,deadline)
+            if follow:
+                check(set(S.glob(prefix+'*'))=={d},'earlier shortest candidate attempt; do not repeat')
+                save(d/'reference.json',shortest.reference())
+            build(d,deadline)
+            if follow: shortest.checked_tools(d)
+            save(d/'lease.json',dict(pid=os.getpid(),fd=lock.fileno(),deadline=deadline,directory=str(d)))
             study(d,deadline,p); before(d,deadline)
+            if follow:
+                save(d/'comparison.json',shortest.compare(d)); print('SHORTEST_100M_STREAM_VERIFIED',flush=True)
             rec['qualified']=True
     except BaseException as e:
         rec['reason']=repr(e); flag.touch(); raise
@@ -271,5 +290,6 @@ def main(deadline):
 if __name__=='__main__':
     check(not sys.flags.optimize,'optimization disables bank replay checks')
     if len(sys.argv)==6 and sys.argv[1]=='_meter': worker(Path(sys.argv[2]),*sys.argv[3:5],int(sys.argv[5]))
+    elif len(sys.argv)==3 and sys.argv[1]=='--shortest-100m' and re.fullmatch(r'[1-9][0-9]{0,10}',sys.argv[2]): main(int(sys.argv[2]),follow=True)
     elif len(sys.argv)==2 and re.fullmatch(r'[1-9][0-9]{0,10}',sys.argv[1]): main(int(sys.argv[1]))
     else: raise SystemExit('expected a single absolute Unix deadline')

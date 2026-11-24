@@ -177,8 +177,11 @@ fn main() {
         component_plan(&args[2]);
         return;
     }
-    let component = args.get(1).is_some_and(|s| s == "--component-100m");
-    let shortest = args.get(1).is_some_and(|s| s == "--fixture-shortest");
+    let fixed_shortest = args
+        .get(1)
+        .is_some_and(|s| s == "--component-shortest-100m");
+    let component = fixed_shortest || args.get(1).is_some_and(|s| s == "--component-100m");
+    let shortest = fixed_shortest || args.get(1).is_some_and(|s| s == "--fixture-shortest");
     let compact = component || shortest || args.get(1).is_some_and(|s| s == "--fixture-compact");
     let required = if compact { 7 } else { 6 };
     if component {
@@ -388,10 +391,11 @@ fn main() {
             // complete groups; no merge, cursor copies, row buffer or output.
             passes /= 2;
             if shortest {
+                let tick = std::time::Instant::now();
                 match compact::shortest_census(&d, workspace, || stop(flag)) {
                     Ok(s) => {
                         shortest_peak = Some(s.largest_class);
-                        eprintln!("shortest entries={} payload_bytes={} exact_peak={} heap_cap={cap} dry_order_needed={}", s.entries, s.payload_bytes, s.largest_class, s.largest_class > cap);
+                        eprintln!("shortest entries={} payload_bytes={} exact_peak={} heap_cap={cap} dry_order_needed={} seconds={:.6}", s.entries, s.payload_bytes, s.largest_class, s.largest_class > cap, tick.elapsed().as_secs_f64());
                         // A single proved oversized group already charges this much to
                         // the unchanged conservative work ledger. Otherwise count all
                         // oversized groups unless we just proved there are none.
@@ -407,6 +411,10 @@ fn main() {
                 }
             }
             if !shortest_peak.is_some_and(|peak| peak <= cap) {
+                assert!(
+                    !fixed_shortest,
+                    "fixed shortest certificate did not suffice; no fallback timing"
+                );
                 let mut probes = 0u128;
                 let c = compact::order_checked(
                     &d,

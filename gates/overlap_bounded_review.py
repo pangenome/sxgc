@@ -33,6 +33,26 @@ def load(p):
     return json.loads(small(p))
 
 
+def arm_observation(p, a, inp):
+    """Common endpoint/grant/identity checks; standalone meter files, no live input."""
+    v = load(p/'result.json'); e = load(p/'exits.json'); pin = inp['pin']
+    need(e == dict(producer=0,oracle=0,wall_s=v['prepared_to_verified_EOF_s']), 'peer exits')
+    need(load(p/'cold-raw.json') == dict(raw_bytes=N,oracle_bytes=N,raw_sha256=pin['raw_sha256'],mincore_resident_pages=0), 'raw pin/cold')
+    c = load(p/'cold-columns.json'); need(c['mincore_resident_pages'] == 0 and c['sha256'].keys() == {'dictionary.packed','parse.u32'} and all(re.fullmatch('[0-9a-f]{64}',h) for h in c['sha256'].values()), 'column shape/cold')
+    prep_bound = N+20*M-8+Q; prepared_bound=T+4*M+Q
+    prep = small(p/'prep.log').decode(); need(f'dictionary_bytes={T} parse_bytes={4*M} refs_written=0' in prep and f'n={N} phrases={M} distinct={K} descriptors={U} ' in prep and f'peak_counted={prep_bound-Q} final_columns={prepared_bound-Q} ' in prep and v['prep_counted_peak']==prep_bound and v['prepared_bound']==prepared_bound, 'prep shape or scratch')
+    need(small(p/'oracle.log').decode().strip() == f'VERIFIED rows={N+1} final_rank={N+1} narrow_sha256={pin["narrow_row_sha256"]}', 'raw-row oracle')
+    secs = (v['prep_s'], e['wall_s'], v['raw_to_verified_EOF_s']); need(all(math.isfinite(s) and s>0 for s in secs) and v['raw_phase_sum_s']==sum(secs[:2])<=secs[2] and 0<v['row_pipe_bytes']<=1<<20, 'component clocks or pipe')
+    for role in ('prep',a,'oracle'):
+        m=load(p/(role+'.json')); stats=v['native_by_stage'][role]; proc=m['process']; bound=CAP[role]<<20
+        need(m['rc']==0 and 'error' not in m and 0 < m['wall_s'] <= (secs[0] if role=='prep' else secs[1]) and 0<m['text_pipe_bytes']<=1<<20, 'worker exit/clock')
+        for cg in (m['before'],m['after']):
+            need(cg['cpu.max']=='100000 100000' and cg['memory.max']==str(bound) and cg['memory.swap.max']=='0' and 0<int(cg['memory.peak'])<=bound and {'oom 0','oom_kill 0'}<=set(cg['memory.events'].splitlines()), 'grant/event')
+            need(cg['io.stat'] is None or isinstance(cg['io.stat'],str), 'unrecognized device evidence')
+        need(stats==dict(cgroup_peak=int(m['after']['memory.peak']),sampled_hwm=m['sampled_hwm'],**{k:proc[k] for k in ('read_bytes','write_bytes','cpu_s')}) and 0<stats['sampled_hwm']<=bound and proc['cpu_s']>0 and 0<=proc['read_bytes']<=inp['read_limits'][role] and 0<=proc['write_bytes']<=inp['write_limits'][role], 'process attribution or cap')
+    return v,c
+
+
 def review(d):
     src = load(d/'source.json'); rev = src['revision']; inp = load(d/'inputs.json'); result = load(d/'result.json')
     names = set('status.json inputs.json result.json binaries.json build.log lease.json'.split())
@@ -46,20 +66,9 @@ def review(d):
     need((inp['prep_scratch'],inp['prepared_scratch'],inp['limit']) == (prep_bound,prepared_bound,2*N) and max(prep_bound,prepared_bound)<=2*N, 'scratch bound')
     arms = {}; columns = None
     for a in ARMS:
-        p = d/a; v = load(p/'result.json'); e = load(p/'exits.json'); need(result['arms'][a] == v and e == dict(producer=0,oracle=0,wall_s=v['prepared_to_verified_EOF_s']), 'peer exits')
-        need(load(p/'cold-raw.json') == dict(raw_bytes=N,oracle_bytes=N,raw_sha256=pin['raw_sha256'],mincore_resident_pages=0), 'raw pin/cold')
-        c = load(p/'cold-columns.json'); need(c['mincore_resident_pages'] == 0 and c['sha256'].keys() == {'dictionary.packed','parse.u32'} and all(re.fullmatch('[0-9a-f]{64}',h) for h in c['sha256'].values()) and (not columns or columns == c), 'different or warm columns'); columns=c
-        prep = small(p/'prep.log').decode(); need(f'dictionary_bytes={T} parse_bytes={4*M} refs_written=0' in prep and f'n={N} phrases={M} distinct={K} descriptors={U} ' in prep and f'peak_counted={prep_bound-Q} final_columns={prepared_bound-Q} ' in prep and v['prep_counted_peak']==prep_bound and v['prepared_bound']==prepared_bound, 'prep shape or scratch')
-        need(small(p/'oracle.log').decode().strip() == f'VERIFIED rows={N+1} final_rank={N+1} narrow_sha256={digest}', 'raw-row oracle')
-        secs = (v['prep_s'], e['wall_s'], v['raw_to_verified_EOF_s']); need(all(math.isfinite(s) and s>0 for s in secs) and v['raw_phase_sum_s']==sum(secs[:2])<=secs[2] and 0<v['row_pipe_bytes']<=1<<20, 'component clocks or pipe')
-        for role in ('prep',a,'oracle'):
-            m=load(p/(role+'.json')); stats=v['native_by_stage'][role]; proc=m['process']; bound=CAP[role]<<20
-            need(m['rc']==0 and 'error' not in m and 0 < m['wall_s'] <= (secs[0] if role=='prep' else secs[1]) and 0<m['text_pipe_bytes']<=1<<20, 'worker exit/clock')
-            for cg in (m['before'],m['after']):
-                need(cg['cpu.max']=='100000 100000' and cg['memory.max']==str(bound) and cg['memory.swap.max']=='0' and 0<int(cg['memory.peak'])<=bound and {'oom 0','oom_kill 0'}<=set(cg['memory.events'].splitlines()), 'grant/event')
-                need(cg['io.stat'] is None, 'this bank had no delegated device IO')
-            need(stats==dict(cgroup_peak=int(m['after']['memory.peak']),sampled_hwm=m['sampled_hwm'],**{k:proc[k] for k in ('read_bytes','write_bytes','cpu_s')}) and 0<stats['sampled_hwm']<=bound and proc['cpu_s']>0 and 0<=proc['read_bytes']<=inp['read_limits'][role] and 0<=proc['write_bytes']<=inp['write_limits'][role], 'process attribution or cap')
-        arms[a]=v
+        v,c=arm_observation(d/a, a, inp)
+        need(result['arms'][a] == v and (not columns or columns==c), 'different results or columns')
+        columns=c; arms[a]=v
     control, candidate = (arms[a] for a in ARMS)
     ratios={k:candidate[k]/control[k] for k in ('prep_s','prepared_to_verified_EOF_s','raw_to_verified_EOF_s')}
     need(ratios==result['candidate_over_control_wall'], 'wall comparison')

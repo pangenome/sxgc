@@ -43,7 +43,8 @@ def oracle(tmp, producer):
     stop.touch(); assert run(stream).returncode==75; stop.unlink()
     (tmp/'parse.u32').write_bytes(b'\0'*4)
     # No timed worker: a one-ID parse must fail before rank/sort/emit.
-    for args in (['--component-100m',tmp,stop],['--component-100m',tmp,stop,'1'],['--component-1g',tmp,stop]):
+    for args in (['--component-100m',tmp,stop],['--component-100m',tmp,stop,'1'],
+                 ['--component-shortest-100m',tmp,stop],['--component-shortest-100m',tmp,stop,'1'],['--component-1g',tmp,stop]):
         r=sp.run([producer,*args],capture_output=True); assert r.returncode and not r.stdout
 
 
@@ -82,9 +83,15 @@ def mock_worker(tmp,interrupt):
     assert flag.exists()==interrupt
 
 
-def paired_supervisor(tmp,fail):
+def paired_supervisor(tmp,fail,follow=False):
     """Fake services simulate a short pipe or a stopped consumer. No row spool."""
-    d=tmp/('pair-'+str(fail)); d.mkdir()
+    d=tmp/((g.shortest.PREFIX if follow else 'pair-')+str(fail)); d.mkdir()
+    if follow:
+        import fcntl
+        (d/'reference.json').write_text(json.dumps({'columns':{k:hashlib.sha256(v).hexdigest() for k,v in [('parse.u32',b'1234'),('dictionary.packed',b'abcdef')]}}))
+        base=tmp/'synthetic-reference'; (base/'candidate').mkdir(parents=True); i,o=os.pipe()
+        try: (base/'candidate/result.json').write_text(json.dumps({'row_pipe_bytes':fcntl.fcntl(i,fcntl.F_GETPIPE_SZ)}))
+        finally: os.close(i);os.close(o)
     def fake_unit(d,arm,role,deadline):
         a=d/arm; flag=d/'stop.requested'
         stats={'process':{'read_bytes':1,'write_bytes':0,'cpu_s':0.1},'sampled_hwm':1000,'after':{'memory.peak':'2000'}}
@@ -100,12 +107,16 @@ def paired_supervisor(tmp,fail):
             code='import sys;print("RESIDENT_CHECK recurrence_ranks=1 virtual_end=0",file=sys.stderr);sys.stdout.buffer.write(b"row")'
         return [sys.executable,'-c',code]
     with contextlib.ExitStack() as ctx:
+        if follow: ctx.enter_context(patch.object(g.shortest,'RUNG',base))
         for key,val in [('N',2),('M',1),('K',1),('T',6),('U',2),('PREP_BOUND',14),('DIGEST','tiny'),('exclusive',lambda:None),
                         ('unit',fake_unit),('private_raw',lambda dst,digest,*_:dst.write_bytes(b'hi')),('cold',lambda _:None)]:
             ctx.enter_context(patch.object(g,key,val))
         fn=lambda:g.study(d,time.time()+1000,{'raw_sha256':'fake'})
         if fail: rejects(fn)
         else: fn()
+    if follow:
+        assert not (d/'control').exists() and set(json.loads((d/'result.json').read_text())['arms'])=={'candidate'}
+        assert not (d/'candidate/columns').exists();return
     exits=json.loads((d/'control/exits.json').read_text())
     if fail:
         assert exits['producer']==exits['oracle']==75 and not (d/'candidate').exists() and not (d/'result.json').exists()
@@ -116,5 +127,5 @@ def paired_supervisor(tmp,fail):
 
 if __name__=='__main__':
     with tempfile.TemporaryDirectory() as td:
-        tmp=Path(td); oracle(tmp,Path(sys.argv[1]).resolve()); policy(tmp); mock_worker(tmp,False); mock_worker(tmp,True); paired_supervisor(tmp,False); paired_supervisor(tmp,True)
+        tmp=Path(td); oracle(tmp,Path(sys.argv[1]).resolve()); policy(tmp); mock_worker(tmp,False); mock_worker(tmp,True); paired_supervisor(tmp,False); paired_supervisor(tmp,True); paired_supervisor(tmp,False,follow=True)
     print('PASS tiny raw verification and LE digest; exact rung, shape, grant, stop, grid and zombie counter checks')
