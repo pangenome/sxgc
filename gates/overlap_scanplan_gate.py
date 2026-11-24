@@ -51,6 +51,14 @@ class Phase:
         need(shutil.disk_usage(self.d).free >= MARGIN, 'free space guard')
 
 
+def build_kernel(d, deadline, report, live):
+    lib = d/'chunk.so'
+    live(); subprocess.run(['/usr/bin/cc','-std=c11','-O3','-Wall','-Wextra','-Werror','-fPIC','-shared',
+                            HERE/'overlap_scanplan_chunk.c','-o',lib],check=True,timeout=deadline-time.time())
+    fixtures(lib); live(); report.update(brute_fixture='passed', kernel_sha256=hashlib.sha256(lib.read_bytes()).hexdigest())
+    return lib
+
+
 def calibrate(d, deadline, report):
     stop = d/'stop.requested'
     def live():
@@ -68,10 +76,7 @@ def calibrate(d, deadline, report):
     bank = json.loads(ref)['census']
     report.update(commit=subprocess.check_output(['git','-C', HERE, 'rev-parse','HEAD'], text=True).strip(),
                   control=str(control), cgroup=str(CG))
-    lib = d/'chunk.so'
-    live(); subprocess.run(['/usr/bin/cc','-std=c11','-O3','-Wall','-Wextra','-Werror','-fPIC','-shared',
-                            HERE/'overlap_scanplan_chunk.c','-o',lib],check=True,timeout=deadline-time.time())
-    fixtures(lib); live(); report.update(brute_fixture='passed', kernel_sha256=hashlib.sha256(lib.read_bytes()).hexdigest())
+    lib = build_kernel(d, deadline, report, live)
     _, source, _ = RUNGS['10g']; raw = d/'corpus'
     original = identity(source)
     free = shutil.disk_usage(d).free

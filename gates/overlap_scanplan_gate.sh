@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ ${1:-} == 100g ]]; then echo 'REFUSED: no published scan-only admission receipt validator' >&2; exit 75; fi
+if [[ ${1:-} == 100g ]]; then echo 'REFUSED: 10 GB calibration only; no scale dispatch' >&2; exit 75; fi
 [[ $# == 2 && $1 == 10g && $2 =~ ^[1-9][0-9]{9}$ ]] || { echo 'usage: overlap_scanplan_gate.sh 10g DEADLINE_UNIX' >&2; exit 64; }
 (( $2 > $(date +%s) )) || { echo 'expired deadline' >&2; exit 75; }
 cd "$(dirname "$0")/.."; source gates/overlap_pin.sh

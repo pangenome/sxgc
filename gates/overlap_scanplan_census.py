@@ -22,7 +22,7 @@ def native_chunk(lib):
 
 
 def census(lib, stream, n, guard, block=1 << 20):
-    if not 0 < n <= TEN or not 1 <= block <= 1 << 20:
+    if not (0 < n <= TEN or n == 100_000_000_000) or not 1 <= block <= 1 << 20:
         raise ValueError('wrong scan extent')
     cells = (C.c_uint64 * CELLS)()
     # Initial mandatory word starts at 0.

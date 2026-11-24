@@ -1,4 +1,4 @@
-# Cold scan-only census (10 GB calibration gate; 100 GB refused)
+# Cold scan-only census (separate 10 GB calibration and conditional 100 GB gates)
 
 No product mode. The parent schedules at most one calibrated study; nothing
 here dispatches another stage. Tiny tests in a worktree, no real raw input:
@@ -8,6 +8,7 @@ t=$(mktemp -d)
 cc -std=c11 -O3 -Wall -Wextra -Werror -fPIC -shared gates/overlap_scanplan_chunk.c -o "$t/chunk.so"
 python3 -BE gates/overlap_scanplan_test.py "$t/chunk.so"
 python3 -BE gates/overlap_scanplan_gate_test.py
+python3 -BE gates/overlap_scanplan_hundred_test.py
 bash gates/overlap_scanplan_gate.sh 100g 0   # must refuse, exit 75
 ```
 
@@ -76,23 +77,30 @@ not account for dictionary, occurrence lists, histogram/plan, RMQ, allocator,
 control or consumers. No range/heap bound certifies end-to-end fit, speed,
 physical IO savings, or a rank/runtime result.
 
-**100 GB seam: HOLD, exit 75 before any access.** No 100 GB worker, path
-argument, authorization override or automatic scale-up. Future narrowly
-reviewed admission must take a committed receipt manifest, not a caller's
-`selected=true`: replay `overlap_scaling_policy.evaluate(control,pair,grid,
-arms)` on exactly the three full matched 10 GB arms in declared order,
-require complete sweep, non-null eligible healthy selected row, verified
-identity/row counts, stops/exits/OOM/grants/scratch/IO and exact profile
-comparisons; bind all receipt hashes, selected settings and documented
-measurements/decision to a clean commit verified reachable from freshly
-checked `origin/main`. Replay matching calibration code/fixture, banked
-fields/SHA, cell sum, bounds, cold/grant/IO/stop evidence from published
-10 GB scan receipt. Require pinned 100,000,000,000-byte manifest raw SHA
-`de79fe96057b604a71513770111f246ab0e936d3cf56415bcc5a43bba60bbbfd`,
-fixed source, private-copy space, identical isolation and guards, actual
-remaining absolute time covering copy+cold+scan+receipt with explicit
-margin based on measured calibration and IO conditions. Fail on any missing
-or stale evidence. Only then could parent dispatch a separately reviewed
-scan-only 100 GB entry (with SHA comparison and width checks); no product,
-larger dictionary phase, or throughput conclusion follows. This tree does
-not contain or fabricate the required complete published decision bundle.
+**Separate 100 GB entry (HOLD unless all evidence replays).** Parent-only
+`bash gates/overlap_scanplan_hundred.sh DEADLINE_UNIX` on actual clean,
+live-published main. Not an option of the calibration or product launcher.
+No automatic scale-up. Bank `scanplan-10g/scan.json` from the actual complete
+calibration (`scanplan-10g-h475ins1`, file digest pinned in the validator).
+Measured 15.588391 s copy+cold and 61.348518 s scan require **1,335 seconds**
+remaining at 100 GB admission. Both hypothetical plans refused indivisible
+cell 8257; replay these refusals verbatim. They do not invalidate the scan
+or authorize sorting. Bank full native grid and product arms and `scale-10g/default.json`;
+record the selected 10 GB profile and exact default file SHA-256 in
+`OVERLAP_DEFAULTS.md` alongside the measured decision. A 1 GB default, passing
+fixture, metadata match, or old serial 10 GB control does not meet admission.
+
+The service runs a private checkout of the admitted commit. Under the same
+nonblocking lease it rechecks live publication, full default replay and
+calibration structure, cold/IO/cgroup evidence and arithmetic. The admission
+digest binds docs, receipt tree, measured decision and calibration clock.
+Refuse a changed publication, kernel hash, or less than 15 × measured 10 GB
+(copy+cold + raw scan wall) + 180 seconds remaining; original cutoff
+1795531169 Unix seconds cannot be extended by the caller. Only after passing
+these checks does it inspect contract metadata. It reads the fixed raw source,
+hashes a new unlinked private copy, checks the manifest SHA, fsync/evicts and
+mincores all copy pages, scans it exactly once and checks SHA again. The copy
+is closed on success or failure. Same chunk kernel, fixtures, IO guards and
+192 MiB / one CPU / no swap grant as calibration. `MEASURED_100G_SCAN_ONLY`
+records census, conservative packing bounds and separately metered phases;
+no dictionary, product, rank, verification, or larger launch is implied.
