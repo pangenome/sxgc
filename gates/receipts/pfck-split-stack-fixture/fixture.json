@@ -1,0 +1,20 @@
+{
+  "actual_data_soft_hard": [
+    62914560,
+    62914560
+  ],
+  "actual_stack_soft_hard": [
+    3145728,
+    3145728
+  ],
+  "cold_pages": 0,
+  "frozen_tools": {
+    "finish": "9a0bde6739ba1819f8d298beca2c8a9bf53480fab19f637b49cf6e3c8e200fa7",
+    "monitor.so": "fe5173c7d32215bdc7d41e59fd70edf059621ce83b38fb87b2e4d73ebbcb960a",
+    "proof": "060288161582207cec00a4ef30a14c9f718b2c86523d700c181cf32ac54ad261"
+  },
+  "raw_bytes": 2097143,
+  "raw_sha256": "f57f26e58e93a75e9fb39f07748c3a9bc8fd726756e03842a12e54c8d1ed7fda",
+  "remap_sha256": "5644e7c0637def63004c83128bb65a9b1293d2f851a931dd869f8b69f9a893fa",
+  "source": "generated Python Random(61428), bytes 31..93; NOT a Pile slice"
+}

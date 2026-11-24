@@ -1,0 +1,20 @@
+{
+  "artifacts": {
+    "exits.log": "8e22cf783310752aeec30ffe8333421d673ad330cce4bf50b50681c458f4f679",
+    "fixture.json": "e4a919aebe8c62a5b23d0c10b4ea8805878be41370c33e81d3cf3b2b806a33c6",
+    "identity.json": "2687ae46d951d3ba8d16fc6fa0418cbb536811b7249fbbde0c53b13d0a8d2644",
+    "proof.json": "3484a779d1bff725edac23144189964d69bace0323b525e2e0a24826cbd9210f",
+    "proof.log": "88f3722258380044d3c382f7369a16d3233c3ce1f320485c23cc809e24dd4732",
+    "ready.json": "a594d5bc0dda12bdb8958ab168f384ab600bda9979592e1b44e7fdaa26233df7",
+    "ready.log": "c878591e5fb35423430aa4553b3e33ccd33c56be79e315cf012df3a30a80befa"
+  },
+  "base_revision": "860aa66",
+  "original_directory": "/tmp/pfck-stack-fixture-kLEWPU",
+  "process": "proc_10d9",
+  "rc": 0,
+  "scope": "Two MiB generated readiness only. 3 MiB STACK + 60 MiB DATA is a distinct fixture allocation, NOT a retry/repair of the failed 64/1 MiB real window.",
+  "source_sha256": {
+    "gates/overlap_pfck_stack_fixture.py": "15e6382fe57071b9c8afb43080d005cf89d8e5ee681d3e7c31abf7a8f40ab266"
+  },
+  "utc": "2026-11-24T20:08:10.036567+00:00"
+}

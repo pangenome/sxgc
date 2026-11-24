@@ -1,0 +1,9 @@
+XSA_FINISH_M1_ARM route-b one-pass (corpus-histogram codebook, no rlebwt)
+XSA_FINISH_RSS_AT stage=start rss_kb=7096 anon_kb=3152
+END_REMAP_TABLE path=/tmp/pfck-stack-fixture-kLEWPU/map sha_checked_by_caller=1 ends_in_sentinel=1 end_code=none
+END_REMAP present=63 order_preserving=1 end_symbol=0 end_code=none alphabet=1..63 unused_symbols=192 end_cell_byte=0xff
+CONTAINER_STREAM mode=declare version=7 member_order=stream trailing_directory=1 m1_codec=116 header_bytes=64
+XSA_FINISH_CORPUS path=/tmp/pfck-stack-fixture-kLEWPU/synthetic bytes=2097143 remap_identity=0 read_only=1 rotation=0 derivation=T[i]=REMAP[corpus[i]] mmap=1
+XSA_FINISH_PFCK path=/tmp/pfck-stack-fixture-kLEWPU/frag.pfck2 n=2097144 tau=128 count=16384 bytes=131112 wall=0.013 workers=2 segments=8 worker_bytes=1572864 source=corpus_adapter fixed_grid=1
+XSA_FINISH_RSS_AT stage=readiness-pfck-histogram-probe rss_kb=15796 anon_kb=11532
+XSA_FINISH_RSS_AT stage=peak_sampled_100ms rss_kb=15796 anon_kb=11532

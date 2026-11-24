@@ -1,0 +1,76 @@
+{
+  "affinity": [
+    0,
+    1
+  ],
+  "after": {
+    "cpu.max": "200000 100000",
+    "cpu.stat": "usage_usec 401284\nuser_usec 226725\nsystem_usec 174558\ncore_sched.force_idle_usec 0\nnr_periods 5\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "34017280",
+    "memory.swap.max": "0"
+  },
+  "argv": [
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pfck128-ready-100m-6cvEAD/finish",
+    "--corpus",
+    "/tmp/pfck-stack-fixture-kLEWPU/synthetic",
+    "--remap",
+    "/tmp/pfck-stack-fixture-kLEWPU/map",
+    "--prefix",
+    "/tmp/pfck-stack-fixture-kLEWPU/frag",
+    "--output",
+    "/tmp/pfck-stack-fixture-kLEWPU/absent/product",
+    "--lcp-bands",
+    "/tmp/pfck-stack-fixture-kLEWPU/absent/bands",
+    "--with-chi",
+    "--container-stream",
+    "--keep-pfck",
+    "--threads",
+    "2",
+    "--wit-ram-budget",
+    "134217728",
+    "--poll-timeout",
+    "1"
+  ],
+  "before": {
+    "cpu.max": "200000 100000",
+    "cpu.stat": "usage_usec 363415\nuser_usec 207236\nsystem_usec 156178\ncore_sched.force_idle_usec 0\nnr_periods 3\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "20766720",
+    "memory.swap.max": "0"
+  },
+  "counted_sampled": 133032,
+  "env": {
+    "LD_PRELOAD": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pfck128-ready-100m-6cvEAD/monitor.so",
+    "MALLOC_ARENA_MAX": "2",
+    "PFCK_SPACING": "128",
+    "XSA_FINISH_RSS_READINESS_ONLY": "1",
+    "XSA_GATE_PRIVATE_STOP": "/tmp/pfck-stack-fixture-kLEWPU/stop.requested"
+  },
+  "hard_native_fsize": 131112,
+  "per_device_io": null,
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 0,
+    "cpu_s": 0.02,
+    "rchar": 6436633,
+    "read_bytes": 2101248,
+    "syscr": 46,
+    "syscw": 28,
+    "wchar": 263160,
+    "write_bytes": 139264
+  },
+  "rc": 0,
+  "sampled_rss": 16175104,
+  "start_unix": 1795550853,
+  "status": "COMPLETED",
+  "stop": null,
+  "wall_s": 0.12098430283367634,
+  "whole_allocation_sampled": 2244608
+}
