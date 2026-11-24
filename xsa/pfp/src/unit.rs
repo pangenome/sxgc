@@ -1700,9 +1700,50 @@ pub(crate) fn emit_lcp_slice(bands_dir: &str, u: u64, rows: usize,
     emit_lcp_slice_mode(bands_dir,u,rows,lcpv,rank_base,lcp_live,window,laws,crate::laws::env_u64("XSA_BATCH_SXLS_ESCAPES",0)==1);
 }
 
+// The opt-in is an operator assertion: one private, non-restarting sink
+// and one non-spooling finish, with no other credit reader or writer.
+fn private_slice_reclaim(bands: &str, u: u64, window: u64) -> bool {
+    if std::env::var_os("XSA_PRIVATE_SXLS_RECLAIM").as_deref() != Some(std::ffi::OsStr::new("1")) {
+        return false;
+    }
+    if crate::laws::env_u64("XSA_TEST_RESIDENT_TRIPLES", 0) != 1 || window == 0 ||
+        crate::laws::env_u64("XSA_FINISH_SPOOL", 0) != 0 {
+        die("private SXLS reclaim requires resident sink, positive window, non-spooling finish");
+    }
+    if u == 0 {
+        if !fs::symlink_metadata(bands).expect("private bands directory").is_dir() ||
+            fs::read_dir(bands).expect("private bands directory").next().is_some() {
+            die("private SXLS reclaim requires fresh empty bands directory");
+        }
+        eprintln!("SS_PRIVATE_SXLS_RECLAIM window={window} resume=unsupported");
+    }
+    true
+}
+
+fn retire_private_slice_credit(bands: &str, old: u64, consumed: &str) {
+    use std::os::unix::fs::MetadataExt;
+    let payload = format!("{bands}/band_{old}.lcp");
+    let done = format!("{payload}.done");
+    if !matches!(fs::symlink_metadata(&payload), Err(e) if e.kind() == std::io::ErrorKind::NotFound) {
+        die("private SXLS credit without retired payload");
+    }
+    // Validate both names before removing either. Finish has advanced
+    // nextSlice and unlinked the payload before creating consumed.
+    for path in [done.as_str(), consumed] {
+        let m = fs::symlink_metadata(path).unwrap_or_else(|e|
+            die(&format!("private SXLS marker metadata {path}: {e}")));
+        if !m.is_file() || m.len() != 0 || m.nlink() != 1 {
+            die("private SXLS credit requires empty unshared regular markers");
+        }
+    }
+    fs::remove_file(done).expect("retire private SXLS done");
+    fs::remove_file(consumed).expect("retire private SXLS consumed");
+}
+
 fn emit_lcp_slice_mode(bands_dir:&str,u:u64,rows:usize,lcpv:&[u64],rank_base:u64,
                        lcp_live:&mut std::collections::VecDeque<u64>,window:u64,laws:&Laws,batch:bool) {
     assert_eq!(lcpv.len(),rows);
+    let reclaim = private_slice_reclaim(bands_dir, u, window);
     // the flow: wait for the old slice to be consumed
     if u >= window {
         let want = format!("{}/band_{}.lcp.consumed",
@@ -1712,6 +1753,7 @@ fn emit_lcp_slice_mode(bands_dir:&str,u:u64,rows:usize,lcpv:&[u64],rank_base:u64
             std::thread::sleep(
                 std::time::Duration::from_millis(10));
         }
+        if reclaim { retire_private_slice_credit(bands_dir, u - window, &want); }
         lcp_live.pop_front();
     }
     // the body: 255 markers + the escape list
@@ -1754,3 +1796,7 @@ fn emit_lcp_slice_mode(bands_dir:&str,u:u64,rows:usize,lcpv:&[u64],rank_base:u64
 #[cfg(test)]
 #[path="sxls_batch_test.rs"]
 mod sxls_batch_test;
+
+#[cfg(test)]
+#[path="sxls_reclaim_test.rs"]
+mod sxls_reclaim_test;
