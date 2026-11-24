@@ -1,0 +1,31 @@
+{
+  "classifications": 3435642576,
+  "columns": {
+    "dictionary.packed": "3fc7fa235da0b0f355bf928e69400c9ad8ab9033b98dba80f2d8583e9994dd36",
+    "parse.u32": "603e39e31da8fb51ad8838a114ee432dc03bb483e3e9f95f523b072d82e7f418"
+  },
+  "counted_preparation_peak": 167605419,
+  "counted_prepared_reservation": 144584540,
+  "finite_groups": 85107405,
+  "full_descriptor_passes": 36,
+  "largest_finite_group": 6545,
+  "minimum_oversized_group_probe_upper": 146228664,
+  "narrow_sha256": "82747f11a9925bb4d89cc812410d98e411ce80b1767ee1ff4dc22e94e2cd874e",
+  "observed_oversized_groups": 0,
+  "producer_cgroup_peak_ratio": 0.3748736908427347,
+  "producer_cpu_ratio": 5.599067599067598,
+  "producer_read_byte_difference": 0,
+  "producer_write_byte_difference": 0,
+  "product_promotion": false,
+  "radix_digit_reads": 23541830668,
+  "rows": 100000504,
+  "scope": "100 MB raw-to-verified stream only, unequal producer memory; no product or larger-rung clearance",
+  "under_2x_component_wall": false,
+  "under_3x_component_wall": false,
+  "wall_ratios": {
+    "prep_s": 0.9711125698048532,
+    "prepared_to_verified_EOF_s": 4.927520730629808,
+    "raw_to_verified_EOF_s": 4.550539606045616
+  },
+  "window_probe_upper_per_oversized_descriptor": 17848
+}

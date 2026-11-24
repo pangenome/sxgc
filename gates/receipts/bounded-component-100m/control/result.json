@@ -1,0 +1,32 @@
+{
+  "native_by_stage": {
+    "control": {
+      "cgroup_peak": 1378205696,
+      "cpu_s": 30.03,
+      "read_bytes": 140394496,
+      "sampled_hwm": 1224605696,
+      "write_bytes": 0
+    },
+    "oracle": {
+      "cgroup_peak": 112861184,
+      "cpu_s": 4.82,
+      "read_bytes": 100003840,
+      "sampled_hwm": 107495424,
+      "write_bytes": 0
+    },
+    "prep": {
+      "cgroup_peak": 201326592,
+      "cpu_s": 2.83,
+      "read_bytes": 100003840,
+      "sampled_hwm": 109150208,
+      "write_bytes": 334897152
+    }
+  },
+  "prep_counted_peak": 167605419,
+  "prep_s": 3.3302847146987915,
+  "prepared_bound": 144584540,
+  "prepared_to_verified_EOF_s": 36.07685857824981,
+  "raw_phase_sum_s": 39.407143292948604,
+  "raw_to_verified_EOF_s": 39.865634688176215,
+  "row_pipe_bytes": 65536
+}

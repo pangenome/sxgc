@@ -1,0 +1,74 @@
+{
+  "arms": {
+    "candidate": {
+      "native_by_stage": {
+        "candidate": {
+          "cgroup_peak": 516653056,
+          "cpu_s": 168.14,
+          "read_bytes": 140394496,
+          "sampled_hwm": 364142592,
+          "write_bytes": 0
+        },
+        "oracle": {
+          "cgroup_peak": 112840704,
+          "cpu_s": 5.69,
+          "read_bytes": 100003840,
+          "sampled_hwm": 107450368,
+          "write_bytes": 0
+        },
+        "prep": {
+          "cgroup_peak": 201326592,
+          "cpu_s": 2.73,
+          "read_bytes": 100003840,
+          "sampled_hwm": 109150208,
+          "write_bytes": 334897152
+        }
+      },
+      "prep_counted_peak": 167605419,
+      "prep_s": 3.2340813474729657,
+      "prepared_bound": 144584540,
+      "prepared_to_verified_EOF_s": 177.76946854032576,
+      "raw_phase_sum_s": 181.00354988779873,
+      "raw_to_verified_EOF_s": 181.41014956869185,
+      "row_pipe_bytes": 65536
+    },
+    "control": {
+      "native_by_stage": {
+        "control": {
+          "cgroup_peak": 1378205696,
+          "cpu_s": 30.03,
+          "read_bytes": 140394496,
+          "sampled_hwm": 1224605696,
+          "write_bytes": 0
+        },
+        "oracle": {
+          "cgroup_peak": 112861184,
+          "cpu_s": 4.82,
+          "read_bytes": 100003840,
+          "sampled_hwm": 107495424,
+          "write_bytes": 0
+        },
+        "prep": {
+          "cgroup_peak": 201326592,
+          "cpu_s": 2.83,
+          "read_bytes": 100003840,
+          "sampled_hwm": 109150208,
+          "write_bytes": 334897152
+        }
+      },
+      "prep_counted_peak": 167605419,
+      "prep_s": 3.3302847146987915,
+      "prepared_bound": 144584540,
+      "prepared_to_verified_EOF_s": 36.07685857824981,
+      "raw_phase_sum_s": 39.407143292948604,
+      "raw_to_verified_EOF_s": 39.865634688176215,
+      "row_pipe_bytes": 65536
+    }
+  },
+  "candidate_over_control_wall": {
+    "prep_s": 0.9711125698048532,
+    "prepared_to_verified_EOF_s": 4.927520730629808,
+    "raw_to_verified_EOF_s": 4.550539606045616
+  },
+  "scope": "component only, unequal producer RAM; not construction or scale clearance"
+}

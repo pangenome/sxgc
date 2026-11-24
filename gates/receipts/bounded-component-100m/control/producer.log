@@ -1,0 +1,23 @@
+RESIDENT_BEGIN phase=load_ids
+RESIDENT_INPUT packed=true source_bytes=127708112 n=100000503 m=3170531 k=2689467
+RESIDENT_TRANSPORT row43=true text_width=8 lcp_width=8 rank_width=4
+RESIDENT_INDEX wide=true sa_bytes=957117696 owner_bytes=29909936 start_bytes=21515744 native_above_i32=false
+RESIDENT_PLAN n=100000503 m=3170531 k=2689467 dict_symbols=119639712 descriptors=95434516 parse_bound=260651040 aux_bound=513650060 dict_bound=1245891583 emit_bound=1324659943 array_grant=1610612736
+RESIDENT_PHASE phase=load_ids seconds=0.319869 peak_rss=185864192 read_bytes=140394496 write_bytes=0
+RESIDENT_BEGIN phase=parse_sort
+RESIDENT_PHASE phase=parse_sort seconds=0.348658 peak_rss=262418432 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=check_ranks
+RESIDENT_CHECK recurrence_ranks=3170531 virtual_end=0
+RESIDENT_PHASE phase=check_ranks seconds=0.037913 peak_rss=211247104 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=pack_dictionary
+RESIDENT_PHASE phase=pack_dictionary seconds=0.209373 peak_rss=350412800 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=aligned_and_lists
+RESIDENT_PHASE phase=aligned_and_lists seconds=0.870608 peak_rss=287330304 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=dictionary_sort
+RESIDENT_DICT_SORT kernel=wide_via_narrow wide=true selected_threads=1 fs=0 thread_workspace_bytes=0
+RESIDENT_PHASE phase=dictionary_sort seconds=4.915959 peak_rss=1194692608 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=owner_map
+RESIDENT_PHASE phase=owner_map seconds=0.019957 peak_rss=1224605696 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=emit
+RESIDENT_STREAM rows=100000504 descriptors=95434516 groups=85107405 max_group=6545 sink_write_s=4.586014 audit_write_s=0.000000
+RESIDENT_PHASE phase=emit seconds=28.803611 peak_rss=1224605696 read_bytes=0 write_bytes=0

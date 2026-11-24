@@ -1,0 +1,4 @@
+bounded arrays parse=192505036 PhaseBytes { aligned: 259514468, lists: 301977663, emit: 318358023 } arena=67108864
+compact admission_passes=2+16 admission_digit_reads=11770915334 window_probes_bound=0
+compact passes=2+16 digit_reads=11770915334 heap_cap=8192
+bounded rows=100000504 max_ties=6545 ranges=16

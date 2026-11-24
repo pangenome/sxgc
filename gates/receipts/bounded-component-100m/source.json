@@ -1,0 +1,40 @@
+{
+  "artifacts": {
+    "binaries.json": "5ed5d8c67530355435d783b463b93329aec9055fa5dc8cdc0169d441c041c0f5",
+    "build.log": "8a7e47377417e1f45f6492bda4ad4810b848592c5a64c10aade314bafb95c612",
+    "candidate/candidate.json": "7fa8aa5373553bd8db2dba67e2ad221f31bbc51b7c3e632f9ab9047018ef5dd0",
+    "candidate/cold-columns.json": "05a0e3f11f66e3cf59b5f250c4fa6d7e30d3d958c620abb5d596949ead6f57cb",
+    "candidate/cold-raw.json": "6cc06f7c79115fd0ca1c2b18e0ca1dc8ba90735dd0314ed822e085b3414a7da4",
+    "candidate/exits.json": "610c53dd42e0922e09ea769e7c30b4f5138ee9587d255e27bd68df8bd02c3421",
+    "candidate/oracle.json": "cacf58716c986b942a6e55fcdf03d5ce11c60d4d3267faebd11f67fe195f9d37",
+    "candidate/oracle.log": "08280269ad6c43f460ba3b80f3d9ed704a4f7294b6a4040199e9a1d81827b684",
+    "candidate/prep.json": "fb278efd386a0e97f6fe7244eddf2ee6f423582968899dee48e838a5471e54ad",
+    "candidate/prep.log": "cf8fe3ffda42320e6915ad57a3f6ff5168fff90591e91a53dd3d128003ada6a1",
+    "candidate/producer.log": "6ba82576ef604a58720d744f9add691d70ea4c40e20c6ab22ced2490a0b7919a",
+    "candidate/result.json": "51e60596a06fd72abeb93c13a4aeebca34c190c73f874cdd0867ebc105cae6cc",
+    "control/cold-columns.json": "05a0e3f11f66e3cf59b5f250c4fa6d7e30d3d958c620abb5d596949ead6f57cb",
+    "control/cold-raw.json": "6cc06f7c79115fd0ca1c2b18e0ca1dc8ba90735dd0314ed822e085b3414a7da4",
+    "control/control.json": "2aaf7e173ad7be1050bc3c3e4c3130979688483467653bc0d92bc2170805d16e",
+    "control/exits.json": "a4c0b40a6fd5b1c369ab2d646810faf1e2546431c9583e5b696b3a14898e982f",
+    "control/oracle.json": "b9942f35604a0ef7462ed75deca95dc81905e9cae53b9b26a97f12bf9fdce8d8",
+    "control/oracle.log": "08280269ad6c43f460ba3b80f3d9ed704a4f7294b6a4040199e9a1d81827b684",
+    "control/prep.json": "45472c716856c88fe7baed6fcfaf76bd879c57b605facc3a6076b56ae14e8cb0",
+    "control/prep.log": "cf8fe3ffda42320e6915ad57a3f6ff5168fff90591e91a53dd3d128003ada6a1",
+    "control/producer.log": "3be745774df61e5531666292dd3c55246bf00f76465a249c22fa0407b3810dcd",
+    "control/result.json": "69e1dd157c6c1d2b9c17cf0029e2f76fd8ce535304f6c319a27edd96863d4433",
+    "inputs.json": "6ebeeb0b87f616f9a06b6686b82f30a7779a4c01a9b11e99a746784c25888f92",
+    "lease.json": "22f0716d678420732e1643a08789b5b4889b699e5fb79999fab8e96869b66063",
+    "result.json": "601371d6ed31aa0d5154b1887369e23bed0ac3d8af4c532ae6c61b4413b1fb9e",
+    "status.json": "fca877616a099a9876a8747e7a847660287368cd2e429321075bfefc4986b080"
+  },
+  "exit_code": 0,
+  "launcher": "proc_ab4a",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/bounded-component-100m-6e72c3pt",
+  "revision": "e2f0c54aa364e71056366400f6fbaebb4d38e5a5",
+  "worker_sha256": {
+    "lexparse": "b3e06429708567a17f6ede3e0e6dac1891d252a3a495eb2177da025101f62544",
+    "oracle": "1d0f8261980a6932c39b91bfa7e0612bc914baa08cc2d19df2c52f5d90a9165e",
+    "overlap_bounded_packed": "b6778872f2105b997f38945840381d9f0689786012ae9e09b3924ed45eb7d77f",
+    "overlap_resident": "3fc9b5b2558906ac4613cdacc4eef9eae73bb4febffb6e07e8e97887db360087"
+  }
+}
