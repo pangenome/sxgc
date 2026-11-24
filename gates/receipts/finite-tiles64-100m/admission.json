@@ -1,0 +1,48 @@
+{
+  "control_score": "ce28e5e539ecdb47757f37cfb2d1e4afda00e93a7ac11fb51c0269884368debd",
+  "cores": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "counted_upper": 199532024,
+  "deadline": 1795545232,
+  "desired_descriptors": 38400,
+  "emit_mode": "tiled",
+  "hashes": {
+    "inverse.u64": "afc938c0a1e96a62a2a6159fa119546a919b3042f8820847c207890bc9cafe67",
+    "oracle-raw": "3c965f581b46ba72abfd7fee7a0ce2efac5a61cd4dc5725e9253dcebcccc2383",
+    "raw": "3c965f581b46ba72abfd7fee7a0ce2efac5a61cd4dc5725e9253dcebcccc2383"
+  },
+  "parent": 2061970,
+  "prior": "45ceab98f853e3194280fb24a2fd7a9cdb5df8f2b6d47601251e233018f6c861",
+  "rev": "59ec7cd0354f7e5cae11227d61d03031c7780a0a",
+  "scope": "one 4-worker candidate vs frozen 4-worker arm; same slot/grant/EOF checker. No rank/front/product rerun.",
+  "slots": 192001,
+  "source_stats": {
+    "inverse.u64": [
+      66308,
+      22627778155,
+      25364248,
+      1795541223842716251,
+      1795541223843716251
+    ],
+    "oracle-raw": [
+      66308,
+      22627778153,
+      100000503,
+      1795541223663716263,
+      1795541223665716263
+    ],
+    "raw": [
+      66308,
+      22627778152,
+      100000503,
+      1795541223473716276,
+      1795541223475716276
+    ]
+  },
+  "start_unix": 1795544413
+}

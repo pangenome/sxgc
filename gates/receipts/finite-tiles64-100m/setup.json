@@ -1,0 +1,60 @@
+{
+  "after": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 649907\nuser_usec 403668\nsystem_usec 246238\ncore_sched.force_idle_usec 0\nnr_periods 9\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "118476800",
+    "memory.swap.max": "0"
+  },
+  "before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 380876\nuser_usec 220928\nsystem_usec 159948\ncore_sched.force_idle_usec 0\nnr_periods 4\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "14209024",
+    "memory.swap.max": "0"
+  },
+  "hashes": {
+    "inverse.u64": "afc938c0a1e96a62a2a6159fa119546a919b3042f8820847c207890bc9cafe67",
+    "oracle-raw": "3c965f581b46ba72abfd7fee7a0ce2efac5a61cd4dc5725e9253dcebcccc2383",
+    "raw": "3c965f581b46ba72abfd7fee7a0ce2efac5a61cd4dc5725e9253dcebcccc2383"
+  },
+  "private_authenticated_copy_cold": {
+    "per_device_io": null,
+    "read_cap": 300001509,
+    "wall_s": 0.49525804817676544,
+    "worker_cpu_s": 0.26841908000000003,
+    "worker_io": {
+      "read_bytes": 25366528,
+      "write_bytes": 225374208
+    },
+    "write_cap": 300001509
+  },
+  "private_stats": {
+    "inverse.u64": [
+      66308,
+      33290845344,
+      25364248,
+      1795544427402493633,
+      1795544427403493633
+    ],
+    "oracle-raw": [
+      66308,
+      33290845343,
+      100000503,
+      1795544427349493637,
+      1795544427350493637
+    ],
+    "raw": [
+      66308,
+      33290845342,
+      100000503,
+      1795544427128493652,
+      1795544427129493652
+    ]
+  },
+  "resident_pages": 0
+}

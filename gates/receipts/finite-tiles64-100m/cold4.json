@@ -1,0 +1,10 @@
+{
+  "arm_deadline": 1795544832,
+  "inputs": [
+    "raw",
+    "inverse.u64",
+    "oracle-raw"
+  ],
+  "resident_pages": 0,
+  "wall_s": 0.012824319303035736
+}

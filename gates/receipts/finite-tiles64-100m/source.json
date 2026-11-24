@@ -1,0 +1,23 @@
+{
+  "admitted_utc": "2026-11-24T18:20:13+00:00",
+  "artifacts": {
+    "admission.json": "549ad9b1112fbcb392f41b484ed16fcb9fd04843aa3c3da9d35647866bacadb4",
+    "build-and-test.log": "cb260cb610a36874addda50904dfd4b02396cd8862d4cb7aea3a0f0bdcf33458",
+    "cold4.json": "5598ab3ca9cb11969620b2157fc9439e6151e40eed44cfe632274cdf2cf9f009",
+    "emit4.json": "7c0b2e36b4d877bfb9e7c08d2d19ccc3ed087a8460eef6fd911d5bf6a7d8a768",
+    "emit4.log": "ef38e81012bbc8cc59601ccff7b1131f062de058afc9acd2a6160c7a4f467358",
+    "exits.log": "97b41befba679d2134d1b3ab6c6f81f2ae967278a0fc20191d4d6714a49562f5",
+    "identity.json": "4fbc7726e628284908ca3885c4d426bfc5f5c8e5a12083c21e5003ae8a4da048",
+    "oracle4.json": "3e0a48e747025e5148f10c60bad23837dc1faa09a8deaab5d1a41db80e014aa1",
+    "oracle4.log": "08280269ad6c43f460ba3b80f3d9ed704a4f7294b6a4040199e9a1d81827b684",
+    "pair4.json": "58a79af25019573ef964adae175f5a741ce6cbb084d8db584155744898487d83",
+    "pair4.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "score.json": "b61006c8d8af7eb2b90ae9fe38005e3ddc2185aa16d1414af7948dd301ebe825",
+    "setup.json": "d14c52eca55b446461bcaff5b70158d7ad08109a476b9433814c9ac03648962f",
+    "tools.json": "b87fbba72f0b599302c5a14f14de00d85fafa9d01227709ce1429504a9613c79"
+  },
+  "launcher": "proc_904e",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-tiles64-100m-B7hSwU",
+  "rc": 0,
+  "revision": "59ec7cd0354f7e5cae11227d61d03031c7780a0a"
+}

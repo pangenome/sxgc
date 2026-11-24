@@ -1,0 +1,72 @@
+{
+  "affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "after": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 211463340\nuser_usec 202175053\nsystem_usec 9288287\ncore_sched.force_idle_usec 0\nnr_periods 765\nnr_throttled 12\nthrottled_usec 11044\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "536870912",
+    "memory.peak": "427880448",
+    "memory.swap.max": "0"
+  },
+  "allocated_including_raw_copies": 391761920,
+  "argv": [
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-tiles64-100m-B7hSwU/emit",
+    "tiled",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-tiles64-100m-B7hSwU/raw",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-tiles64-100m-B7hSwU/inverse.u64",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-tiles64-100m-B7hSwU/route4.ef",
+    "4",
+    "335544320",
+    "29558552",
+    "38400",
+    "192001",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-tiles64-100m-B7hSwU/stop.requested",
+    "1795544832"
+  ],
+  "before": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 130845\nuser_usec 119858\nsystem_usec 10987\ncore_sched.force_idle_usec 0\nnr_periods 1\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "536870912",
+    "memory.peak": "13303808",
+    "memory.swap.max": "0"
+  },
+  "counted_sampled": 191537541,
+  "io_caps": [
+    1200006036,
+    207920632
+  ],
+  "per_device_io": null,
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 0,
+    "cpu_s": 210.75,
+    "rchar": 191336794,
+    "read_bytes": 125370368,
+    "syscr": 49332,
+    "syscw": 106396,
+    "wchar": 1365981642,
+    "write_bytes": 165986304
+  },
+  "rc": 0,
+  "route_stat": [
+    66308,
+    33290845351,
+    165974592,
+    1795544432043493311,
+    1795544432043493311
+  ],
+  "sampled_rss": 225460224,
+  "status": "COMPLETED",
+  "stop": null,
+  "wall_s": 76.43300144840032
+}
