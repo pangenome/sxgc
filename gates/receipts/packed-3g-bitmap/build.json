@@ -1,0 +1,136 @@
+{
+  "bitmap_placement": {
+    "bytes_reserved": 375000001,
+    "empty_after_finish": true,
+    "events": [
+      "GATE_BITMAP create=tmpfs exclusive=1",
+      "GATE_BITMAP unlink=tmpfs"
+    ],
+    "sampled_bytes": 375000001
+  },
+  "counted_at_peak": {
+    "generated_lexparse": 4047331439,
+    "prepared_refs_ids": 0
+  },
+  "counted_sampled_peak": 4047331439,
+  "individual_sampled_peaks": {
+    "frag.bits-high": 291057482,
+    "frag.bits-low": 103557482,
+    "frag.lcpruns": 763289200,
+    "frag.pfck2": 1090909136,
+    "frag.pieces": 37,
+    "frag.runcols.consumed": 6,
+    "frag.runexc": 16,
+    "frag.sparse2": 8405952,
+    "generated_lexparse": 4047331439,
+    "prepared_refs_ids": 0,
+    "ram_bitmap": 375000001,
+    "ram_pieces": 57084876,
+    "ram_slices": 44117072
+  },
+  "packed_tape_retired": true,
+  "phase_sampled_shared": {
+    "aligned_and_lists": 11200593920,
+    "check_ranks": 9469284352,
+    "dictionary_sort": 37302812672,
+    "emit": 41660006400,
+    "load_ids": 8704819200,
+    "owner_map": 38165856256,
+    "pack_dictionary": 13081296896,
+    "parse_sort": 10853875712,
+    "start": 13447168
+  },
+  "process": {
+    "finish": {
+      "RssAnon": 0,
+      "VmHWM": 0,
+      "VmRSS": 0,
+      "cancelled_write_bytes": 461791232,
+      "cpu_s": 1142.74,
+      "rchar": 32030302863,
+      "read_bytes": 3000000512,
+      "syscr": 464533,
+      "syscw": 5193494,
+      "wchar": 6312828242,
+      "write_bytes": 5405171712
+    },
+    "resident": {
+      "RssAnon": 0,
+      "VmHWM": 0,
+      "VmRSS": 0,
+      "cancelled_write_bytes": 0,
+      "cpu_s": 1058.74,
+      "rchar": 4047353749,
+      "read_bytes": 4047335424,
+      "syscr": 146,
+      "syscw": 137562,
+      "wchar": 72000002103,
+      "write_bytes": 61440
+    },
+    "sink": {
+      "RssAnon": 0,
+      "VmHWM": 0,
+      "VmRSS": 0,
+      "cancelled_write_bytes": 24576,
+      "cpu_s": 465.49,
+      "rchar": 36000095154,
+      "read_bytes": 4096,
+      "syscr": 583339,
+      "syscw": 97806589,
+      "wchar": 17772023366,
+      "write_bytes": 2756608
+    }
+  },
+  "profile": "packed-3g-bitmap",
+  "raw_counted_highwater": 4907641872,
+  "raw_dir_sampled_allocated": 14170533888,
+  "raw_front_wall_s": 92.97983210906386,
+  "raw_to_product_s": 1667.9547733440995,
+  "raw_worker_io": {
+    "read_bytes": 10047684608,
+    "write_bytes": 15127613440
+  },
+  "rc": {
+    "finish": 0,
+    "resident": 0,
+    "sink": 0
+  },
+  "sampled_peak_rss": {
+    "finish": 1295372288,
+    "resident": 34045734912,
+    "sink": 13361152
+  },
+  "sampled_wall_s": {
+    "finish": 1351.819546720013,
+    "resident": 1536.174117570743,
+    "sink": 1315.013730989769
+  },
+  "shared_after": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 3346420511\nuser_usec 2511425279\nsystem_usec 834995232\ncore_sched.force_idle_usec 0\nnr_periods 16680\nnr_throttled 24\nthrottled_usec 11383016\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "64424509440",
+    "memory.peak": "41701249024",
+    "memory.swap.max": "0"
+  },
+  "shared_before": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 55938\nuser_usec 35960\nsystem_usec 19977\ncore_sched.force_idle_usec 0\nnr_periods 1\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "64424509440",
+    "memory.peak": "10350592",
+    "memory.swap.max": "0"
+  },
+  "stop": false,
+  "volatile_handoff": {
+    "mode": "replay from raw input",
+    "reserved_bytes": 757217761,
+    "sampled_cgroup_shmem": 432279552,
+    "sampled_tmpfs_allocated": 432279552,
+    "swap_max": 0
+  },
+  "wall_s": 1573.7833929620683,
+  "whole_dir_sampled_allocated": 11475456000
+}

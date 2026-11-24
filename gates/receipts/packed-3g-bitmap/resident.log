@@ -1,0 +1,32 @@
+RESIDENT_BEGIN phase=load_ids
+RESIDENT_INPUT packed=true source_bytes=3665803063 n=3000000000 m=95382094 k=73473254
+RESIDENT_INDEX wide=true sa_bytes=27563066416 owner_bytes=861345840 start_bytes=587786040 native_above_i32=true
+RESIDENT_PLAN n=3000000000 m=95382094 k=73473254 dict_symbols=3445383302 descriptors=2784124023 parse_bound=6780003943 aux_bound=12000244748 dict_bound=33244895912 emit_bound=36986451656 array_grant=45097156608
+RESIDENT_PHASE phase=load_ids seconds=4.673084 peak_rss=4637323264 read_bytes=4047335424 write_bytes=0
+RESIDENT_BEGIN phase=parse_sort
+RESIDENT_PHASE phase=parse_sort seconds=9.211077 peak_rss=6782169088 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=check_ranks
+RESIDENT_CHECK recurrence_ranks=95382094 virtual_end=0
+RESIDENT_PHASE phase=check_ranks seconds=2.188989 peak_rss=5400313856 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=pack_dictionary
+RESIDENT_PHASE phase=pack_dictionary seconds=6.277559 peak_rss=9125122048 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=aligned_and_lists
+RESIDENT_PHASE phase=aligned_and_lists seconds=38.153370 peak_rss=7126839296 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=dictionary_sort
+RESIDENT_PHASE phase=dictionary_sort seconds=159.865228 peak_rss=33180114944 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=owner_map
+RESIDENT_PHASE phase=owner_map seconds=0.555541 peak_rss=34041462784 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=emit
+RESIDENT_PROGRESS emitted=268435456
+RESIDENT_PROGRESS emitted=536870912
+RESIDENT_PROGRESS emitted=805306368
+RESIDENT_PROGRESS emitted=1073741824
+RESIDENT_PROGRESS emitted=1342177280
+RESIDENT_PROGRESS emitted=1610612736
+RESIDENT_PROGRESS emitted=1879048192
+RESIDENT_PROGRESS emitted=2147483648
+RESIDENT_PROGRESS emitted=2415919104
+RESIDENT_PROGRESS emitted=2684354560
+RESIDENT_PROGRESS emitted=2952790016
+RESIDENT_STREAM rows=3000000001 descriptors=2784124023 groups=2314991884 max_group=170825 sink_write_s=211.450983 audit_write_s=303.395246
+RESIDENT_PHASE phase=emit seconds=1311.980128 peak_rss=34045734912 read_bytes=0 write_bytes=45056

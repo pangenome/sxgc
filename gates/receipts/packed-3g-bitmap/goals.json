@@ -1,0 +1,26 @@
+{
+  "relative_to": "verified 1 GB raw packed product; normalized by input bytes",
+  "normalized_wall": {
+    "raw_to_product_s": 1.2150783220177765,
+    "wall_s": 1.2274866454236528
+  },
+  "target_under_2x": true,
+  "promotion_under_3x": true,
+  "prepared_attributed_read_bytes": 7047340032,
+  "cold_input_bytes": 7047331439,
+  "prepared_writes_vs_disk_control_per_byte": 0.18658270132813481,
+  "normalized_io_pass": true,
+  "matched_prepared_io": {
+    "read_bytes": 0.9999994187881384,
+    "write_bytes": 0.24680721405124909
+  },
+  "matched_raw_io": {
+    "read_bytes": 1.0000334289182973,
+    "write_bytes": 0.47824633836951586
+  },
+  "matched_wall": {
+    "wall_s": 0.9807580949403277,
+    "raw_to_product_s": 0.9816652342109684
+  },
+  "matched_bitmap_pass": true
+}
