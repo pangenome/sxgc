@@ -31,4 +31,32 @@ def table(dirs):
             print(f"  Ordered join waited {w:.2f} s for worker packets; downstream writes {s+a:.2f} s. These timers are inside emit, concurrent with lane computation. Do not infer worker compute by subtracting them.")
         else:print(f"  Serial emission outside the two measured write calls: {ph['emit']-s-a:.2f} s (not an isolated compute benchmark).")
 
-if __name__=='__main__':table([Path(x) for x in sys.argv[1:]])
+def study(bank):
+    """Complete portable bank only. The report has no authority to dispatch."""
+    from overlap_scaling_policy import evaluate,experiment_order,one_series
+    from overlap_ten_dict_grid import replay
+    from overlap_ten_score import get
+    pair=bank/'radix-full-1g';grid=bank/'native-grid-10g';old=bank/'packed-serial-10g';out=bank/'scale-10g'
+    native=replay(grid);order=experiment_order(pair,grid);arms=[out/name for name in order];result=evaluate(old,pair,grid,arms)
+    assert result['complete_lane_sweep'];print('# 10 GB matched scaling decision\n')
+    print('Selected:', '`'+result['selected']+'`' if result['selected'] else '**none eligible**', '; <2×/byte target at both endpoints:',result['performance_target_met'])
+    print('\n## Isolated native dictionary sort\n')
+    print('Requested/selected threads | sort s | speed vs 1 | process CPU s | mean CPUs during sort | peak RSS GiB | physical R/W bytes | post-clock digest s')
+    print('---: | ---: | ---: | ---: | ---: | ---: | ---: | ---:')
+    for a in native['arms']:
+        print(f"{a['threads']} | {a['wall_s']:.3f} | {native['arms'][0]['wall_s']/a['wall_s']:.3f}× | {a['cpu_s']:.3f} | {a['cpu_s']/a['wall_s']:.2f} | {a['peak_rss']/2**30:.3f} | {a['read_bytes']}/{a['write_bytes']} | {a['hash_s']:.2f}")
+    print(f"\nAll {native['arms'][0]['entries']:,} LE i64 entries hashed after each clock; one matching SHA `{native['arms'][0]['sha256']}`. Chose {native['selected_threads']} (fewest within 5% of fastest with no extra sort IO vs one). Average CPUs are measured process CPU/wall, not an observed OpenMP team count.\n\n## Full product\n")
+    ident=get(arms[0],'identity.json');src=(arms[0]/'build-source.log').read_text().splitlines()[0];harness=(arms[0]/'binaries.sha').read_text().splitlines()[0]
+    print(f"All four verified 10,000,000,001 raw rows, including 5,705,032,705 positions above u32, and all nine members of the {ident['bytes']:,}-byte v8 container, SHA `{ident['sha256']}`. New worker source `{src}`, harness `{harness}`. Resource grant: 200 GiB shared, 140 GiB arrays, 4 build CPUs, 2 finish threads, separate 14,000 MiB / 1 CPU verifier, no swap; counted scratch ≤20 GB.\n")
+    table([old,*arms]);base=next(r for r in result['rows'] if r['lanes']==1);_,_,small=one_series(pair);one=min(small,key=lambda v:v[-1]['raw'])
+    print(f"\n## Performance gates\n\nMatched 1 GB reference: `{one[0]['profile']}`, {one[-1]['raw']:.3f} s raw, {one[-1]['prepared']:.3f} s prepared. New-arm per-byte ratios use the same endpoint/verification.\n")
+    print('Lanes | raw vs old serial | same-binary raw speed vs 1 lane | build CPU vs 1 lane | raw/prepared per-byte vs matched 1 GB | raw/prepared per-byte vs 3 GB | prepared R/W vs old serial | eligible | target')
+    print('---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---:')
+    for r,p in zip(result['rows'],arms):
+        n=r['normalized_to_fastest_verified_1g'];v=r['post_io_ratio'];three=get(p,'goals.json')['normalized_wall']['packed-3g-bitmap']
+        print(f"{r['lanes']} | {r['raw_ratio_to_historical_serial']:.3f}× | {base['raw_s']/r['raw_s']:.3f}× | {r['build_cpu_s']/base['build_cpu_s']:.3f}× | {n['raw']:.3f}× / {n['prepared']:.3f}× | {three['raw_to_product_s']:.3f}× / {three['wall_s']:.3f}× | {v['read_bytes']:.4f}× / {v['write_bytes']:.4f}× | {r['eligible']} | {r['under_2x']}")
+    print('\nThe historical comparison combines code, sink and sort changes and the previously documented frozen background difference. Only the three new arms isolate lane count. This selection applies to the tested resident v8 grant, not an arbitrary machine or a v10 100 GB build.')
+
+if __name__=='__main__':
+    if len(sys.argv)==3 and sys.argv[1]=='--study':study(Path(sys.argv[2]))
+    else:table([Path(x) for x in sys.argv[1:]])

@@ -64,6 +64,8 @@ internal gate passes, and every journal binds the tool manifest, per-tool hashes
 and the output SHA, so desync is impossible to miss. `--plan-only` prints the
 surveyed, modelled build plan and exits.
 
+**Construction research (separate from the shipping v10 CLI):** the overlapping-PFP [measured defaults](OVERLAP_DEFAULTS.md) and [10 GB scaling receipts](OVERLAP_10G_STUDY.md) compare raw-to-container builds against frozen v8 rehearsal anchors. `python3 gates/overlap_defaults.py plan 1g` replays the exact cold-build decision without opening a corpus. These experiments do not make v8 a supported reader format or establish a production 100 GB/Pile fit.
+
 ## Memory operations over the container
 
 The document map (**m15**: docstarts, rank/select over delta-varint gaps + sampled
