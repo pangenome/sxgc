@@ -168,6 +168,7 @@ struct Output<'a> {
     rows: u64,
     sink_time: Duration,
     audit_time: Duration,
+    progress: bool,
     flag: &'a Path,
 }
 impl Output<'_> {
@@ -192,6 +193,9 @@ impl Output<'_> {
             self.audit_time += t.elapsed();
         }
         self.bytes.clear();
+        if self.progress && self.rows % (1 << 28) == 0 {
+            eprintln!("RESIDENT_PROGRESS emitted={}", self.rows);
+        }
     }
 }
 // A cursor into one word's occurrences at one offset. Its first field orders
@@ -233,6 +237,39 @@ fn flush(q: &mut BinaryHeap<Cursor>, lists: &Lists, len: usize, head: u32, out: 
         }
     }
 }
+// Independent certificate without a banked permutation: suffix ranks must be
+// a permutation in strictly increasing (ID, successor rank) order. Since END
+// has rank 0, the recurrence uniquely fixes the order of this finite string.
+fn ranks_follow_text(pa: &[i32], ps: &[i32]) -> bool {
+    if ps.len() != pa.len() {
+        return false;
+    }
+    let mut inv = vec![0u32; pa.len() + 1];
+    for (r, &pos) in ps.iter().enumerate() {
+        let j = pos as usize;
+        if j >= pa.len() || inv[j] != 0 {
+            return false;
+        }
+        inv[j] = r as u32 + 1;
+    }
+    let key = |&pos: &i32| {
+        let j = pos as usize;
+        (pa[j], inv[j + 1])
+    };
+    ps.windows(2).all(|pair| key(&pair[0]) < key(&pair[1]))
+}
+#[cfg(test)]
+mod rank_tests {
+    use super::*;
+    #[test]
+    fn finite_recurrence_and_permutation() {
+        let p = [1, 1, 2, 1];
+        assert!(ranks_follow_text(&p, &[3, 0, 1, 2]));
+        for bad in [[0, 3, 1, 2], [3, 0, 1, 1], [3, 0, -1, 2], [3, 0, 4, 2]] {
+            assert!(!ranks_follow_text(&p, &bad));
+        }
+    }
+}
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     assert!(
@@ -249,10 +286,21 @@ fn main() {
         Ok("0") | Err(std::env::VarError::NotPresent) => false,
         _ => panic!("invalid packed input switch"),
     };
+    let three = std::env::var("XSA_GATE_PACKED_3G").as_deref() == Ok("1");
+    assert!(
+        !three
+            || (packed
+                && std::env::var("XSA_RESIDENT_WIDE_DICT").as_deref() == Ok("1")
+                && args.len() == 3),
+        "3 GB gate requires packed input, wide dictionary, independent rank recurrence"
+    );
     let mb = size(&dir.join("parse.u32"));
     let m = mb / 4;
     assert!(
-        m > 0 && m <= 32_000_000 && mb == 4 * m && grant >= 2 * mb,
+        m > 0
+            && m <= if three { 100_000_000 } else { 32_000_000 }
+            && mb == 4 * m
+            && grant >= 2 * mb,
         "invalid parse size/grant"
     );
     let mut pa: Vec<i32> = fs::read(dir.join("parse.u32"))
@@ -261,7 +309,7 @@ fn main() {
         .map(|r| i32::try_from(le(r)).unwrap())
         .collect();
     let k = 1 + *pa.iter().max().unwrap() as usize;
-    assert!(k <= m && k <= 26_000_000);
+    assert!(k <= m && k <= if three { 80_000_000 } else { 26_000_000 });
     let data_path = dir.join(if packed {
         "dictionary.packed"
     } else {
@@ -270,7 +318,13 @@ fn main() {
     let source_bytes = size(&data_path);
     let (words, tape, n) = if packed {
         assert!(
-            source_bytes <= 1_500_000_000 && grant >= source_bytes + 8 * k + mb,
+            source_bytes
+                <= if three {
+                    u32::MAX as usize
+                } else {
+                    1_500_000_000
+                }
+                && grant >= source_bytes + 8 * k + mb,
             "packed tape exceeds array grant"
         );
         let bytes = fs::read(&data_path).unwrap();
@@ -294,7 +348,13 @@ fn main() {
         (words, None, source_bytes)
     };
     assert!(
-        n > 0 && n <= 1_000_000_665 && m <= n,
+        n > 0
+            && (if three {
+                n == 3_000_000_000
+            } else {
+                n <= 1_000_000_665
+            })
+            && m <= n,
         "outside measured corpus rung"
     );
     eprintln!("RESIDENT_INPUT packed={packed} source_bytes={source_bytes} n={n} m={m} k={k}");
@@ -312,6 +372,12 @@ fn main() {
         _ => panic!("XSA_RESIDENT_WIDE_DICT must be 0 or 1"),
     };
     assert_eq!(usize::BITS, 64, "resource plan requires 64-bit addressing");
+    if three {
+        assert!(
+            d > i32::MAX as usize,
+            "3 GB width gate requires actual >i32 dictionary length"
+        );
+    }
     if !wide {
         i32::try_from(d).expect("dictionary exceeds signed libsais width");
     }
@@ -365,6 +431,14 @@ fn main() {
         }
         eprintln!("RESIDENT_CHECK inverse_ranks={m} virtual_end=0");
         drop(inv);
+        p.end();
+    } else if packed {
+        let p = phase("check_ranks");
+        assert!(
+            ranks_follow_text(&pa, &ps),
+            "parse rank recurrence mismatch"
+        );
+        eprintln!("RESIDENT_CHECK recurrence_ranks={m} virtual_end=0");
         p.end();
     }
     let p = phase("pack_dictionary");
@@ -528,6 +602,7 @@ fn main() {
         rows: 0,
         sink_time: Duration::ZERO,
         audit_time: Duration::ZERO,
+        progress: three,
         flag,
     };
     out.push(n as u32, 0, last as u32);

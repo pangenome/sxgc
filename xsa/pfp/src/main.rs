@@ -132,8 +132,10 @@ fn main() {
     let triples = resident_sink || external;
     if triples || fixture {
         if resident_sink {
-            if external || fixture || !matches!(file_n, 100_000_503 | 1_000_000_665) || std::env::var_os("TRIE_TAP").is_some() {
-                die("resident triples: sandbox or rung1 product sink only");
+            let three=laws::env_u64("XSA_GATE_PACKED_3G",0)==1;
+            let fit=if three {file_n==3_000_000_000} else {matches!(file_n, 100_000_503 | 1_000_000_665)};
+            if external || fixture || !fit || std::env::var_os("TRIE_TAP").is_some() {
+                die("resident triples: bounded sandbox/rung1 or explicit exact 3 GB product sink only");
             }
         } else if file_n > 101_000_000 || std::env::var_os("TRIE_TAP").is_some(){die("overlap fixture path: <=101 MB, product sink only");}
         let volatile=std::env::var_os("XSA_GATE_VOLATILE_PIECES");

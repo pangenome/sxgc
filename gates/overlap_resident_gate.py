@@ -1,6 +1,7 @@
 """Measured, rung1-only, from prepared lexparse. Invoked by overlap_resident_gate.sh.
 Build stdout is reserved for the separate raw verifier. No Python per-row path.
 """
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -14,10 +15,13 @@ import sys
 import time
 
 REPO = Path(__file__).resolve().parents[1]
-BIN = REPO/'xsa/target/release'
-N = 1_000_000_665
-SHA = 'b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3'
-ANCHOR = Path('/mnt/nvme2n1/erikg/TAPEREADER/climb/rung1/run_wide/product.sxi2')
+@dataclass(frozen=True)
+class Rung:
+    n:int; sha:str; anchor:Path; finish:Path; finish_flags:tuple; shared_gib:int; arrays_gib:int; oracle_mib:int
+ROOT=Path('/mnt/nvme2n1/erikg/TAPEREADER')
+ONE=Rung(1_000_000_665,'b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3',ROOT/'climb/rung1/run_wide/product.sxi2',Path('/tmp/xsa_finish_cur'),('--with-chi','--container-stream'),20,14,1400)
+THREE=Rung(3_000_000_000,'3935e8f1d220092d2cd12081938748e8a62f02e882bd021781ec7c3d0cabe7f3',ROOT/'bins-p1/run14e/reader/product.sxi2',ROOT/'bins-p1/bin/xsa_finish',(),60,42,4200)
+def config(profile): return THREE if profile=='packed-3g' else ONE
 GIB = 1 << 30
 CG = Path('/sys/fs/cgroup')/Path('/proc/self/cgroup').read_text().strip().split('::/')[1]
 
@@ -75,8 +79,8 @@ def footprint(d,retained,ram=False):
             parts[group]=parts.get(group,0)+st.st_size
     return whole,parts
 
-def oracle(d,tools):
-    assert (CG/'memory.max').read_text().strip()==str(1400<<20) and (CG/'memory.swap.max').read_text().strip()=='0'
+def oracle(d,tools,cfg):
+    assert (CG/'memory.max').read_text().strip()==str(cfg.oracle_mib<<20) and (CG/'memory.swap.max').read_text().strip()=='0'
     start=time.monotonic(); peak=0
     with (d/'oracle.log').open('xb') as f:
         p=sp.Popen([tools/'oracle',d/'oracle-corpus'],stdout=f,stderr=f)
@@ -84,9 +88,9 @@ def oracle(d,tools):
             while not finished(p): peak=max(peak,proc_info(p.pid,io)['VmHWM']); time.sleep(.5)
             stats=proc_info(p.pid,io); rc=p.wait()
     save(d/'oracle.json',dict(rc=rc,process=stats,sampled_peak_rss=peak,cgroup=cg_info(),wall_including_wait_s=time.monotonic()-start))
-    assert rc==0 and f'ORACLE rows={N+1} independent_final_rank={N+1} all_adjacent_sa_lcp_bwt_verified=1' in (d/'oracle.log').read_text()
+    assert rc==0 and f'ORACLE rows={cfg.n+1} independent_final_rank={cfg.n+1} all_adjacent_sa_lcp_bwt_verified=1' in (d/'oracle.log').read_text()
 
-def pack_front(d,tools):
+def pack_front(d,tools,cfg):
     """Produce *fresh* columns from private cold raw text. The packer itself
     charges each bucket, assignment and output before writing (limit 2N).
     No active sink/finish until the new dictionary tape has been retired.
@@ -95,19 +99,27 @@ def pack_front(d,tools):
     cols=d/'columns'; assert not cols.exists() and not (d/'merged').exists()
     start=time.monotonic(); peak=allocated=0
     with (d/'pack.log').open('xb') as log:
-        p=sp.Popen([tools/'lexparse',d/'in/corpus',cols,'--packed'],stdout=log,stderr=log)
+        p=sp.Popen([tools/'lexparse',d/'in/corpus',cols,'--packed-3g' if cfg==THREE else '--packed'],stdout=log,stderr=log)
         with open(f'/proc/{p.pid}/io') as io:
             while not finished(p):
                 peak=max(peak,proc_info(p.pid,io)['VmHWM']); wh,parts=footprint(d,0); allocated=max(allocated,wh)
-                if sum(parts.values())>2*N or time.monotonic()-start>600:(d/'stop.requested').touch()
+                if sum(parts.values())>2*cfg.n or time.monotonic()-start>600:(d/'stop.requested').touch()
                 time.sleep(.25)
             info=proc_info(p.pid,io); code=p.wait()
     front=dict(rc=code,process=info,sampled_peak_rss=peak,sampled_allocated=allocated,wall_s=time.monotonic()-start,cgroup_after=cg_info())
     save(d/'front-end.json',front); assert code==0 and not (d/'stop.requested').exists()
-    log=(d/'pack.log').read_text(); match=re.search(r'^LEXPARSE n=(\d+) phrases=(\d+) distinct=(\d+) .* peak_counted=(\d+) final_columns=(\d+) ',log,re.M)
-    assert match; n,m,k,peak_counted,total=map(int,match.groups()); assert (n,m,k)==(N,31_784_026,25_336_659)
+    log=(d/'pack.log').read_text(); match=re.search(r'^LEXPARSE n=(\d+) phrases=(\d+) distinct=(\d+) descriptors=(\d+) .* peak_counted=(\d+) final_columns=(\d+) ',log,re.M)
+    assert match; n,m,k,descriptors,peak_counted,total=map(int,match.groups()); assert n==cfg.n
+    if cfg==ONE: assert (m,k)==(31_784_026,25_336_659)
     sizes={p.name:p.stat().st_size for p in cols.iterdir()}; assert set(sizes)=={'parse.u32','dictionary.packed'}
-    assert sizes['parse.u32']==4*m and sum(sizes.values())==total<=peak_counted<=2*N
+    assert sizes['parse.u32']==4*m and sum(sizes.values())==total<=peak_counted<=2*n
+    tape=sizes['dictionary.packed']; D=descriptors+9*k-7; assert tape==D+3*k-1
+    resident=12*(k+1)+13*m+8*((m+15)//16)
+    bounds=dict(parse=tape+8*m+32*k,aux=tape+D+25*(k+1)+32*m,sort=9*D+resident+(64<<20),
+                emit=9*D+16*((D+63)//64)+resident+40*k+(8<<20))
+    front.update(n=n,m=m,k=k,descriptors=descriptors,D=D,array_bounds=bounds,counted_front_peak=peak_counted,columns=sizes); save(d/'front-end.json',front)
+    assert 0<k<=m<=100_000_000 and k<=80_000_000 and m+6*k<2**31 and tape<2**32 and max(bounds.values())<=cfg.arrays_gib*GIB
+    if cfg==THREE: assert 2**31<=D<2**63 and n+1<2**32
     # Conservative reproducible cut: evict only this gate's freshly generated
     # columns and private corpus (even the finish must pay for cold text).
     t=time.monotonic()
@@ -116,16 +128,16 @@ def pack_front(d,tools):
     save(d/'front-end.json',front); say('PACKED_FRONT',m,k,peak_counted,round(front['wall_s'],3)); return front
 
 def build(d,tools,profile):
-    assert profile in ('narrow','wide','wide-handoff','packed-raw')
-    assert (CG/'memory.max').read_text().strip()==str(20*GIB) and (CG/'memory.swap.max').read_text().strip()=='0'
+    assert profile in ('narrow','wide','wide-handoff','packed-raw','packed-3g'); cfg=config(profile); N=cfg.n
+    assert (CG/'memory.max').read_text().strip()==str(cfg.shared_gib*GIB) and (CG/'memory.swap.max').read_text().strip()=='0'
     src=d/'in'; corpus=src/'corpus'; assert corpus.stat().st_size==N
-    packed=profile=='packed-raw'; raw_start=time.monotonic(); cg0=cg_info()
+    packed=profile.startswith('packed-'); raw_start=time.monotonic(); cg0=cg_info()
     if packed:
-        front=pack_front(d,tools); producer_in=d/'columns'; retained=front['columns']['parse.u32'] # through finish
+        front=pack_front(d,tools,cfg); producer_in=d/'columns'; retained=front['columns']['parse.u32'] # through finish
     else:
         producer_in=src; retained=sum((src/f).stat().st_size for f in ('parse.u32','dictionary.refs'))
     retired=False
-    refs=members(ANCHOR); rows=N+1
+    refs=members(cfg.anchor); rows=N+1
     # Same finish profile; reserve its full-sized named spools conservatively
     # even though some do not coexist. 64 slices (all escapes worst case).
     # 32 outstanding pieces + 64-release batch, plus 8 for reader/frontier.
@@ -140,11 +152,11 @@ def build(d,tools,profile):
                                    front_limit=2*N if packed else None,rule='retire fresh packed tape before starting consumers' if packed else 'prepared refs/IDs stay live'))
     (d/'merged').mkdir(); flag=d/'stop.requested'; ram=None; temp=None; extra_env={}; bands=d/'bands'
     reserve=plan['pieces']+plan['slices']+plan['control_margin']; rampeak=shmempeak=0
-    if profile in ('wide-handoff','packed-raw'):
+    if profile=='wide-handoff' or packed:
         # Only transient handoff. Retained parse, PFCK/bitmap/m14 spools and
         # published container stay on NVMe. Service cgroup charges tmpfs pages.
         assert any(line.split()[4]=='/dev/shm' and ' - tmpfs ' in line for line in Path('/proc/self/mountinfo').read_text().splitlines())
-        assert shutil.disk_usage('/dev/shm').free>=reserve and 14*GIB+reserve+2*GIB<20*GIB
+        assert shutil.disk_usage('/dev/shm').free>=reserve and cfg.arrays_gib*GIB+reserve+wit_budget(cfg)<cfg.shared_gib*GIB
         temp=tempfile.TemporaryDirectory(prefix='xsa-volatile-',dir='/dev/shm'); ram=Path(temp.name)
         bands=ram/'bands'; extra_env={'XSA_GATE_VOLATILE_PIECES':str(ram/'pieces')}
     bands.mkdir(); start=time.monotonic()
@@ -161,7 +173,10 @@ def build(d,tools,profile):
         md=d/'merged/modeb';
         if md.exists():(md/'stop.requested').touch(exist_ok=True)
     audit=os.dup(1)
-    launch('resident',[BIN/'overlap_resident',producer_in,flag,str(14*GIB),d/'inverse.check'],
+    if cfg==THREE: env['XSA_GATE_PACKED_3G']='1'
+    rank_input=[d/'inverse.check'] if cfg==ONE else []
+    binary_dir=tools if (tools/'overlap_resident').exists() else REPO/'xsa/target/release'
+    launch('resident',[binary_dir/'overlap_resident',producer_in,flag,str(cfg.arrays_gib*GIB),*rank_input],
            env=dict(env,XSA_RESIDENT_PACKED=str(int(packed)),XSA_RESIDENT_WIDE_DICT=str(int(profile!='narrow')),XSA_RESIDENT_AUDIT_FD=str(audit)),stdout=sp.PIPE,pass_fds=(audit,)); os.close(audit)
     counted_peak=0; disk_peak=0; at_peak={}; each={}; last_disk=0; active='start'; samples={}
     with (d/'resident.log').open() as tail:
@@ -176,9 +191,9 @@ def build(d,tools,profile):
                     tape=producer_in/'dictionary.packed'; assert tape.stat().st_size==front['columns'][tape.name]
                     tape.unlink(); retired=True; say('PACKED_RETIRE bytes='+str(front['columns'][tape.name]))
                 # Don't charge a sort's idle wall to the finish. Frozen data path.
-                launch('sink',[BIN/'pfp_sort_r',*common,'--out-prefix',pref,'--bands',bands,'--scratch-budget-bytes',str(2*N-retained)],
+                launch('sink',[binary_dir/'pfp_sort_r',*common,'--out-prefix',pref,'--bands',bands,'--scratch-budget-bytes',str(2*N-retained)],
                        env=dict(env,**extra_env,XSA_TEST_RESIDENT_TRIPLES='1'),stdin=w['resident'].stdout,stdout=sp.DEVNULL); w['resident'].stdout.close()
-                launch('finish',['/tmp/xsa_finish_cur',*common,'--prefix',pref,'--lcp-bands',bands,'--output',d/'product.sxi2','--poll-timeout','0','--wit-ram-budget',str(2*GIB),'--with-chi','--container-stream'],
+                launch('finish',[cfg.finish,*common,'--prefix',pref,'--lcp-bands',bands,'--output',d/'product.sxi2','--poll-timeout','0','--wit-ram-budget',str(wit_budget(cfg)),*cfg.finish_flags],
                        env=dict(env,LD_PRELOAD=str(tools/'monitor.so'),XSA_GATE_PRIVATE_STOP=str(flag)))
             for name,p in w.items():
                 if name in exitcode: continue
@@ -218,16 +233,19 @@ def build(d,tools,profile):
     assert exitcode==dict(resident=0,sink=0,finish=0) and not flag.exists()
     assert 'oom_kill 0' in rc['shared_after']['memory.events']
 
-def certify(d):
-    actual=sha(d/'product.sxi2'); table=members(d/'product.sxi2'); same=table==members(ANCHOR)
-    rank_ok=f'RESIDENT_CHECK inverse_ranks=31784026 virtual_end=0' in (d/'resident.log').read_text()
-    good=actual==SHA and same and rank_ok and json.loads((d/'oracle.json').read_text())['rc']==0
-    save(d/'identity.json',dict(verified=good,sha256=actual,expected=SHA,bytes=(d/'product.sxi2').stat().st_size,members=table,reference_table_identical=same))
+def wit_budget(cfg): return (2 if cfg==ONE else 6)*GIB
+
+def certify(d,cfg):
+    actual=sha(d/'product.sxi2'); table=members(d/'product.sxi2'); same=table==members(cfg.anchor)
+    check='inverse_ranks=31784026' if cfg==ONE else f"recurrence_ranks={json.loads((d/'front-end.json').read_text())['m']}"
+    rank_ok=f'RESIDENT_CHECK {check} virtual_end=0' in (d/'resident.log').read_text()
+    good=actual==cfg.sha and same and rank_ok and json.loads((d/'oracle.json').read_text())['rc']==0
+    save(d/'identity.json',dict(verified=good,sha256=actual,expected=cfg.sha,bytes=(d/'product.sxi2').stat().st_size,members=table,reference_table_identical=same))
     assert good; print('PASS resident ranks, all raw SA/LCP/BWT rows, exact nine-member SHA',actual,flush=True)
 
 if __name__=='__main__':
     mode=sys.argv[1]; d=Path(sys.argv[2]);
-    if mode=='certify':certify(d)
-    elif mode=='oracle':oracle(d,Path(sys.argv[3]))
+    if mode=='certify':certify(d,config(sys.argv[3] if len(sys.argv)>3 else 'narrow'))
+    elif mode=='oracle':oracle(d,Path(sys.argv[3]),config(sys.argv[4] if len(sys.argv)>4 else 'narrow'))
     elif mode=='build':build(d,Path(sys.argv[3]),sys.argv[4] if len(sys.argv)>4 else 'narrow')
     else:raise ValueError(mode)

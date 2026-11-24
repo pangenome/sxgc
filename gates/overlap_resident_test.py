@@ -47,10 +47,14 @@ def main():
             assert rc.returncode==0, rc.stderr
             packed=subprocess.run([BIN,d/'columns',*args[2:]],capture_output=True,env=dict(os.environ,XSA_RESIDENT_PACKED='1'))
             assert packed.returncode==0 and packed.stdout==rc.stdout, packed.stderr
+            certified=subprocess.run([BIN,d/'columns',*args[2:4]],capture_output=True,env=dict(os.environ,XSA_RESIDENT_PACKED='1'))
+            assert certified.returncode==0 and b'RESIDENT_CHECK recurrence_ranks=' in certified.stderr and certified.stdout==rc.stdout,certified.stderr
             rows=list(struct.iter_unpack('<III',rc.stdout)); sa=sorted(range(n+1),key=lambda i:text[i:]); assert len(rows)==len(sa)
             for r,(p,h,b) in enumerate(rows):
                 want=sum(1 for _ in itertools.takewhile(lambda pair:pair[0]==pair[1],zip(text[p:],text[sa[r-1]:]))) if r else 0
                 assert (p,h,b)==(sa[r],want,text[p-1] if p else 256)
+        wrong_rung=subprocess.run([BIN,d/'columns',*args[2:4]],capture_output=True,env=dict(os.environ,XSA_RESIDENT_PACKED='1',XSA_RESIDENT_WIDE_DICT='1',XSA_GATE_PACKED_3G='1'))
+        assert wrong_rung.returncode and b'outside measured corpus rung' in wrong_rung.stderr and not wrong_rung.stdout
         (d/'expected').write_bytes(bytes((d/'expected').stat().st_size)); wrong=subprocess.run(args,capture_output=True); assert wrong.returncode and b'external rank mismatch' in wrong.stderr and not wrong.stdout
         small=subprocess.run([*args[:3],'32'],capture_output=True); assert small.returncode and not small.stdout
         prepare(d,bytes(range(256))); wide=subprocess.run(args,capture_output=True); assert wide.returncode and b'two free codes' in wide.stderr and not wide.stdout
