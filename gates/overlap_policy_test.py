@@ -1,10 +1,22 @@
 """Small negative tests: local tracking refs and projected speed aren't promotion."""
 from pathlib import Path
+import subprocess as sp
+import sys, select as poll
+from tempfile import TemporaryDirectory
+from overlap_resident_gate import release_unowned_pipe
 import unittest
 from overlap_published import published_main
 from overlap_scaling_policy import select
 
 class PolicyTest(unittest.TestCase):
+    def test_non_deadline_stop_unblocks_unowned_full_pipe(self):
+        with TemporaryDirectory() as tmp:
+            flag=Path(tmp)/'stop.requested'
+            with sp.Popen([sys.executable,'-c',"import sys;sys.stdout.buffer.write(b'x'*(8<<20));sys.stdout.buffer.flush()"],stdout=sp.PIPE,stderr=sp.DEVNULL) as p:
+                self.assertTrue(poll.select([p.stdout],[],[],3)[0]);workers={'resident':p}
+                release_unowned_pipe(workers,flag);self.assertFalse(p.stdout.closed)
+                flag.touch();release_unowned_pipe({**workers,'sink':object()},flag);self.assertFalse(p.stdout.closed)
+                release_unowned_pipe(workers,flag);self.assertTrue(p.stdout.closed);self.assertNotEqual(p.wait(timeout=3),0)
     def test_publication(self):
         root=Path('/no-dataset'); h='a'*40
         base={'rev-parse --show-toplevel':str(root),'symbolic-ref --short HEAD':'main','status --porcelain':'',

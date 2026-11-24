@@ -11,7 +11,8 @@ import threading
 import time
 
 from overlap_resident_gate import ROOT, TEN, cg_info, save
-from overlap_radix_product_score import metrics
+from overlap_scaling_policy import one_series
+from overlap_ten_matched_score import metrics as certified_ten
 from private_cold import cold
 from overlap_timing_idle import exclusive
 
@@ -39,11 +40,8 @@ def prerequisites(ten, pair, deadline):
     assert (ten / 'exits.log').read_text().strip() == 'build=0 oracle=0'
     assert load(ten, 'build.json')['profile'] == 'packed-10g-bitmap' and load(ten, 'oracle.json')['rc'] == 0
     assert f'ORACLE rows={TEN.n+1} independent_final_rank={TEN.n+1} all_adjacent_sa_lcp_bwt_verified=1' in (ten/'oracle.log').read_text()
-    a, b = load(pair, 'comparison.json'), load(pair, 'batch.json')
-    assert a['same_binary_and_product'] and b['same_binary_and_product'] and a['parallel'] == b['fields']
-    arms = [Path(a['control']), Path(a['parallel']), Path(b['block'])]
-    assert a['lanes'] == b['lanes'] and a['lanes'] in (2,4)
-    assert [metrics(d)[0]['profile'] for d in arms] == ['packed-radix-1', f"packed-radix-{a['lanes']}", f"packed-radix-{a['lanes']}-batch"]
+    assert certified_ten(ten)['profile']=='packed-10g-bitmap'
+    one_series(pair)  # same attestation and score replay as the full-product policy
     ref = load(REPO/'gates/receipts/packed-front-10g', 'front-end.json')
     assert load(SOURCE, 'front-end.json') == ref and ref['columns'] == load(ten, 'front-end.json')['columns']
     assert all((SOURCE/'columns'/k).stat().st_size == n for k,n in ref['columns'].items())
@@ -87,8 +85,9 @@ def worker(d, exe, ten, pair, deadline):
         cold(col/k)
     (d/'cold.log').write_text('private column copies: mincore zero resident pages\n')
     before(deadline); exclusive()
-    if flag.exists(): raise SystemExit(75)
-    env = dict(PATH=os.defpath, **GRID, XSA_GATE_PACKED_10G='1')
+    if flag.exists() or int(deadline)-time.time()<4200:
+        save(d/'admission.json',dict(started=False,remaining_s=int(deadline)-time.time(),required_s=4200));raise SystemExit(75)
+    env = dict(PATH=os.defpath, **GRID, XSA_GATE_PACKED_10G='1', XSA_GRID_DEADLINE=str(deadline))
     # stderr through a pipe so receipt logging writes are not charged to the sort.
     with open('/dev/full','wb') as no_rows, (d/'resident.log').open('xb') as log:
         p = sp.Popen([exe,col,d/'stop.requested',str(140<<30)], env=env, stdout=no_rows, stderr=sp.PIPE)

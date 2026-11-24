@@ -19,6 +19,16 @@ pub fn run(dict: &[u8], flag: &Path) {
     let mut previous = None;
     for requested in [1, 4, 2] {
         stop(flag);
+        if std::env::var_os("XSA_GATE_PACKED_10G").is_some() {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let deadline: u64 = std::env::var("XSA_GRID_DEADLINE").unwrap().parse().unwrap();
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            if deadline.saturating_sub(now) < 1200 {
+                fs::write(flag, b"insufficient time for another native dictionary sort\n").unwrap();
+                eprintln!("DICT_GRID_STOP insufficient_native_window=1");
+                std::process::exit(75);
+            }
+        }
         let sort = DictSort::requested(true, requested);
         let threads = sort.selected_threads();
         assert_eq!(threads, requested);

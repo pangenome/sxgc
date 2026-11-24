@@ -44,6 +44,12 @@ def expired(d,deadline):
         (d/'stop.requested').touch(exist_ok=True);return True
     return False
 
+def release_unowned_pipe(workers,flag):
+    # On a stop the sink may never be launched. A producer already inside
+    # write_all cannot check the flag until its blocking write returns.
+    if flag.exists() and 'sink' not in workers and not workers['resident'].stdout.closed:
+        workers['resident'].stdout.close()
+
 def omp_settings(t):
     cap=len(os.sched_getaffinity(0))
     for path in (CG,*CG.parents):
@@ -277,7 +283,7 @@ def build(d,tools,profile,deadline=None):
                 if l.startswith('RESIDENT_BEGIN'):active=l.strip().split('=')[-1]
             if expired(d,deadline):
                 request('deadline')
-                if 'sink' not in w:w['resident'].stdout.close()  # do not strand a blocked pipe writer
+            release_unowned_pipe(w,flag)
             if active=='emit' and 'sink' not in w and not flag.exists():
                 # Only this invocation's newly created packed tape. The binary
                 # has closed it and starts emitting only from anonymous arrays.

@@ -17,7 +17,7 @@ case $#:${1:-} in
 3:--prepare-tools)
     unset PYTHONOPTIMIZE;src=$(realpath "$2"); t=$(realpath -m "$3");pinned_repo "$src";mkdir "$t";cd "$src"
     export XSA_BUILD_DICT_OPENMP=1 CC=gcc CARGO_TARGET_DIR="$t/target"
-    (cd xsa && cargo test -j1 --locked --release -p pfp --bin overlap_resident --bin pfp_sort_r && cargo build -j1 --locked --release -p pfp --bin overlap_resident --bin pfp_sort_r)
+    (cd xsa && cargo test -j1 --locked --offline --release -p pfp --bin overlap_resident --bin pfp_sort_r && cargo build -j1 --locked --offline --release -p pfp --bin overlap_resident --bin pfp_sort_r)
     cp "$t/target/release/"{pfp_sort_r,overlap_resident} "$t/"
     cc -O2 -Wall -Wextra -Werror -shared -fPIC -pthread gates/finish_stop_monitor.c -o "$t/monitor.so"
     cc -O2 -std=c11 -Wall -Wextra -Werror -shared -fPIC gates/finish_bitmap_tmpfs.c -o "$t/bitmap.so"
