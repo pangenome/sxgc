@@ -18,6 +18,7 @@ mod w5;
 mod unit;
 mod scan_order;
 mod overlap;
+mod overlap_row43;
 
 use col::die;
 use std::io::Read as _;
@@ -130,10 +131,12 @@ fn main() {
     let external = laws::env_u64("XSA_TEST_EXTERNAL_TRIPLES",0)==1;
     let fixture = laws::env_u64("XSA_TEST_OVERLAP_STREAM",0)==1;
     let triples = resident_sink || external;
+    let ten=laws::env_u64("XSA_GATE_PACKED_10G",0)==1;
+    if ten && (!resident_sink || external || fixture || file_n!=10_000_000_000 || laws::env_u64("XSA_GATE_PACKED_3G",0)!=0){die("row43: explicit 10 GB resident sink only");}
     if triples || fixture {
         if resident_sink {
             let three=laws::env_u64("XSA_GATE_PACKED_3G",0)==1;
-            let fit=if three {file_n==3_000_000_000} else {matches!(file_n, 100_000_503 | 1_000_000_665)};
+            let fit=if ten {file_n==10_000_000_000} else if three {file_n==3_000_000_000} else {matches!(file_n, 100_000_503 | 1_000_000_665)};
             if external || fixture || !fit || std::env::var_os("TRIE_TAP").is_some() {
                 die("resident triples: bounded sandbox/rung1 or explicit exact 3 GB product sink only");
             }
@@ -151,7 +154,7 @@ fn main() {
             let mut stream=std::io::BufReader::with_capacity(1<<20,std::io::stdin().lock());
             let mut row=[0u8;12];
             for r in 0..=file_n {stream.read_exact(&mut row).expect("truncated external row stream");
-                let col=|i:usize|u32::from_le_bytes(row[i..i+4].try_into().unwrap()) as u64;let(p,h,b)=(col(0),col(4),col(8));
+                let col=|i:usize|u32::from_le_bytes(row[i..i+4].try_into().unwrap()) as u64;let(p,h,b)=if ten {let(p,h,b)=overlap_row43::decode(&row);(p,h,u64::from(b))}else{(col(0),col(4),col(8))};
                 assert!(p<=file_n && (r==0)==(p==file_n) && h<=file_n-p && (if p==0{b==256}else{b<=255}),"invalid external row");feed(p,h,b as u8);
             }assert_eq!(stream.read(&mut row[..1]).expect("external EOF"),0,"extra external rows");
         }else{
