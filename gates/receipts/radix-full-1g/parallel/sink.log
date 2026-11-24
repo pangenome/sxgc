@@ -1,0 +1,3 @@
+SS_SXLS_WRITER batched_escapes=false
+SS_SCRATCH_PEAK peak_live_bytes=624936898 budget_bytes=1872865226 pairs_live=0 pieces=622387066 bands=0 columns_legal_sublinear=0 rule=amendment_b4_the_scratch_law;operator_clause_2xN;the_fat_is_named
+SS_DONE_R overlap_stream rows=1000000666 total_s=179.77

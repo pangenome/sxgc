@@ -1,0 +1,20 @@
+{
+  "complete_arm": true,
+  "identity": true,
+  "score": "see goals/comparison separately, not attested by this copy",
+  "selected_logs": {
+    "finish.log": {
+      "original_bytes": 560209,
+      "original_lines": 7308,
+      "selected_lines": 17,
+      "sha256": "ffad4fe4853475b44d9f4f702fcdbc0b30f9c4133e797ea2dd2c675d06975153"
+    },
+    "sink.log": {
+      "original_bytes": 845336,
+      "original_lines": 3823,
+      "selected_lines": 3,
+      "sha256": "ed7664367b8fb82fa1b30d74bcedd7ba40a55aa7f4a7a3a51475a8cc3a619e99"
+    }
+  },
+  "source": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/resident-rung1-packed-radix-4-lh7f7J"
+}

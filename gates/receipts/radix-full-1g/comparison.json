@@ -1,0 +1,35 @@
+{
+  "control": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/resident-rung1-packed-radix-1-11tKDR",
+  "lanes": 4,
+  "matched_speed_io_pass": true,
+  "parallel": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/resident-rung1-packed-radix-4-lh7f7J",
+  "parallel_s": {
+    "audit_writes": 75.546639,
+    "emit": 178.762851,
+    "prepared": 273.54709959216416,
+    "raw": 308.24437212664634,
+    "sink_writes": 98.004684
+  },
+  "promotion_target": "emit <=0.90x, raw wall <=0.95x, post-front worker reads/writes <=1.05x",
+  "raw_io_ratio": {
+    "read_bytes": 0.9999824300628652,
+    "write_bytes": 0.9998056706911727
+  },
+  "same_binary_and_product": true,
+  "serial_s": {
+    "audit_writes": 141.497353,
+    "emit": 516.406471,
+    "prepared": 610.3474396588281,
+    "raw": 645.2521454589441,
+    "sink_writes": 26.863438
+  },
+  "time_ratio": {
+    "emit": 0.3461669460760882,
+    "prepared": 0.4481825953838218,
+    "raw": 0.4777115028535139
+  },
+  "worker_io_ratio": {
+    "read_bytes": 0.9999868747241641,
+    "write_bytes": 0.9994554555831752
+  }
+}
