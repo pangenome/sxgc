@@ -1,0 +1,4 @@
+PASS exact tighter-grant stream, later-wider epoch widths=[24, 24, 28, 3], all-index guard refuses same grant; 5 pre-open/no-END array refusals incl emission-dominant one-word geometry
+PASS 43 independent complete byte streams/epoch images (13 multi-epoch, 2 mixed interior/tail); predicted pre-open refusals {'epoch walk bound': 5, 'wave exceeds scratch': 6, 'range exceeds slots': 9}; no overwrite, one END, exact seams and stalled STOP after reuse
+109d1562dce50ea42c4c6165db9a1e37e6d33de18209132b0415f31b73652a5b  /tmp/epoch-array-fence-PtDPqy/emit
+890e13d6c050937ab4ce3cde26d7a50686fc415756ca37bc5529399641727acb  /tmp/epoch-array-fence-PtDPqy/model.json

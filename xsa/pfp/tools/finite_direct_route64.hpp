@@ -30,10 +30,11 @@ class Fragments {
 };
 struct Key {U p,len,projection;unsigned cell;bool terminal;};
 struct Bounds {unsigned lo=0,hi=0;};
+enum class RoutingMemory { whole_file, whole_epoch_index, staged_epochs };
 struct Direct {
  Route& ix;const rawview::View& view;const uint8_t* raw;const U n,m,d;int team;rawview::Stop stop;
  std::vector<Key> pivots;std::vector<Bounds> cells;std::vector<U> skip;
- U target_bands=0,samples=0,file_upper=0,explicit_write=0,fragment_bytes=0,max_desc=0,max_rows=0;double sample_s=0;
+ U charged_encoder_bands=0,target_bands=0,samples=0,file_upper=0,explicit_write=0,fragment_bytes=0,max_desc=0,max_rows=0;double sample_s=0;
  explicit Direct(Route& r):ix(r),view(r.v),raw(r.text),n(r.n),m(r.m),d(r.v.stats.owned),team(r.team),stop(r.stop){}
  U projection(U p,U len)const{U v=0;U skip=std::min<U>(2,len),bytes=std::min<U>(8,len-skip);if(bytes==8)std::memcpy(&v,raw+p+skip,8);else if(bytes)std::memcpy(&v,raw+p+skip,bytes);return __builtin_bswap64(v);}
  Key key(rawview::Word w,U o,unsigned cell)const{return {w.p+o,w.len-o,projection(w.p+o,w.len-o),cell,!w.next};}
@@ -54,11 +55,13 @@ struct Direct {
   cells.resize(CELL);unsigned after=0;for(unsigned c=0;c<CELL;++c){unsigned first=after;while(after<pivots.size() && pivots[after].cell==c)++after;cells[c]={first,after};}need(after==pivots.size(),"unsorted sample cells");
   skip.resize(pivots.size()+1);for(U i=1;i<pivots.size();++i)skip[i]=lcp(pivots[i-1],pivots[i]);
  }
- static Big work_arrays(U n,U m,U w,U nb,U pg,U sample){return Route::build_arrays(n,m,w,nb,pg)+Big(nb)*(sizeof(Key)+8)+Big(sample)*(sizeof(Key)+8)+Big(CELL)*sizeof(Bounds)+Big(nb)*w*sizeof(Load)+(1<<20);}
+ static Big work_arrays(U n,U m,U w,U nb,U pg,U sample,U active_bands){return Route::build_arrays(n,m,w,nb,pg,active_bands)+Big(nb)*(sizeof(Key)+8)+Big(sample)*(sizeof(Key)+8)+Big(CELL)*sizeof(Bounds)+Big(nb)*w*sizeof(Load)+(1<<20);}
+ static Big work_arrays(U n,U m,U w,U nb,U pg,U sample){return work_arrays(n,m,w,nb,pg,sample,nb);}
  Big retained()const{return Big(pivots.capacity())*sizeof(Key)+Big(cells.capacity())*sizeof(Bounds);}
- void prepare(U target,U arrays,U other,bool epochs=false,Big extra=0){double t=omp_get_wtime();stop.check();need(target && other>=8*m && Big(other)<Big(2)*n && d>=view.stats.groups,"direct scratch inputs");
+ void prepare(U target,U arrays,U other,RoutingMemory mode=RoutingMemory::whole_file,Big extra=0){double t=omp_get_wtime();stop.check();bool epochs=mode!=RoutingMemory::whole_file;need(!target_bands && target && other>=8*m && Big(other)<Big(2)*n && d>=view.stats.groups,"direct scratch inputs");
   U pg=narrow(Big(m)+(d-view.stats.groups)/PAGE),vmax=narrow(Big(pg)*PAGE);target_bands=epochs?std::min(MAX_BANDS,divup(d,target)):allowed(vmax,d,target,team,narrow(2*Big(n)-other));file_upper=narrow(upper(vmax,d,target_bands,team));
-  ix.array_bound=narrow(work_arrays(n,m,team,target_bands,pg,std::min(d,OVER*target_bands))+extra);need(ix.array_bound<=arrays,"direct splitter/EF array grant");learn();double ts=omp_get_wtime();sample_s=ts-t;U nb=pivots.size()+1;
+  charged_encoder_bands=mode==RoutingMemory::staged_epochs?0:target_bands;
+  ix.array_bound=narrow(work_arrays(n,m,team,target_bands,pg,std::min(d,OVER*target_bands),charged_encoder_bands)+extra);need(ix.array_bound<=arrays,"direct splitter/EF array grant");learn();double ts=omp_get_wtime();sample_s=ts-t;U nb=pivots.size()+1;
   ix.stripe.resize(team);ix.bands.reserve(CELL);ix.bands.resize(nb);std::vector<Load> counts(team*nb);
 #pragma omp parallel num_threads(team)
   {int lane=omp_get_thread_num();need(omp_get_num_threads()==team,"direct census team");auto& s=ix.stripe[lane];s.lo=rawview::cut(m,lane,team);s.hi=rawview::cut(m,lane+1,team);s.pages=s.hi-s.lo;auto* local=counts.data()+lane*nb;
@@ -69,7 +72,10 @@ struct Direct {
   need(found==d && mass==n,"learned range coverage");ix.census_s=tc-ts;ix.plan_s=omp_get_wtime()-tc;}
  U band_wire(U b)const{Big z=0;for(int lane=0;lane<team;++lane){auto& s=ix.slices.at(b*team+lane);z+=8*(Big(s.fmt.low)+s.fmt.high);}return narrow(z);}
  U layout(U lo,U hi,U& boundary){need(lo<hi && hi<=ix.bands.size() && ix.fd==-1,"direct layout/lifetime");ix.active_lo=lo;ix.active_hi=hi;return place(std::span(ix.slices).subspan(lo*team,(hi-lo)*team),boundary);}
- template<bool Rolling>void encode(int fd,U lo,U hi,U bytes,U boundary){stop.check();U nb=hi-lo;double start=omp_get_wtime();std::vector<Encoder> enc(nb*team);double tp=omp_get_wtime();ix.plan_s+=tp-start;
+ // A staged plan must charge the maximum over *all* cuts before opening the slot.
+ void charge_epoch_encoders(U max_bands,U grant){need(!charged_encoder_bands && max_bands && max_bands<=ix.bands.size(),"epoch encoder charge state");
+  Big bound=Big(ix.array_bound)+Route::encoder_bytes(team,max_bands);need(bound<=grant,"epoch encoder array grant before open");ix.array_bound=narrow(bound);charged_encoder_bands=max_bands;}
+ template<bool Rolling>void encode(int fd,U lo,U hi,U bytes,U boundary){stop.check();need(lo<hi && hi<=ix.bands.size() && hi-lo<=charged_encoder_bands,"unreserved epoch encoders");U nb=hi-lo;double start=omp_get_wtime();std::vector<Encoder> enc(nb*team);double tp=omp_get_wtime();ix.plan_s+=tp-start;
 #pragma omp parallel num_threads(team)
   {int lane=omp_get_thread_num();auto& s=ix.stripe[lane];U extra=0;ix.heads(s,[&](U r,auto w,U stride){U page=s.base+(r-1-s.lo)+extra,more=(stride-1)/PAGE;if(!Rolling || !lo)ix.pages.extras(page+1,more,stop);extra+=more;U rel=PAGE*(page-s.base);
     ix.offsets(w,stride,[&](U o,unsigned c){if constexpr(Rolling){if(cells[c].lo>=hi || cells[c].hi<lo)return;}unsigned b=classify(w,o,c);if constexpr(Rolling){if(b<lo || b>=hi)return;}enc[lane*nb+b-lo].put(fd,ix.slices[b*team+lane],s.pages*PAGE,rel+o,stop);});});need(s.hi-s.lo+extra==s.pages,"direct stripe extent");

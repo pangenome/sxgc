@@ -29,7 +29,8 @@ def periods(bands,slots,t,cap):
         else:out.append((lo,hi,size,1))
     return 'epoch walk bound' if len(out)>8 else out
 
-def run(exe):
+def run(exe,mode='epochs'):
+    assert mode in ('epochs','staged-epochs')
     rng=random.Random(8481332);tag=next(i.to_bytes(8,'little') for i in range(999) if trigger(i.to_bytes(8,'little')));big=large_class(rng,tag);random_text=rng.randbytes(64000)
     cases=[(random_text,820,4300),(rng.randbytes(52200),8600,36500),(bytes(range(256))*109,300,1600),(big,1600,8192),(big,2200,15100),((tag+b'hello!')*2450+tag,800,2800),(b'\0'*401+tag+b'z'*899,202,1600)]
     ok=multiple=mixed=0;fail={};witness=False;stall=None;end=str(int(time.time())+260)
@@ -40,7 +41,7 @@ def run(exe):
             for t in (1,2,4):
                 bs=probe(text,ii,t,tar,images=True)
                 for cap in sorted({max(1,n//9),min(available,n//2),available}):
-                    args=[exe,'epochs',raw,inv,slot,str(t),str(160<<20),str(2*n-cap),str(tar),str(slots),stop,end];ex=periods(bs,slots,t,cap);p=sp.run(args,capture_output=True)
+                    args=[exe,mode,raw,inv,slot,str(t),str(160<<20),str(2*n-cap),str(tar),str(slots),stop,end];ex=periods(bs,slots,t,cap);p=sp.run(args,capture_output=True)
                     if isinstance(ex,str):
                         assert p.returncode==75 and ex.encode() in p.stderr and not p.stdout and not slot.exists(),(len(text),t,cap,ex,p.stderr);fail[ex]=fail.get(ex,0)+1;continue
                     assert p.returncode==0 and p.stdout==rows,(len(text),t,cap,p.stderr);log=p.stderr.decode();f=fields(log,'EPOCH_INDEX');s=fields(log,'FINITE_EMIT');U=sum(b[0] for b in bs);assert int(f['epochs'])==len(ex) and int(f['encode_offset_visits'])==len(ex)*U and int(s['decoded'])==U and int(s['leaves'])==len(bs);maxsize=max(z[2] for z in ex);size=sum(z[2] for z in ex);assert int(f['peak_extent'])==maxsize<=cap and int(f['file_cap'])==cap and int(f['hash_readback'])==int(f['total_extent'])==int(s['wire'])==size and int(s['counted'])==2*n-cap+maxsize<=2*n

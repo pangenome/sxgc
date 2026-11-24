@@ -19,7 +19,9 @@ struct Route {
    for(U o=base;o<last;++o)visit(o,cell_at(p,w.len,o));
    base=last;}}
  static Big census_arrays(U n,U m,U team){return Big(rawview::budget(n,m,team))+Big(team)*CELL*sizeof(Load)+Big(CELL)*(sizeof(unsigned)+sizeof(Band))+team*sizeof(Stripe)+(1<<20);}
- static Big build_arrays(U n,U m,U team,U nb,U pg){return census_arrays(n,m,team)+Pages::bytes(pg)+Big(nb)*team*(sizeof(Layout)+sizeof(Encoder))+Big(team)*sizeof(InBuf)*2;}
+ static Big encoder_bytes(U team,U active_bands){return Big(active_bands)*team*sizeof(Encoder);}
+ static Big build_arrays(U n,U m,U team,U nb,U pg,U active_bands){need(active_bands<=nb,"too many active encoders");return census_arrays(n,m,team)+Pages::bytes(pg)+Big(nb)*team*sizeof(Layout)+encoder_bytes(team,active_bands)+Big(team)*sizeof(InBuf)*2;}
+ static Big build_arrays(U n,U m,U team,U nb,U pg){return build_arrays(n,m,team,nb,pg,nb);}
  void build(const char* newfile,U target,U arrays,U other_files){
   stop.check();need(target && other_files>=8*m && Big(other_files)<=2*Big(n),"route target/other scratch");
   Big base=census_arrays(n,m,team);

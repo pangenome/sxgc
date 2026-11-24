@@ -1,0 +1,30 @@
+{
+  "archived_score": "fc87f879608719e016221b6a383b2079e09d158885be494e09f90a2cafbc7cab",
+  "archived_widths": [
+    748,
+    744,
+    748,
+    246
+  ],
+  "charge_removed": 57506944,
+  "conditional_worker_array_upper": 193882200,
+  "dimensions_only_100g": {
+    "all_encoder_route": 146835716192,
+    "desired_bands": 2605,
+    "emission_upper": 149898703072,
+    "per_active_band": 33088,
+    "pre_census": 146749521952,
+    "unconditional_upper": 149898703072
+  },
+  "native_plan_100m": {
+    "all_encoder_route": 251389144,
+    "desired_bands": 2486,
+    "emission_upper": 162863344,
+    "per_active_band": 33088,
+    "pre_census": 169132376,
+    "unconditional_upper": 251389144
+  },
+  "remaining_of_320_MiB_if_archived_cuts": 141662120,
+  "route_if_archived_cuts": 193882200,
+  "scope": "Array reservations from exact archived 100 MB epoch cuts and unchanged emitter type sizes; not a new 100 MB stream, measured allocation, lower RSS/time, shared finish grant or scale admission."
+}
