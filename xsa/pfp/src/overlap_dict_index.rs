@@ -38,6 +38,13 @@ impl DictSort {
             Err(std::env::VarError::NotPresent) => 1,
             Err(_) => panic!("invalid XSA_RESIDENT_DICT_THREADS"),
         };
+        Self::requested(wide, requested)
+    }
+    #[cfg(feature = "dict-grid")]
+    pub fn selected_threads(&self) -> i32 {
+        self.threads
+    }
+    pub fn requested(wide: bool, requested: i32) -> Self {
         assert!(
             (1..=8).contains(&requested),
             "XSA_RESIDENT_DICT_THREADS must be 1..=8"

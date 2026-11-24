@@ -240,8 +240,10 @@ name = "pfp"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "libc",
  "memmap2",
  "rayon",
+ "sha2",
 ]
 
 [[package]]

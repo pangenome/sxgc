@@ -12,7 +12,12 @@ path = "src/main.rs"
 opt-level = 3
 debug = false
 
+[features]
+dict-grid = ["dep:sha2", "dep:libc"]
+
 [dependencies]
+sha2 = { version = "0.10", optional = true }
+libc = { version = "0.2", optional = true }
 rayon = "1.11"
 memmap2 = "0.9"
 

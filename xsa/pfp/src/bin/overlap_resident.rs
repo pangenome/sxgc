@@ -34,6 +34,9 @@ impl Coord for u64 {
         x as u64
     }
 }
+#[cfg(feature = "dict-grid")]
+#[path = "../overlap_dict_grid.rs"]
+mod dict_grid;
 #[path = "../overlap_dict_index.rs"]
 mod index;
 use index::{local_offset, RankStarts, Suffixes};
@@ -392,6 +395,30 @@ fn run<C: Coord>(ten: bool, fixture: bool) {
                 && std::env::var("XSA_RESIDENT_WIDE_DICT").as_deref() == Ok("1")),
         "row43 requires packed input, wide dictionary and rank recurrence"
     );
+    let grid = match std::env::var("XSA_RESIDENT_DICT_GRID").as_deref() {
+        Err(std::env::VarError::NotPresent) => false,
+        Ok("1") => {
+            assert!(
+                cfg!(all(feature = "dict-grid", dict_openmp))
+                    && (ten || fixture)
+                    && args.len() == 3
+                    && (if ten {
+                        grant == 140 << 30
+                    } else {
+                        grant <= 200_000_000
+                    })
+                    && ["XSA_RESIDENT_AUDIT_FD", "XSA_RESIDENT_DICT_THREADS"]
+                        .iter()
+                        .all(|k| std::env::var_os(k).is_none())
+                    && std::env::var("OMP_DYNAMIC").as_deref() == Ok("FALSE")
+                    && std::env::var("OMP_WAIT_POLICY").as_deref() == Ok("PASSIVE")
+                    && std::env::var("GOMP_SPINCOUNT").as_deref() == Ok("0"),
+                "invalid dictionary grid mode/grant/environment"
+            );
+            true
+        }
+        _ => panic!("invalid XSA_RESIDENT_DICT_GRID"),
+    };
     let mb = size(&dir.join("parse.u32"));
     let m = mb / 4;
     assert!(
@@ -525,7 +552,19 @@ fn run<C: Coord>(ten: bool, fixture: bool) {
     let retained = 12 * (k + 1) + (5 + 2 * cb) * m + 2 * cb * m.div_ceil(16);
     let sa_bytes = if wide { 8 * d } else { 4 * d };
     let owner_bytes = if wide { RankStarts::bytes(d) } else { 4 * d };
-    let dict_sort = index::DictSort::from_env(wide);
+    let dict_sort = if grid {
+        index::DictSort::requested(wide, 4)
+    } else {
+        index::DictSort::from_env(wide)
+    };
+    #[cfg(feature = "dict-grid")]
+    if grid {
+        assert_eq!(
+            dict_sort.selected_threads(),
+            4,
+            "grid requires four available threads"
+        );
+    }
     let dict_bound = d + sa_bytes + retained + (64 << 20) + dict_sort.workspace_bytes(d);
     let mode = radix::Mode::from_env(n);
     let emit_bound =
@@ -714,6 +753,13 @@ fn run<C: Coord>(ten: bool, fixture: bool) {
     };
     p.end();
 
+    #[cfg(feature = "dict-grid")]
+    if grid {
+        dict_grid::run(&dict.bytes, flag);
+        // The measured phase has exactly the producer's retained list set.
+        std::hint::black_box(&lists);
+        return;
+    }
     let p = phase("dictionary_sort");
     // SEP < END < any raw byte. Equal finite tails are merged by continuation.
     let sa = dict_sort.sort(&dict.bytes);
