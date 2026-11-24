@@ -1,0 +1,34 @@
+{
+  "cgroup_after": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 30817385\nuser_usec 27231551\nsystem_usec 3585834\ncore_sched.force_idle_usec 0\nnr_periods 292\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "21474836480",
+    "memory.peak": "2664206336",
+    "memory.swap.max": "0"
+  },
+  "cold_barrier_s": 1.0256384070962667,
+  "columns": {
+    "dictionary.packed": 1242219181,
+    "parse.u32": 127136104
+  },
+  "counted_front_peak": 1635681177,
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 580022272,
+    "cpu_s": 29.11,
+    "rchar": 1890234727,
+    "read_bytes": 1000198144,
+    "syscr": 33836,
+    "syscw": 381374,
+    "wchar": 3259308924,
+    "write_bytes": 3260895232
+  },
+  "rc": 0,
+  "sampled_allocated": 4815978496,
+  "sampled_peak_rss": 1023623168,
+  "wall_s": 29.16592423338443
+}

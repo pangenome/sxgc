@@ -1,0 +1,27 @@
+{
+  "cgroup": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 88155155\nuser_usec 83367703\nsystem_usec 4787452\ncore_sched.force_idle_usec 0\nnr_periods 3582\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "1468006400",
+    "memory.peak": "1013989376",
+    "memory.swap.max": "0"
+  },
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 0,
+    "cpu_s": 87.69,
+    "rchar": 12000014580,
+    "read_bytes": 1000001536,
+    "syscr": 2929702,
+    "syscw": 1,
+    "wchar": 92,
+    "write_bytes": 4096
+  },
+  "rc": 0,
+  "sampled_peak_rss": 1003503616,
+  "wall_including_wait_s": 458.4818419329822
+}

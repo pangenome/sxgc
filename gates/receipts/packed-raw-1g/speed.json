@@ -1,0 +1,12 @@
+{
+  "phase": "prepared packed words/IDs through product vs reference prepared refs/IDs",
+  "input_bytes": 1000000665,
+  "reference_commit": "143ade3253f95984ca48069b2d772abfa5254bf6",
+  "reference_wall_s": 465.6692705443129,
+  "wall_s": 427.3731328416616,
+  "strict_limit_s": 4656.692705443129,
+  "slowdown": 0.9177610803953467,
+  "pass_strictly_under_10x": true,
+  "raw_to_product_s": 457.5715689295903,
+  "raw_slowdown": null
+}
