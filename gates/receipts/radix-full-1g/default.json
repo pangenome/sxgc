@@ -1,0 +1,30 @@
+{
+  "arrays_gib": 14,
+  "build_cpus": 4,
+  "counted_limit": 2000001330,
+  "counted_peak": 1635681177,
+  "finish_threads": 2,
+  "harness_revision": "d72ac25db741f98e4295bfdcf9af53c2682ed0a4",
+  "normalized_speed_target_met": null,
+  "prepared_s": 269.63376776408404,
+  "profile": "packed-radix-4-batch",
+  "raw_s": 304.062186694704,
+  "reference_sha256": "b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3",
+  "rung": "1g",
+  "selection": "best verified raw-product profile here; within 3% prefer fewer sink writes",
+  "shared_gib": 20,
+  "swap_max": 0,
+  "verifier_cpus": 1,
+  "verifier_mib": 1400,
+  "worker_revision": "d72ac25db741f98e4295bfdcf9af53c2682ed0a4",
+  "worker_sha256": {
+    "bitmap.so": "ed0b651a8907e0be70ac9e029d1684c08997de633ae2cef6ed3844007c80bc1f",
+    "lexparse": "b3e06429708567a17f6ede3e0e6dac1891d252a3a495eb2177da025101f62544",
+    "monitor.so": "fe5173c7d32215bdc7d41e59fd70edf059621ce83b38fb87b2e4d73ebbcb960a",
+    "oracle": "a4d33dadb539e70d209522a0dba1d9611c41bc126fbcea5116844383bcb44d37",
+    "overlap_resident": "24de84ffa909c6d1e6a47e9b9432f5884686f5826ca4850183b727dccf2ebfab",
+    "pfp_sort_r": "d3ffafed0ec185fce48fd02b13a4abbaa971187d0f1f75df34a1f31793942c4f",
+    "remap": "e7dbaf89d26000465d6bc317292b350d83c4e0fc5c5380d924a4381f3d929c46",
+    "xsa_finish_cur": "9a0bde6739ba1819f8d298beca2c8a9bf53480fab19f637b49cf6e3c8e200fa7"
+  }
+}

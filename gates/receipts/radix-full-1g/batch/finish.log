@@ -1,0 +1,17 @@
+XSA_FINISH_PFCK path=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/resident-rung1-packed-radix-4-batch-8qK2FW/merged/frag.pfck2 n=1000000666 tau=22 count=45454576 bytes=363636648 wall=2.191 workers=2 segments=8 worker_bytes=1572864 source=corpus_adapter fixed_grid=1
+GATE_BITMAP create=tmpfs exclusive=1
+XSA_FINISH_SWEEP_ANATOMY piecewait=38.040 readband=5.887 feed=67.608 repair_total=113.825 raw_runs=368036627 bands=5616 rlebwt_wait=0.000 ns_per_raw_run=183.70
+GATE_BITMAP unlink=tmpfs
+LCP_RUNS_ENCODING member=m14 codec=117 blocks=359411 payload_bytes=257880088 dir_bytes=5750576 escapes=1577273 max_lcp=97059 zero_blocks=0 u8_blocks=1080 packed_blocks=358331 packed_bits_per_run=5.1714 bits_per_run=5.7305 n=1000000666
+SXI2_MEMBER id=1 codec=116 count=368036627 bytes=343149688
+SXI2_MEMBER id=4 codec=4 count=0 bytes=12
+SXI2_MEMBER id=5 codec=105 count=283296927 bytes=133324298
+SXI2_MEMBER id=7 codec=7 count=256 bytes=256
+SXI2_MEMBER id=10 codec=110 count=368036627 bytes=0
+SXI2_MEMBER id=11 codec=111 count=359411 bytes=2875304
+SXI2_MEMBER id=12 codec=112 count=359411 bytes=2920280
+SXI2_MEMBER id=13 codec=115 count=11160101 bytes=268197544
+SXI2_MEMBER id=14 codec=117 count=368036627 bytes=263630704
+CONTAINER_FINAL bytes=1014098520 sha256=b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3 members=9
+XSA_FINISH_DONE chi=283296927 n=1000000666 r=368036627 container=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/resident-rung1-packed-radix-4-batch-8qK2FW/product.sxi2
+XSA_FINISH_PEAK_RSS kib=479632

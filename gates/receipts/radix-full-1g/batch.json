@@ -1,0 +1,45 @@
+{
+  "block": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/resident-rung1-packed-radix-4-batch-8qK2FW",
+  "block_s": {
+    "audit_writes": 78.704345,
+    "emit": 176.733991,
+    "prepared": 269.63376776408404,
+    "raw": 304.062186694704,
+    "sink_writes": 91.915313
+  },
+  "field_s": {
+    "audit_writes": 75.546639,
+    "emit": 178.762851,
+    "prepared": 273.54709959216416,
+    "raw": 308.24437212664634,
+    "sink_writes": 98.004684
+  },
+  "fields": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/resident-rung1-packed-radix-4-lh7f7J",
+  "lanes": 4,
+  "matched_batch_pass": true,
+  "product_speed_win": false,
+  "promotion_target": "sink syscw <=0.10x, raw and prepared wall and post-front reads/writes <=1.05x; speed win only if raw <=0.95x",
+  "raw_io_ratio": {
+    "read_bytes": 0.999941432513857,
+    "write_bytes": 1.0000016197256671
+  },
+  "same_binary_and_product": true,
+  "sink_cpu_s": [
+    82.08,
+    60.15
+  ],
+  "sink_syscw": [
+    26967434,
+    102423
+  ],
+  "sink_syscw_ratio": 0.0037980254257783666,
+  "time_ratio": {
+    "emit": 0.9886505502197434,
+    "prepared": 0.9856941205594408,
+    "raw": 0.9864322407475324
+  },
+  "worker_io_ratio": {
+    "read_bytes": 1.000001640681014,
+    "write_bytes": 1.0000022796699037
+  }
+}
