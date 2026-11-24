@@ -93,7 +93,9 @@ def oracle(d,tools,cfg):
     save(d/'oracle.json',dict(rc=rc,process=stats,sampled_peak_rss=peak,cgroup=cg_info(),wall_including_wait_s=time.monotonic()-start))
     assert rc==0 and f'ORACLE rows={cfg.n+1} independent_final_rank={cfg.n+1} all_adjacent_sa_lcp_bwt_verified=1' in (d/'oracle.log').read_text()
 
-def pack_front(d,tools,cfg):
+def radix_lanes(profile):return {'packed-radix-1':1,'packed-radix-2':2,'packed-radix-4':4}.get(profile,1)
+
+def pack_front(d,tools,cfg,lanes=1):
     """Produce *fresh* columns from private cold raw text. The packer itself
     charges each bucket, assignment and output before writing (limit 2N).
     No active sink/finish until the new dictionary tape has been retired.
@@ -135,6 +137,9 @@ def pack_front(d,tools,cfg):
         resident=12*(k+1)+21*m+16*((m+15)//16)
         bounds=dict(parse=tape+8*m+40*k,aux=tape+D+33*(k+1)+56*(m+1),sort=9*D+resident+(64<<20),emit=9*D+16*((D+63)//64)+resident+40*k+(8<<20))
         assert bounds==ref['proposed_array_bytes'] and v['D']==D and v['alphabet']<=254 and max(n,tape,D)<2**43
+    if lanes>1:
+        # 64-bit Probe (3 Fence) + Tile, fixed row credits, stacks and shared heap slack.
+        bounds['emit']+=104*((D+16383)//16384)+lanes*2*65536*12+lanes*(3<<20)+(1<<20)
     front.update(n=n,m=m,k=k,descriptors=descriptors,D=D,array_bounds=bounds,counted_front_peak=peak_counted,columns=sizes); save(d/'front-end.json',front)
     assert 0<k<=m and m+6*k<2**31 and max(bounds.values())<=cfg.arrays_gib*GIB
     if cfg!=TEN:assert m<=100_000_000 and k<=80_000_000 and tape<2**32
@@ -147,13 +152,14 @@ def pack_front(d,tools,cfg):
     save(d/'front-end.json',front); say('PACKED_FRONT',m,k,peak_counted,round(front['wall_s'],3)); return front
 
 def build(d,tools,profile):
-    assert profile in ('narrow','wide','wide-handoff','packed-raw','packed-3g','packed-3g-bitmap','packed-10g-bitmap'); cfg=config(profile); N=cfg.n
-    bitmap=profile in ('packed-3g-bitmap','packed-10g-bitmap')
+    assert profile in ('narrow','wide','wide-handoff','packed-raw','packed-3g','packed-3g-bitmap','packed-10g-bitmap','packed-radix-1','packed-radix-2','packed-radix-4'); cfg=config(profile); N=cfg.n
+    lanes=radix_lanes(profile);row_queue=lanes*2*65536*12 if lanes>1 else 0
+    bitmap=profile in ('packed-3g-bitmap','packed-10g-bitmap') or profile.startswith('packed-radix-')
     assert (CG/'memory.max').read_text().strip()==str(cfg.shared_gib*GIB) and (CG/'memory.swap.max').read_text().strip()=='0'
     src=d/'in'; corpus=src/'corpus'; assert corpus.stat().st_size==N
     packed=profile.startswith('packed-'); raw_start=time.monotonic(); cg0=cg_info()
     if packed:
-        front=pack_front(d,tools,cfg); producer_in=d/'columns'; retained=front['columns']['parse.u32'] # through finish
+        front=pack_front(d,tools,cfg,lanes); producer_in=d/'columns'; retained=front['columns']['parse.u32'] # through finish
     else:
         producer_in=src; retained=sum((src/f).stat().st_size for f in ('parse.u32','dictionary.refs'))
     retired=False
@@ -165,8 +171,9 @@ def build(d,tools,profile):
     plan=dict(retained=retained,pfck=64+8*(rows//22+2),bitmap=(rows+7)//8,sparse=refs[11][2],
               lcp_runs=refs[14][2],ef_spools=refs[5][2],pieces=104*(per_piece+40),
               slices=64*(48+17*262144),control_margin=8<<20)
+    if profile.startswith('packed-radix-'):plan['row_queue']=row_queue
     bound=sum(plan.values()); assert bound<2*N
-    before_emit=sum(front['columns'].values())+plan['control_margin'] if packed else bound
+    before_emit=sum(front['columns'].values())+plan['control_margin']+row_queue if packed else bound
     post_bound=max(before_emit,bound); assert post_bound<=2*N
     save(d/'scratch-plan.json',dict(parts=plan,counted_bound=post_bound,limit=2*N,before_emit_bound=before_emit,finish_bound=bound,
                                    front_limit=2*N if packed else None,rule='retire fresh packed tape before starting consumers' if packed else 'prepared refs/IDs stay live'))
@@ -198,6 +205,7 @@ def build(d,tools,profile):
     audit=os.dup(1)
     if cfg==THREE: env['XSA_GATE_PACKED_3G']='1'
     if cfg==TEN: env['XSA_GATE_PACKED_10G']='1'
+    if profile.startswith('packed-radix-'):env.update(XSA_RESIDENT_RADIX_LANES=str(lanes),XSA_RESIDENT_RADIX_STEP='16384')
     rank_input=[d/'inverse.check'] if cfg==ONE else []
     binary_dir=tools if (tools/'overlap_resident').exists() else REPO/'xsa/target/release'
     launch('resident',[binary_dir/'overlap_resident',producer_in,flag,str(cfg.arrays_gib*GIB),*rank_input],
@@ -241,6 +249,9 @@ def build(d,tools,profile):
                     rampeak=max(rampeak,allocated); shmempeak=max(shmempeak,int(re.search(r'^shmem (\d+)$',(CG/'memory.stat').read_text(),re.M)[1]))
                     if max(allocated,sum(rparts.values()))>reserve:request('volatile scratch exceeded reserved RAM')
                     if bitmap and ('frag.chi-bitmap' in parts or rparts.get('ram_bitmap',0)>plan['bitmap']):request('wrong bitmap placement/extent')
+                # Anonymous reordering buffers: charge the entire reservation
+                # throughout the post-front arm, not just observable tmpfs.
+                if row_queue:parts['row_queue_reserved']=row_queue
                 counted=sum(parts.values());
                 for k,v in parts.items(): each[k]=max(each.get(k,0),v)
                 if counted>counted_peak: counted_peak=counted;at_peak=parts

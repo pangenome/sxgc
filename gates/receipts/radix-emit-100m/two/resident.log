@@ -1,0 +1,21 @@
+RESIDENT_BEGIN phase=load_ids
+RESIDENT_INPUT packed=false source_bytes=100000503 n=100000503 m=3170531 k=2689467
+RESIDENT_TRANSPORT row43=false text_width=4 lcp_width=4 rank_width=4
+RESIDENT_INDEX wide=true sa_bytes=957117696 owner_bytes=29909936 start_bytes=21515744 native_above_i32=false
+RESIDENT_PLAN n=100000503 m=3170531 k=2689467 dict_symbols=119639712 descriptors=95434516 parse_bound=111427192 aux_bound=388333907 dict_bound=1218942063 emit_bound=1308955695 array_grant=1503238553
+RESIDENT_PHASE phase=load_ids seconds=0.058736 peak_rss=56860672 read_bytes=34201600 write_bytes=0
+RESIDENT_BEGIN phase=parse_sort
+RESIDENT_PHASE phase=parse_sort seconds=0.260849 peak_rss=111726592 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=pack_dictionary
+RESIDENT_PHASE phase=pack_dictionary seconds=0.534709 peak_rss=291110912 read_bytes=100003840 write_bytes=0
+RESIDENT_BEGIN phase=aligned_and_lists
+RESIDENT_PHASE phase=aligned_and_lists seconds=0.745653 peak_rss=248680448 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=dictionary_sort
+RESIDENT_PHASE phase=dictionary_sort seconds=5.049481 peak_rss=1180659712 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=owner_map
+RESIDENT_PHASE phase=owner_map seconds=0.024433 peak_rss=1210572800 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=emit
+RESIDENT_RADIX_PLAN lanes=2 sa_ranks_per_tile=16384 raw_tiles=7303 ranges=7000 empty=303 adjusted=649 absorbed=0 heap_bound=2230200 block_bytes=786432 row_queue_reserved=3145728 plan_s=0.117848
+RESIDENT_RADIX_JOIN lanes=2 ranges=7000 blocks=7000 max_range_rows=28189 order_wait_s=14.526379 lane_rows=[49989565, 50010938] serial_row_comparisons=0
+RESIDENT_STREAM rows=100000504 descriptors=95434516 groups=85107405 max_group=6545 sink_write_s=1.300172 audit_write_s=0.000000
+RESIDENT_PHASE phase=emit seconds=15.968898 peak_rss=1211060224 read_bytes=0 write_bytes=4096

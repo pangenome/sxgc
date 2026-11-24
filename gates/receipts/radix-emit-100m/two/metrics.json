@@ -1,0 +1,85 @@
+{
+  "array_grant": 1503238553,
+  "cgroup": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 40762363\nuser_usec 38071446\nsystem_usec 2690916\ncore_sched.force_idle_usec 0\nnr_periods 229\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "2147483648",
+    "memory.peak": "1356906496",
+    "memory.swap.max": "0"
+  },
+  "counted_scratch_bound": 41800036,
+  "digest": "82747f11a9925bb4d89cc812410d98e411ce80b1767ee1ff4dc22e94e2cd874e",
+  "emit_s": 15.968898,
+  "join": {
+    "blocks": "7000",
+    "lane_rows": [
+      49989565,
+      50010938
+    ],
+    "lanes": "2",
+    "max_range_rows": "28189",
+    "order_wait_s": "14.526379",
+    "ranges": "7000",
+    "serial_row_comparisons": "0"
+  },
+  "lanes": 2,
+  "plan": {
+    "absorbed": "0",
+    "adjusted": "649",
+    "block_bytes": "786432",
+    "empty": "303",
+    "heap_bound": "2230200",
+    "lanes": "2",
+    "plan_s": "0.117848",
+    "ranges": "7000",
+    "raw_tiles": "7303",
+    "row_queue_reserved": "3145728",
+    "sa_ranks_per_tile": "16384"
+  },
+  "process": {
+    "hash": {
+      "RssAnon": 0,
+      "VmHWM": 0,
+      "VmRSS": 0,
+      "cancelled_write_bytes": 0,
+      "cpu_s": 1.45,
+      "rchar": 1200010972,
+      "read_bytes": 0,
+      "syscr": 77365,
+      "syscw": 1,
+      "wchar": 68,
+      "write_bytes": 4096
+    },
+    "producer": {
+      "RssAnon": 0,
+      "VmHWM": 0,
+      "VmRSS": 0,
+      "cancelled_write_bytes": 0,
+      "cpu_s": 39.1,
+      "rchar": 134218769,
+      "read_bytes": 134205440,
+      "syscr": 130,
+      "syscw": 14225,
+      "wchar": 1200007915,
+      "write_bytes": 12288
+    }
+  },
+  "queue_reserved": 3145728,
+  "rc": {
+    "hash": 0,
+    "producer": 0
+  },
+  "stop": false,
+  "stream": {
+    "audit_write_s": "0.000000",
+    "descriptors": "95434516",
+    "groups": "85107405",
+    "max_group": "6545",
+    "rows": "100000504",
+    "sink_write_s": "1.300172"
+  },
+  "verify": false,
+  "wall_s": 22.853154291398823
+}

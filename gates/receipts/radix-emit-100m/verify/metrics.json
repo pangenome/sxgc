@@ -1,0 +1,60 @@
+{
+  "array_grant": 1503238553,
+  "cgroup": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 43765257\nuser_usec 41013082\nsystem_usec 2752175\ncore_sched.force_idle_usec 0\nnr_periods 526\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "2147483648",
+    "memory.peak": "1356517376",
+    "memory.swap.max": "0"
+  },
+  "counted_scratch_bound": 38654308,
+  "digest": "82747f11a9925bb4d89cc812410d98e411ce80b1767ee1ff4dc22e94e2cd874e",
+  "emit_s": 45.620721,
+  "lanes": 1,
+  "process": {
+    "hash": {
+      "RssAnon": 0,
+      "VmHWM": 0,
+      "VmRSS": 0,
+      "cancelled_write_bytes": 0,
+      "cpu_s": 1.35,
+      "rchar": 1200010972,
+      "read_bytes": 0,
+      "syscr": 36632,
+      "syscw": 1,
+      "wchar": 68,
+      "write_bytes": 4096
+    },
+    "producer": {
+      "RssAnon": 0,
+      "VmHWM": 0,
+      "VmRSS": 0,
+      "cancelled_write_bytes": 0,
+      "cpu_s": 42.02,
+      "rchar": 134218763,
+      "read_bytes": 134205440,
+      "syscr": 130,
+      "syscw": 4761,
+      "wchar": 2400013618,
+      "write_bytes": 12288
+    }
+  },
+  "queue_reserved": 0,
+  "rc": {
+    "hash": 0,
+    "producer": 0
+  },
+  "stop": false,
+  "stream": {
+    "audit_write_s": "10.733342",
+    "descriptors": "95434516",
+    "groups": "85107405",
+    "max_group": "6545",
+    "rows": "100000504",
+    "sink_write_s": "1.294406"
+  },
+  "verify": true,
+  "wall_s": 52.56336273252964
+}
