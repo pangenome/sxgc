@@ -1,0 +1,95 @@
+monitor.so: OK
+bitmap.so: OK
+lexparse: OK
+oracle: OK
+overlap_resident: OK
+pfp_sort_r: OK
+source: OK
+ 0x0000000000000001 (NEEDED)             Shared library: [libgomp.so.1]
+receipt=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev tools=/tmp/overlap-ten-series-2TmYG9/tools
+PASS exclusive private tmpfs bitmap, mmap visibility, unchanged neighbor, cleanup and invalid-fd refusal
+PASS compact lexical buckets: 6 independent byte-exact word tapes and ID strings; wrong rung, reuse and stop refused
+PASS 7 full brute row43 streams; truncated, extra, narrow, invalid wide extent, BWT and stop/rung refusals
+/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev/in/remap: OK
+/tmp/xsa_finish_cur: OK
+cold: private corpus, independent oracle text and remap checked zero resident pages
+PACKED_FRONT 318164488 234472723 15090631800 322.683
+RESIDENT_BEGIN phase=load_ids
+RESIDENT_INPUT packed=true source_bytes=11942962780 n=10000000000 m=318164488 k=234472723
+RESIDENT_TRANSPORT row43=true text_width=8 lcp_width=8 rank_width=4
+RESIDENT_INDEX wide=true sa_bytes=89916356896 owner_bytes=2809886160 start_bytes=1875781792 native_above_i32=true
+RESIDENT_PLAN n=10000000000 m=318164488 k=234472723 dict_symbols=11239544612 descriptors=9129290112 parse_bound=23867187604 aux_bound=48737318668 dict_bound=111037919983 emit_bound=123248207220 array_grant=150323855360
+RESIDENT_PHASE phase=load_ids seconds=15.679978 peak_rss=16969908224 read_bytes=13215625216 write_bytes=0
+RESIDENT_BEGIN phase=parse_sort
+RESIDENT_PHASE phase=parse_sort seconds=29.858341 peak_rss=23867518976 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=check_ranks
+RESIDENT_CHECK recurrence_ranks=318164488 virtual_end=0
+RESIDENT_PHASE phase=check_ranks seconds=7.419866 peak_rss=19514007552 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=pack_dictionary
+RESIDENT_PHASE phase=pack_dictionary seconds=20.249703 peak_rss=31590330368 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=aligned_and_lists
+RESIDENT_PHASE phase=aligned_and_lists seconds=149.816542 peak_rss=27315044352 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=dictionary_sort
+RESIDENT_DICT_SORT kernel=native_wide wide=true selected_threads=4 fs=0 thread_workspace_bytes=1618179
+RESIDENT_PHASE phase=dictionary_sort seconds=549.954031 peak_rss=110972391424 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=owner_map
+RESIDENT_PHASE phase=owner_map seconds=3.485236 peak_rss=113782280192 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=emit
+PACKED_RETIRE bytes=11942962780
+RESIDENT_RADIX_PLAN lanes=2 sa_ranks_per_tile=16384 raw_tiles=686008 ranges=619387 empty=64097 adjusted=103873 absorbed=2524 heap_bound=60149880 block_bytes=786432 row_queue_reserved=3145728 plan_s=62.403786
+RESIDENT_PROGRESS emitted=268442092
+RESIDENT_PROGRESS emitted=536875348
+RESIDENT_PROGRESS emitted=805313475
+RESIDENT_PROGRESS emitted=1073752968
+RESIDENT_PROGRESS emitted=1342181081
+RESIDENT_PROGRESS emitted=1610627957
+RESIDENT_PROGRESS emitted=1879059868
+RESIDENT_PROGRESS emitted=2147499240
+RESIDENT_PROGRESS emitted=2415922509
+RESIDENT_PROGRESS emitted=2684356776
+RESIDENT_PROGRESS emitted=2952797008
+RESIDENT_PROGRESS emitted=3221232538
+RESIDENT_PROGRESS emitted=3489670870
+RESIDENT_PROGRESS emitted=3758106324
+RESIDENT_PROGRESS emitted=4026533130
+RESIDENT_PROGRESS emitted=4294969631
+RESIDENT_PROGRESS emitted=4563407665
+RESIDENT_PROGRESS emitted=4831855167
+RESIDENT_PROGRESS emitted=5100294484
+RESIDENT_PROGRESS emitted=5368710300
+RESIDENT_PROGRESS emitted=5637147328
+RESIDENT_PROGRESS emitted=5905592053
+RESIDENT_PROGRESS emitted=6174025996
+RESIDENT_PROGRESS emitted=6442453199
+RESIDENT_PROGRESS emitted=6710899255
+RESIDENT_PROGRESS emitted=6979332972
+RESIDENT_PROGRESS emitted=7247765658
+RESIDENT_PROGRESS emitted=7516209234
+RESIDENT_PROGRESS emitted=7784633857
+RESIDENT_PROGRESS emitted=8053070847
+RESIDENT_PROGRESS emitted=8321508993
+RESIDENT_PROGRESS emitted=8589942458
+RESIDENT_PROGRESS emitted=8858383433
+RESIDENT_PROGRESS emitted=9126826308
+RESIDENT_PROGRESS emitted=9395255751
+RESIDENT_PROGRESS emitted=9663684102
+RESIDENT_PROGRESS emitted=9932121906
+RESIDENT_RADIX_JOIN lanes=2 ranges=619387 blocks=620434 max_range_rows=1021836 order_wait_s=695.126905 lane_rows=[4998843378, 5001156622] serial_row_comparisons=0
+RESIDENT_STREAM rows=10000000001 descriptors=9129290112 groups=7385616097 max_group=546042 sink_write_s=230.558705 audit_write_s=1427.830515
+RESIDENT_PHASE phase=emit seconds=2419.116567 peak_rss=113839509504 read_bytes=4096 write_bytes=159744
+EXIT resident 0 3205.024
+EXIT sink 0 2428.325
+EXIT finish 0 2549.728
+build=0 oracle=0
+PASS resident ranks, all raw SA/LCP/BWT rows, exact nine-member SHA 26cfb2de0cccab8a8712a332956d58693dcbbb34373a9031a7bbaaa08cc504c9
+Traceback (most recent call last):
+  File "/tmp/overlap-restart-jceQI2/gates/overlap_ten_score.py", line 103, in <module>
+    if __name__=='__main__':score(Path(sys.argv[1]))
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/overlap-restart-jceQI2/gates/overlap_ten_score.py", line 89, in score
+    root=Path(__file__).resolve().parent/'receipts'; b,f,_=verified_arm(d)
+                                                           ^^^^^^^^^^^^^^^
+  File "/tmp/overlap-restart-jceQI2/gates/overlap_ten_score.py", line 58, in verified_arm
+    assert b['worker_controls']==dict(resident=dict(base,**b['omp_settings'],XSA_RESIDENT_PACKED='1',XSA_RESIDENT_WIDE_DICT='1'),sink=sink_controls,finish=base)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

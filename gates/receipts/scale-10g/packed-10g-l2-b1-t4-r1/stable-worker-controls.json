@@ -1,0 +1,116 @@
+{
+  "binaries_sha256": "1a144dfdb0189d72a4bcf62d29eb53b832a54cb4ad34588063f9a7d4465b7894",
+  "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/run-u291.service",
+  "controller_pid": 1527873,
+  "cpu.max": "400000 100000",
+  "memory.max": "214748364800",
+  "memory.swap.max": "0",
+  "observed": {
+    "finish": {
+      "argv": [
+        "/tmp/xsa_finish_cur",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev/in/corpus",
+        "--remap",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev/in/remap",
+        "--threads",
+        "2",
+        "--prefix",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev/merged/frag",
+        "--lcp-bands",
+        "/dev/shm/xsa-volatile-lagkir_9/bands",
+        "--output",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev/product.sxi2",
+        "--poll-timeout",
+        "0",
+        "--wit-ram-budget",
+        "21474836480",
+        "--with-chi",
+        "--container-stream"
+      ],
+      "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/run-u291.service",
+      "controller_pid": 1527873,
+      "controls": {
+        "CROSS_V2_PIECES": "1",
+        "CROSS_V2_PIECE_WINDOW": "32",
+        "PFCK_SPACING": "22",
+        "SS_LCP_SLICE_WINDOW": "64",
+        "XSA_GATE_PACKED_10G": "1",
+        "XSA_RESIDENT_RADIX_LANES": "2",
+        "XSA_RESIDENT_RADIX_STEP": "16384"
+      },
+      "exe": "/tmp/xsa_finish_cur",
+      "pid": 1554306,
+      "same_executable_inode": true,
+      "start_ticks": 557480655
+    },
+    "resident": {
+      "argv": [
+        "/tmp/overlap-ten-series-2TmYG9/tools/overlap_resident",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev/columns",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev/stop.requested",
+        "150323855360"
+      ],
+      "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/run-u291.service",
+      "controller_pid": 1527873,
+      "controls": {
+        "CROSS_V2_PIECES": "1",
+        "CROSS_V2_PIECE_WINDOW": "32",
+        "GOMP_SPINCOUNT": "0",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "4",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PFCK_SPACING": "22",
+        "SS_LCP_SLICE_WINDOW": "64",
+        "XSA_GATE_PACKED_10G": "1",
+        "XSA_RESIDENT_DICT_THREADS": "4",
+        "XSA_RESIDENT_PACKED": "1",
+        "XSA_RESIDENT_RADIX_LANES": "2",
+        "XSA_RESIDENT_RADIX_STEP": "16384",
+        "XSA_RESIDENT_WIDE_DICT": "1"
+      },
+      "exe": "/tmp/overlap-ten-series-2TmYG9/tools/overlap_resident",
+      "pid": 1534309,
+      "same_executable_inode": true,
+      "start_ticks": 557402985
+    },
+    "sink": {
+      "argv": [
+        "/tmp/overlap-ten-series-2TmYG9/tools/pfp_sort_r",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev/in/corpus",
+        "--remap",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev/in/remap",
+        "--threads",
+        "2",
+        "--out-prefix",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev/merged/frag",
+        "--bands",
+        "/dev/shm/xsa-volatile-lagkir_9/bands",
+        "--scratch-budget-bytes",
+        "18727342048"
+      ],
+      "cgroup": "0::/user.slice/user-1001.slice/user@1001.service/app.slice/run-u291.service",
+      "controller_pid": 1527873,
+      "controls": {
+        "CROSS_V2_PIECES": "1",
+        "CROSS_V2_PIECE_WINDOW": "32",
+        "PFCK_SPACING": "22",
+        "SS_LCP_SLICE_WINDOW": "64",
+        "XSA_BATCH_SXLS_ESCAPES": "1",
+        "XSA_GATE_PACKED_10G": "1",
+        "XSA_PRIVATE_SXLS_RECLAIM": "1",
+        "XSA_RESIDENT_RADIX_LANES": "2",
+        "XSA_RESIDENT_RADIX_STEP": "16384",
+        "XSA_TEST_RESIDENT_TRIPLES": "1"
+      },
+      "exe": "/tmp/overlap-ten-series-2TmYG9/tools/pfp_sort_r",
+      "pid": 1554305,
+      "same_executable_inode": true,
+      "start_ticks": 557480655
+    }
+  },
+  "original": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev",
+  "profile": "packed-10g-l2-b1-t4-r1"
+}
