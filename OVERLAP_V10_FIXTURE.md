@@ -126,3 +126,54 @@ both joins against one simultaneous grant. Gate the wide adapter, stop paths,
 all members and boundary queries on small inputs before proposing larger
 work. No prepared-column benchmark, physical-IO result, or speed comparison
 was attempted here.
+
+## Native relay qualification (small fixture only)
+
+Use the historical `tools/target/release` from the build above. The optional
+native archive adds **no production gate switch**. For the tagged run the
+`5a1bb56` binned constructor emits row43 with the pinned `b9f60c1` encoder.
+The real Rust row43 decoder, PieceCutter and slice writer from `b9f60c1` run
+in a **fixture-only sink binary**, asserted external input and exactly
+6,311,445 corpus bytes. Native narrow mode uses the original external sink.
+Both drive the same historical `ctx-tap`, frozen finish and v10 joins.
+
+```sh
+gates/overlap_v10_native_tools.sh "$D/native"
+python3 -B gates/overlap_v10_relay_test.py "$D/native/relay"
+for W in narrow row43; do
+  systemd-run --user --wait --pipe --collect --quiet -p MemoryMax=3G \
+    -p MemorySwapMax=0 -p CPUQuota=200% -p RuntimeMaxSec=300 \
+    python3 "$PWD/gates/overlap_v10_fixture.py" "$D/run-$W" \
+    "$D/tools/target/release" --native-tools "$D/native" --wire "$W"
+done
+```
+
+`relay narrow|row43 CORPUS EXACT_N NEW_BANDS STOP` checks stat extent,
+retains 32,768 untouched 12-byte rows and 32,768 decoded LE u64 positions.
+It validates adjacent LCP bounds, first virtual suffix, unique raw BWT END,
+domain/tag and exact EOF (also exact size for file stdin). It does **not**
+certify a permutation or suffix order by itself. It publishes closed position
+files to a newly created private directory. Credit is exactly one: neither
+next block nor final `end.ready` before both delivery and tap acknowledgement.
+For this input the extra logical position traffic is still 50,491,568 B per
+direction, not an I/O saving. No SA spool. High-bit tests send one synthetic
+block against a sparse metadata-only corpus extent, not a large corpus build.
+
+A supervising fixture is required. To stop, touch `$D/run-$W/stop.requested`.
+Nonblocking pipe operations poll for STOP (50 ms), credit waits check every
+2 ms. Any nonzero child exit, scratch alarm or deadline stops the pipeline,
+signalling protocol interrupt markers and preserving logs, outstanding bands
+and partial output. Peers unable to observe flags get TERM/KILL after grace;
+no supervisor deletes a band's data or manufactures credit. Only the verified
+candidate is renamed `cand.sxi2`. `gates/receipts/v10-relay/stalled.json`
+records a real suspended ctx-tap (`SIGSTOP`, `--stream-timeout 5`): relay
+observed STOP, intact band 0, no consumed/end marker or published candidate.
+
+`gates/receipts/v10-relay/row43.json` records the tagged whole-file equality,
+member IDs, boundary checks, tool digests and cgroup samples. Candidate stream
+wait 6.15 s plus 0.04 s join vs 10.21 s reference wait, from raw small input
+with reference remap reused; not a matched speed or physical I/O benchmark.
+No prepared-columns measurement. No scale authorization: >u32 transport does
+not qualify real wide parse/dictionary/rank construction, tap builder RAM and
+rank-order prefix locality, position-band traffic, simultaneous sink pieces /
+LCP / witness and page-cache lifetimes, or the v10 join peaks detailed above.

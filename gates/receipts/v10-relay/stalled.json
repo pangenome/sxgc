@@ -1,0 +1,12 @@
+{
+  "fault": "SIGSTOP ctx-tap; 5s candidate deadline",
+  "fixture_failure": "TimeoutError: stalled fixture",
+  "relay": "STOP_OBSERVED phase=v10-relay",
+  "tap_files": {
+    "band_0.opened": 0,
+    "band_0.sa": 262144,
+    "producer.interrupted": 0
+  },
+  "product_published": false,
+  "verification_published": false
+}

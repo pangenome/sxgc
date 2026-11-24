@@ -1,0 +1,54 @@
+{
+  "phases": {
+    "reference": {
+      "wait_s": 10.209,
+      "sampled_scratch": 67145728,
+      "sampled_memory": 315707392
+    },
+    "candidate-stream": {
+      "wait_s": 6.153,
+      "sampled_scratch": 69275648,
+      "sampled_memory": 162455552
+    },
+    "candidate-join": {
+      "wait_s": 0.043,
+      "sampled_scratch": 24264704,
+      "sampled_memory": 56303616
+    }
+  },
+  "wire": "row43",
+  "n": 6311445,
+  "rows": 6311446,
+  "verified_equal_bytes": 8847248,
+  "full_sha256": "55eea26f9d735664204fb58f33f7c601477bfbecfb8f34d298e6425ce92bcb07",
+  "members": [
+    1,
+    4,
+    5,
+    7,
+    10,
+    11,
+    12,
+    13,
+    15,
+    20
+  ],
+  "boundary_queries_passed": true,
+  "relay": "relay rows=6311446 bands=193 credit=1",
+  "native_tools": [
+    "5a154f21061d55cfa48b8fc3d8ded5d0bb62c6abd6a105468e07abd6c786d59b  v10_rows",
+    "e5c0b66bc4be56165dc64997ece798473fe5e36d6134ea751a52e9143dba94e4  pfp_sort_r",
+    "703827daf10dc7f75f078268e47598528b491dee9dcbbc5da8caaff238e0797b  relay"
+  ],
+  "frozen_fixture": [
+    "da2a2ad73fa84d77cdbbc97c3abc9f61daa7825dc2fa8f17946aeb065cac195c  pfp_sort_r",
+    "c8d723848a1b79c4c8db3d11b2ada0c9b0cab921b5bddd9ae4253d3cea855ab6  fixture_rows",
+    "cb9b2dc67b5b951bccc2ec7d78b85e05c7660be71e0d292dada83a17353fbb4b  xsa"
+  ],
+  "finish_sha256": "bb929a7092cfeba7faa7c37ca999b71563e3af782d73fe693d1a35f5ecdbaaa9",
+  "sampled_allocated_scratch_peak": 69275648,
+  "service_memory_peak": 318423040,
+  "memory_max": 3221225472,
+  "swap_max": 0,
+  "cpu_quota_percent": 200
+}
