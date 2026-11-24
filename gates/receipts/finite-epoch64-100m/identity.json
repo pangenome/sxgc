@@ -1,0 +1,54 @@
+{
+  "after": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 445432\nuser_usec 360971\nsystem_usec 84461\ncore_sched.force_idle_usec 0\nnr_periods 5\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "181805056",
+    "memory.swap.max": "0"
+  },
+  "before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 130911\nuser_usec 110925\nsystem_usec 19986\ncore_sched.force_idle_usec 0\nnr_periods 1\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "13549568",
+    "memory.swap.max": "0"
+  },
+  "candidate_stat": [
+    66308,
+    2553338459,
+    16421712,
+    1795546589877343361,
+    1795546589877343361
+  ],
+  "control_sha256": "6285d881c12db13a56cee958091a7bb7f42fc8c197e2bd876fee1e3c46d2997c",
+  "control_stat": [
+    66308,
+    33290845351,
+    165974592,
+    1795544432043493311,
+    1795544432043493311
+  ],
+  "last_byte_compared": 16421712,
+  "separate_all_epoch_image_proof": {
+    "per_device_io": null,
+    "read_cap": 232752059,
+    "wall_s": 0.3473900565877557,
+    "worker_cpu_s": 0.313723627,
+    "worker_io": {
+      "read_bytes": 165978112,
+      "write_bytes": 0
+    },
+    "write_cap": 4194304
+  },
+  "slot_sha256": [
+    "ff24f04a9c186bc57b91341f07e8aebc0d73651665cb5f383eed95bca03177eb",
+    "652c29133e691d161cf051d6d3312820da357f5042b764fae71a3c4a17b3239b",
+    "c8b0c42c01a75748222ec6181deddb1663ee66d91aa3b86e3b2e50aec1a6c4c2",
+    "376fc731c6e840344b1d8b461154be69ade57ef1f1453490bbe8f30c841a6fae"
+  ],
+  "verified_bytes": 165974592
+}

@@ -1,0 +1,8 @@
+2357995f2d2ee828a74a7f37f212a0f3308aac90
+g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+Copyright (C) 2023 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+PASS 43 independent complete byte streams/epoch images (13 multi-epoch, 2 mixed interior/tail); predicted pre-open refusals {'epoch walk bound': 5, 'wave exceeds scratch': 6, 'range exceeds slots': 9}; no overwrite, one END, exact seams and stalled STOP after reuse
+EPOCH_PLAN desired_bands=2486 total_wire_upper=169973472 live_posting_cap=50000251 other_reserved=150000755 max_walks=8 array_upper=251389144 conditional_on_wave_fit=1

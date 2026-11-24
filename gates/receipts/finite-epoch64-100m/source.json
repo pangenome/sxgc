@@ -1,0 +1,23 @@
+{
+  "admitted_utc": "2026-11-24T18:55:07+00:00",
+  "artifacts": {
+    "admission.json": "3e34412943d2c03af8351752c60f29eb90ca72d40be1a0f05b6d54feecc59e40",
+    "build-and-test.log": "b0fd579a61067a184edf42686396adab5139f105d2a24f4eaee69462579c7e04",
+    "cold4.json": "e91a57983b9821402cd238e1ffc1ba3ddfd3b41db791748dd03f358d8e1dce59",
+    "emit4.json": "686e292d3b15ef4e6182554eb19af0e2c2ddb31ea39d4700724877f7cd7c670d",
+    "emit4.log": "05186ead1f0c5c56a666a1b2c304dffb507e7abd411741aab9d74d28e6302988",
+    "exits.log": "97b41befba679d2134d1b3ab6c6f81f2ae967278a0fc20191d4d6714a49562f5",
+    "identity.json": "cbfb6d5252732073a102f090d407f60a785f3b3b85569c221feeb1cbfb3d3a30",
+    "oracle4.json": "99fc61c8b4828acf5b6c44323b362477ee520bf49c311a339638c06c30b93fb0",
+    "oracle4.log": "08280269ad6c43f460ba3b80f3d9ed704a4f7294b6a4040199e9a1d81827b684",
+    "pair4.json": "df2e419e440b65296b8bb6251ab5b3c1200b8afa93986b7a5bc3781453933a57",
+    "pair4.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "score.json": "fc87f879608719e016221b6a383b2079e09d158885be494e09f90a2cafbc7cab",
+    "setup.json": "e28b721259bf789eb17104db8556951a786cf7d36543f4a863f7fef23f5f3d45",
+    "tools.json": "e90f327d083f1c7d1ff7a599280c5ca7f4ccdcd39afc6b05cba8d0769279178c"
+  },
+  "launcher": "proc_9060",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/finite-epoch64-100m-7Br6Ro",
+  "rc": 0,
+  "revision": "2357995f2d2ee828a74a7f37f212a0f3308aac90"
+}
