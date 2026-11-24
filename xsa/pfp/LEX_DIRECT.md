@@ -2,6 +2,8 @@
 
 **Small lookup component only.** The original [block-16 lexical codec](LEXICAL_BLOCKS.md) rebuilds a view from the restart before answering a query. That's reasonable when a view is reused for many bytes, not obviously so for the scattered `(word,offset+depth)` probes of a local radix order. The measured 10 GB wire size is not a speed measurement. Do not turn a lookup ratio into a producer or IO projection. `overlap_lex_direct.rs` has a 10,000,000-byte fixture-only builder and no large payload loader or product routing.
 
+**Measured:** the [archived lookup study](../../gates/receipts/lex-lookup-small/) verified every expected symbol. Worse direct/restart scatter wall ratios **0.174 / 0.166 / 0.476** on book/wide/deep; direct/flat **6.732 / 4.494 / 9.859**. On the deep sequential scan direct was 1.812× restart despite the same literal data. This passes the scatter hypothesis, not a flat speed target or a scale gate. Replay receipts, not the timed suite.
+
 ## Invariant and cost
 
 Keep the **same literal suffixes**: at restart, take `p[0]=0`; otherwise `p[i]=lcp(raw[i-1],raw[i])`. Let `l[i]=len[i]-p[i]` and `e[i]=sum(l[0..=i])`, with `e[-1]=0`. Each block stores one width byte, `p[1..n]`, `e[0..n]`, then the concatenated literals (`n<=16`, widths chosen independently per block, unsigned little endian). Use the shortest whole-byte width that fits each maximum, at least one byte. One u64 offset per block plus a final offset; charge two u64 words `k,eof_id` in the direct wire. Assume complete, unique, sorted `(raw,EOF)` records and exactly one tagged record. A tagged duplicate of ordinary raw bytes may have a zero-length literal but not an empty owned stride. No byte value is reserved in the raw data.

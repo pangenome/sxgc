@@ -1,8 +1,10 @@
 """Check the predeclared lookup score and size proof with generated counterexamples; no actual timings."""
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import json
+import shutil
 import unittest
-from overlap_lex_lookup import MIN_QUERIES, MODES, SCHEDULES, score
+from overlap_lex_lookup import MIN_QUERIES, MODES, SCHEDULES, archived, fixed, score
 from overlap_lex_direct_plan import wire
 
 def mock_log():
@@ -40,4 +42,12 @@ class Contract(unittest.TestCase):
             for old,new in [('wall_s=1.5','wall_s=nan'),('max_hops=15','max_hops=14'),('table=flat','table=direct'),('literals=','lit='),('schedule=scan','schedule=head')]:
                 p.write_text(src.replace(old,new,1));
                 with self.assertRaises(RuntimeError):score(p)
+class Closed(unittest.TestCase):
+    def test_actual(self):
+        d=Path(__file__).resolve().parent/'receipts/lex-lookup-small';self.assertEqual(archived(d),fixed.load(d/'score.json'))
+    def test_rehashed_bad_meter(self):
+        with TemporaryDirectory() as tmp:
+            d=Path(tmp)/'receipt';shutil.copytree(Path(__file__).resolve().parent/'receipts/lex-lookup-small',d);m=fixed.load(d/'meter.json');m['after']['memory.swap.max']='max';(d/'meter.json').write_text(json.dumps(m));s=fixed.load(d/'source.json');s['artifacts']['meter.json']=fixed.sha(d/'meter.json');(d/'source.json').write_text(json.dumps(s))
+            with self.assertRaisesRegex(RuntimeError,'grant/OOM'):archived(d)
+
 if __name__=='__main__':unittest.main()

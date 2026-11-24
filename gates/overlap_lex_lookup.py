@@ -60,7 +60,19 @@ def score(path):
     return dict(decks=decks,worst_scatter_direct_over_restart=scatter,worst_direct_over_flat_wall=vs_flat,direct_over_restart_wire=wire_ratio,scatter_hypothesis_met=met,
         all_lookup_workloads_under_2x_flat=largest<2,all_lookup_workloads_under_3x_flat=largest<3,product_promotion=False,scope='warm small resident lookup plus expected-symbol check only; no raw/prepared product clocks, physical locality or scale dispatch')
 
+def archived(d):
+    """Small closed receipts plus published wire arithmetic only. Do not reopen the private run, book or executable."""
+    read=lambda name:fixed.load(d/name)
+    s=read('source.json');names=set('inputs.json build-and-fixtures.log exits.log fixture.sha fixture.log meter.json score.json'.split());orig=Path(s['original_directory'])
+    need(__debug__ and orig.parent==fixed.S and re.fullmatch(PREFIX+'[A-Za-z0-9]{6}',orig.name) and not (d/'stop.requested').exists() and s['artifacts'].keys()==names and all((d/f).is_file() and not (d/f).is_symlink() and (d/f).stat().st_size<=32768 and fixed.sha(d/f)==s['artifacts'][f] for f in names),'archive identity')
+    p=read('inputs.json');m=read('meter.json');rev='1380ca65d118e29dcd32e7bc3893958a812baf78';build=(d/'build-and-fixtures.log').read_text();need(s['exit_code']==0 and p['revision']==s['revision']==rev and build.splitlines()[1]==rev and 'test result: ok. 4 passed; 0 failed;' in build and (d/'exits.log').read_text().strip()=='fixture=0' and re.fullmatch('[0-9a-f]{64}',s['native_sha256']) and (d/'fixture.sha').read_text().split()==[s['native_sha256'],str(orig/'fixture')],'launch/exit/tool')
+    need(p['wire_bound']==ten() and p['deadline']<=fixed.CUTOFF and (p['book_bytes'],p['book_sha256'],p['width'],p['windows'])==(fixed.SIZE,fixed.DIGEST,fixed.WIDTH,fixed.WINDOWS) and m['offsets']==[i*(fixed.SIZE-fixed.WIDTH)//(fixed.WINDOWS-1) for i in range(fixed.WINDOWS)] and (m['sample_bytes'],m['sample_sha256'])==(fixed.WIDTH*fixed.WINDOWS,'09840d8046cb448eb6d9a04d60e85bbe053cfd397b676a9f188c7a925309034c'),'inputs/bounded model')
+    for cg in (m['before'],m['after']):need((cg['memory.max'],cg['cpu.max'],cg['memory.swap.max'])==(str(192<<20),'100000 100000','0') and 0<int(cg['memory.peak'])<=192<<20 and {'oom 0','oom_kill 0'}<=set(cg['memory.events'].splitlines()),'worker grant/OOM')
+    need(m['status']==DONE and m['rc']==0 and m['process']['cpu_s']>0 and m['process']['wchar']==(d/'fixture.log').stat().st_size and m['per_device_io']==fixed.io_delta(fixed.stat_io(m['before']['io.stat']),fixed.stat_io(m['after']['io.stat'])),'worker closure')
+    v=score(d/'fixture.log');need(v==read('score.json') and all(x['traces']['scan']['trace']['literal_hits']==x['geometry']['literals'] for x in v['decks'].values()),'score/exhaustive literal witness');return v
+
 if __name__=='__main__':
-    if len(sys.argv)==3 and sys.argv[1]=='score':print(json.dumps(score(Path(sys.argv[2])),sort_keys=True,indent=2))
+    if len(sys.argv)==3 and sys.argv[1]=='archived':print(json.dumps(archived(Path(sys.argv[2])),sort_keys=True,indent=2))
+    elif len(sys.argv)==3 and sys.argv[1]=='score':print(json.dumps(score(Path(sys.argv[2])),sort_keys=True,indent=2))
     elif len(sys.argv)==4 and sys.argv[1] in ('admit','measure') and re.fullmatch(r'[1-9][0-9]{9}',sys.argv[3]):{'admit':admit,'measure':measure}[sys.argv[1]](Path(sys.argv[2]),int(sys.argv[3]))
     else:raise SystemExit('expected score FIXTURE_LOG or fixed launcher mode')

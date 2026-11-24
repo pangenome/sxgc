@@ -1,0 +1,669 @@
+{
+  "all_lookup_workloads_under_2x_flat": false,
+  "all_lookup_workloads_under_3x_flat": false,
+  "decks": {
+    "book": {
+      "geometry": {
+        "direct": 232907,
+        "flat": 287028,
+        "k": 5928,
+        "literals": 212155,
+        "owned": 192164,
+        "raw": 239580,
+        "restart": 227527
+      },
+      "traces": {
+        "head": {
+          "direct_over_flat_cpu_s": [
+            15.431271461517271,
+            15.350502493385523
+          ],
+          "direct_over_flat_wall_s": [
+            15.431356189132819,
+            15.351087042699216
+          ],
+          "direct_over_restart_cpu_s": [
+            0.39556321317800064,
+            0.39856576403265775
+          ],
+          "direct_over_restart_wall_s": [
+            0.39556385497056673,
+            0.3985655251962274
+          ],
+          "observations": [
+            {
+              "direct": {
+                "cpu_s": 0.031200997,
+                "verified": 1049256,
+                "wall_s": 0.031201014
+              },
+              "flat": {
+                "cpu_s": 0.002021933,
+                "verified": 1049256,
+                "wall_s": 0.002021923
+              },
+              "restart": {
+                "cpu_s": 0.078877398,
+                "verified": 1049256,
+                "wall_s": 0.078877313
+              }
+            },
+            {
+              "direct": {
+                "cpu_s": 0.031173386,
+                "verified": 1049256,
+                "wall_s": 0.031173345
+              },
+              "flat": {
+                "cpu_s": 0.002030773,
+                "verified": 1049256,
+                "wall_s": 0.002030693
+              },
+              "restart": {
+                "cpu_s": 0.078213908,
+                "verified": 1049256,
+                "wall_s": 0.078213852
+              }
+            }
+          ],
+          "trace": {
+            "absent": 0,
+            "cycles": 177,
+            "end": 0,
+            "hops": 42202,
+            "literal_hits": 434,
+            "max_hops": 15,
+            "queries": 5928,
+            "raw": 5928,
+            "restart_headers": 50356,
+            "views": 5928
+          }
+        },
+        "scan": {
+          "direct_over_flat_cpu_s": [
+            4.057005801815617,
+            3.4922692109762012
+          ],
+          "direct_over_flat_wall_s": [
+            4.057255238687202,
+            3.4923852540366163
+          ],
+          "direct_over_restart_cpu_s": [
+            0.6345624973170898,
+            0.6403003538370209
+          ],
+          "direct_over_restart_wall_s": [
+            0.6345589565413183,
+            0.6403031702498578
+          ],
+          "observations": [
+            {
+              "direct": {
+                "cpu_s": 0.003799106,
+                "verified": 1257180,
+                "wall_s": 0.003799015
+              },
+              "flat": {
+                "cpu_s": 0.000936431,
+                "verified": 1257180,
+                "wall_s": 0.000936351
+              },
+              "restart": {
+                "cpu_s": 0.005986969,
+                "verified": 1257180,
+                "wall_s": 0.005986859
+              }
+            },
+            {
+              "direct": {
+                "cpu_s": 0.003793446,
+                "verified": 1257180,
+                "wall_s": 0.003793366
+              },
+              "flat": {
+                "cpu_s": 0.001086241,
+                "verified": 1257180,
+                "wall_s": 0.001086182
+              },
+              "restart": {
+                "cpu_s": 0.005924479,
+                "verified": 1257180,
+                "wall_s": 0.005924328
+              }
+            }
+          ],
+          "trace": {
+            "absent": 11855,
+            "cycles": 5,
+            "end": 1,
+            "hops": 121754,
+            "literal_hits": 212155,
+            "max_hops": 15,
+            "queries": 251436,
+            "raw": 239580,
+            "restart_headers": 50356,
+            "views": 5928
+          }
+        },
+        "scatter": {
+          "direct_over_flat_cpu_s": [
+            5.64144916849256,
+            6.731626079838054
+          ],
+          "direct_over_flat_wall_s": [
+            5.639542642197719,
+            6.731949033179698
+          ],
+          "direct_over_restart_cpu_s": [
+            0.16841952955701534,
+            0.1736819281061295
+          ],
+          "direct_over_restart_wall_s": [
+            0.16841847864285292,
+            0.17368054938004024
+          ],
+          "observations": [
+            {
+              "direct": {
+                "cpu_s": 0.015484503,
+                "verified": 1152984,
+                "wall_s": 0.015484402
+              },
+              "flat": {
+                "cpu_s": 0.002744774,
+                "verified": 1152984,
+                "wall_s": 0.002745684
+              },
+              "restart": {
+                "cpu_s": 0.091940068,
+                "verified": 1152984,
+                "wall_s": 0.091940042
+              }
+            },
+            {
+              "direct": {
+                "cpu_s": 0.015442983,
+                "verified": 1152984,
+                "wall_s": 0.015442842
+              },
+              "flat": {
+                "cpu_s": 0.002294094,
+                "verified": 1152984,
+                "wall_s": 0.002293963
+              },
+              "restart": {
+                "cpu_s": 0.088915313,
+                "verified": 1152984,
+                "wall_s": 0.088915207
+              }
+            }
+          ],
+          "trace": {
+            "absent": 11632,
+            "cycles": 6,
+            "end": 0,
+            "hops": 21812,
+            "literal_hits": 173493,
+            "max_hops": 15,
+            "queries": 192164,
+            "raw": 180532,
+            "restart_headers": 1660032,
+            "views": 192164
+          }
+        }
+      }
+    },
+    "deep": {
+      "geometry": {
+        "direct": 548888,
+        "flat": 2097176,
+        "k": 16384,
+        "literals": 491520,
+        "owned": 1835016,
+        "raw": 1966080,
+        "restart": 532488
+      },
+      "traces": {
+        "head": {
+          "direct_over_flat_cpu_s": [
+            10.984288750919344,
+            10.91291061776999
+          ],
+          "direct_over_flat_wall_s": [
+            10.984499435336334,
+            10.918369041381608
+          ],
+          "direct_over_restart_cpu_s": [
+            0.5491681415476466,
+            0.5468923406646692
+          ],
+          "direct_over_restart_wall_s": [
+            0.5491679900387171,
+            0.5471379910175067
+          ],
+          "observations": [
+            {
+              "direct": {
+                "cpu_s": 0.032632839,
+                "verified": 1048576,
+                "wall_s": 0.032632696
+              },
+              "flat": {
+                "cpu_s": 0.002970865,
+                "verified": 1048576,
+                "wall_s": 0.002970795
+              },
+              "restart": {
+                "cpu_s": 0.059422309,
+                "verified": 1048576,
+                "wall_s": 0.059422065
+              }
+            },
+            {
+              "direct": {
+                "cpu_s": 0.032598119,
+                "verified": 1048576,
+                "wall_s": 0.032612677
+              },
+              "flat": {
+                "cpu_s": 0.002987115,
+                "verified": 1048576,
+                "wall_s": 0.002986955
+              },
+              "restart": {
+                "cpu_s": 0.059606099,
+                "verified": 1048576,
+                "wall_s": 0.059605945
+              }
+            }
+          ],
+          "trace": {
+            "absent": 0,
+            "cycles": 64,
+            "end": 0,
+            "hops": 122880,
+            "literal_hits": 1024,
+            "max_hops": 15,
+            "queries": 16384,
+            "raw": 16384,
+            "restart_headers": 139264,
+            "views": 16384
+          }
+        },
+        "scan": {
+          "direct_over_flat_cpu_s": [
+            8.83494712213227,
+            9.084353257707246
+          ],
+          "direct_over_flat_wall_s": [
+            8.833160083160084,
+            9.08480418040254
+          ],
+          "direct_over_restart_cpu_s": [
+            1.8051496230716915,
+            1.8116363367080794
+          ],
+          "direct_over_restart_wall_s": [
+            1.8051773416752939,
+            1.8116645610139797
+          ],
+          "observations": [
+            {
+              "direct": {
+                "cpu_s": 0.010587995,
+                "verified": 1998848,
+                "wall_s": 0.010587885
+              },
+              "flat": {
+                "cpu_s": 0.001198422,
+                "verified": 1998848,
+                "wall_s": 0.001198652
+              },
+              "restart": {
+                "cpu_s": 0.005865439,
+                "verified": 1998848,
+                "wall_s": 0.005865288
+              }
+            },
+            {
+              "direct": {
+                "cpu_s": 0.010959927,
+                "verified": 1998848,
+                "wall_s": 0.010959826
+              },
+              "flat": {
+                "cpu_s": 0.001206462,
+                "verified": 1998848,
+                "wall_s": 0.001206391
+              },
+              "restart": {
+                "cpu_s": 0.006049739,
+                "verified": 1998848,
+                "wall_s": 0.006049589
+              }
+            }
+          ],
+          "trace": {
+            "absent": 32767,
+            "cycles": 1,
+            "end": 1,
+            "hops": 11796480,
+            "literal_hits": 491520,
+            "max_hops": 15,
+            "queries": 1998848,
+            "raw": 1966080,
+            "restart_headers": 139264,
+            "views": 16384
+          }
+        },
+        "scatter": {
+          "direct_over_flat_cpu_s": [
+            9.168535013089736,
+            9.857079331298063
+          ],
+          "direct_over_flat_wall_s": [
+            9.168118619251677,
+            9.859176469472748
+          ],
+          "direct_over_restart_cpu_s": [
+            0.47579447281269205,
+            0.47537914095008627
+          ],
+          "direct_over_restart_wall_s": [
+            0.4757924196841599,
+            0.47545372591439344
+          ],
+          "observations": [
+            {
+              "direct": {
+                "cpu_s": 0.05336279,
+                "verified": 1835016,
+                "wall_s": 0.053362466
+              },
+              "flat": {
+                "cpu_s": 0.005820209,
+                "verified": 1835016,
+                "wall_s": 0.005820438
+              },
+              "restart": {
+                "cpu_s": 0.112155128,
+                "verified": 1835016,
+                "wall_s": 0.112154931
+              }
+            },
+            {
+              "direct": {
+                "cpu_s": 0.05302259,
+                "verified": 1835016,
+                "wall_s": 0.053030706
+              },
+              "flat": {
+                "cpu_s": 0.005379138,
+                "verified": 1835016,
+                "wall_s": 0.005378817
+              },
+              "restart": {
+                "cpu_s": 0.111537477,
+                "verified": 1835016,
+                "wall_s": 0.11153705
+              }
+            }
+          ],
+          "trace": {
+            "absent": 34523,
+            "cycles": 1,
+            "end": 4,
+            "hops": 10818280,
+            "literal_hits": 448293,
+            "max_hops": 15,
+            "queries": 1835016,
+            "raw": 1800489,
+            "restart_headers": 15597576,
+            "views": 1835016
+          }
+        }
+      }
+    },
+    "wide": {
+      "geometry": {
+        "direct": 1948651,
+        "flat": 2133117,
+        "k": 32768,
+        "literals": 1833939,
+        "owned": 1608813,
+        "raw": 1870949,
+        "restart": 1927708
+      },
+      "traces": {
+        "head": {
+          "direct_over_flat_cpu_s": [
+            9.92963029096015,
+            9.132761219934418
+          ],
+          "direct_over_flat_wall_s": [
+            9.928615889913456,
+            9.133091424840089
+          ],
+          "direct_over_restart_cpu_s": [
+            0.30416557215388107,
+            0.2952170484031704
+          ],
+          "direct_over_restart_wall_s": [
+            0.3041654902443731,
+            0.29460484788690267
+          ],
+          "observations": [
+            {
+              "direct": {
+                "cpu_s": 0.032587299,
+                "verified": 1048576,
+                "wall_s": 0.032587157
+              },
+              "flat": {
+                "cpu_s": 0.003281824,
+                "verified": 1048576,
+                "wall_s": 0.003282145
+              },
+              "restart": {
+                "cpu_s": 0.107136711,
+                "verified": 1048576,
+                "wall_s": 0.107136273
+              }
+            },
+            {
+              "direct": {
+                "cpu_s": 0.032519169,
+                "verified": 1048576,
+                "wall_s": 0.032519057
+              },
+              "flat": {
+                "cpu_s": 0.003560716,
+                "verified": 1048576,
+                "wall_s": 0.003560575
+              },
+              "restart": {
+                "cpu_s": 0.110153425,
+                "verified": 1048576,
+                "wall_s": 0.110381948
+              }
+            }
+          ],
+          "trace": {
+            "absent": 0,
+            "cycles": 32,
+            "end": 0,
+            "hops": 235197,
+            "literal_hits": 2285,
+            "max_hops": 15,
+            "queries": 32768,
+            "raw": 32768,
+            "restart_headers": 278528,
+            "views": 32768
+          }
+        },
+        "scan": {
+          "direct_over_flat_cpu_s": [
+            3.2318971194583286,
+            2.4310329715568226
+          ],
+          "direct_over_flat_wall_s": [
+            3.231285163109046,
+            2.431121991660884
+          ],
+          "direct_over_restart_cpu_s": [
+            0.598229287846595,
+            0.5949264210237745
+          ],
+          "direct_over_restart_wall_s": [
+            0.5982222021964773,
+            0.5949195137612647
+          ],
+          "observations": [
+            {
+              "direct": {
+                "cpu_s": 0.004328357,
+                "verified": 1936485,
+                "wall_s": 0.004328216
+              },
+              "flat": {
+                "cpu_s": 0.001339262,
+                "verified": 1936485,
+                "wall_s": 0.001339472
+              },
+              "restart": {
+                "cpu_s": 0.007235281,
+                "verified": 1936485,
+                "wall_s": 0.007235131
+              }
+            },
+            {
+              "direct": {
+                "cpu_s": 0.004299046,
+                "verified": 1936485,
+                "wall_s": 0.004298936
+              },
+              "flat": {
+                "cpu_s": 0.001768403,
+                "verified": 1936485,
+                "wall_s": 0.001768293
+              },
+              "restart": {
+                "cpu_s": 0.007226181,
+                "verified": 1936485,
+                "wall_s": 0.00722608
+              }
+            }
+          ],
+          "trace": {
+            "absent": 65535,
+            "cycles": 1,
+            "end": 1,
+            "hops": 242749,
+            "literal_hits": 1833939,
+            "max_hops": 15,
+            "queries": 1936485,
+            "raw": 1870949,
+            "restart_headers": 278528,
+            "views": 32768
+          }
+        },
+        "scatter": {
+          "direct_over_flat_cpu_s": [
+            4.494792191201258,
+            4.2971838984778215
+          ],
+          "direct_over_flat_wall_s": [
+            4.494266292509017,
+            4.297417921356436
+          ],
+          "direct_over_restart_cpu_s": [
+            0.16671017133709812,
+            0.1648846872598275
+          ],
+          "direct_over_restart_wall_s": [
+            0.16647907763324157,
+            0.1648701058745922
+          ],
+          "observations": [
+            {
+              "direct": {
+                "cpu_s": 0.027760331,
+                "verified": 1608813,
+                "wall_s": 0.02775982
+              },
+              "flat": {
+                "cpu_s": 0.00617611,
+                "verified": 1608813,
+                "wall_s": 0.006176719
+              },
+              "restart": {
+                "cpu_s": 0.16651852,
+                "verified": 1608813,
+                "wall_s": 0.166746599
+              }
+            },
+            {
+              "direct": {
+                "cpu_s": 0.027617872,
+                "verified": 1608813,
+                "wall_s": 0.027617309
+              },
+              "flat": {
+                "cpu_s": 0.00642697,
+                "verified": 1608813,
+                "wall_s": 0.006426489
+              },
+              "restart": {
+                "cpu_s": 0.167498101,
+                "verified": 1608813,
+                "wall_s": 0.1675095
+              }
+            }
+          ],
+          "trace": {
+            "absent": 67702,
+            "cycles": 1,
+            "end": 1,
+            "hops": 14231,
+            "literal_hits": 1538633,
+            "max_hops": 15,
+            "queries": 1608813,
+            "raw": 1541110,
+            "restart_headers": 13638576,
+            "views": 1608813
+          }
+        }
+      }
+    }
+  },
+  "direct_over_restart_wire": {
+    "book": 1.0236455453638469,
+    "deep": 1.0307988161235557,
+    "wide": 1.010864197274691
+  },
+  "product_promotion": false,
+  "scatter_hypothesis_met": true,
+  "scope": "warm small resident lookup plus expected-symbol check only; no raw/prepared product clocks, physical locality or scale dispatch",
+  "worst_direct_over_flat_wall": {
+    "book": {
+      "head": 15.431356189132819,
+      "scan": 4.057255238687202,
+      "scatter": 6.731949033179698
+    },
+    "deep": {
+      "head": 10.984499435336334,
+      "scan": 9.08480418040254,
+      "scatter": 9.859176469472748
+    },
+    "wide": {
+      "head": 9.928615889913456,
+      "scan": 3.231285163109046,
+      "scatter": 4.494266292509017
+    }
+  },
+  "worst_scatter_direct_over_restart": {
+    "book": 0.17368054938004024,
+    "deep": 0.4757924196841599,
+    "wide": 0.16647907763324157
+  }
+}

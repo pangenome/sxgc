@@ -1,0 +1,66 @@
+DECK shape=book k=5928 raw=239580 owned=192164 literals=212155 flat=287028 restart=227527 direct=232907
+TRACE shape=book schedule=scatter queries=192164 cycles=6 views=192164 restart_headers=1660032 raw=180532 end=0 absent=11632 hops=21812 max_hops=15 literal_hits=173493
+LOOKUP shape=book schedule=scatter rep=0 table=flat verified=1152984 wall_s=0.002745684 cpu_s=0.002744774
+LOOKUP shape=book schedule=scatter rep=0 table=restart verified=1152984 wall_s=0.091940042 cpu_s=0.091940068
+LOOKUP shape=book schedule=scatter rep=0 table=direct verified=1152984 wall_s=0.015484402 cpu_s=0.015484503
+LOOKUP shape=book schedule=scatter rep=1 table=direct verified=1152984 wall_s=0.015442842 cpu_s=0.015442983
+LOOKUP shape=book schedule=scatter rep=1 table=restart verified=1152984 wall_s=0.088915207 cpu_s=0.088915313
+LOOKUP shape=book schedule=scatter rep=1 table=flat verified=1152984 wall_s=0.002293963 cpu_s=0.002294094
+TRACE shape=book schedule=head queries=5928 cycles=177 views=5928 restart_headers=50356 raw=5928 end=0 absent=0 hops=42202 max_hops=15 literal_hits=434
+LOOKUP shape=book schedule=head rep=0 table=flat verified=1049256 wall_s=0.002021923 cpu_s=0.002021933
+LOOKUP shape=book schedule=head rep=0 table=restart verified=1049256 wall_s=0.078877313 cpu_s=0.078877398
+LOOKUP shape=book schedule=head rep=0 table=direct verified=1049256 wall_s=0.031201014 cpu_s=0.031200997
+LOOKUP shape=book schedule=head rep=1 table=direct verified=1049256 wall_s=0.031173345 cpu_s=0.031173386
+LOOKUP shape=book schedule=head rep=1 table=restart verified=1049256 wall_s=0.078213852 cpu_s=0.078213908
+LOOKUP shape=book schedule=head rep=1 table=flat verified=1049256 wall_s=0.002030693 cpu_s=0.002030773
+TRACE shape=book schedule=scan queries=251436 cycles=5 views=5928 restart_headers=50356 raw=239580 end=1 absent=11855 hops=121754 max_hops=15 literal_hits=212155
+LOOKUP shape=book schedule=scan rep=0 table=flat verified=1257180 wall_s=0.000936351 cpu_s=0.000936431
+LOOKUP shape=book schedule=scan rep=0 table=restart verified=1257180 wall_s=0.005986859 cpu_s=0.005986969
+LOOKUP shape=book schedule=scan rep=0 table=direct verified=1257180 wall_s=0.003799015 cpu_s=0.003799106
+LOOKUP shape=book schedule=scan rep=1 table=direct verified=1257180 wall_s=0.003793366 cpu_s=0.003793446
+LOOKUP shape=book schedule=scan rep=1 table=restart verified=1257180 wall_s=0.005924328 cpu_s=0.005924479
+LOOKUP shape=book schedule=scan rep=1 table=flat verified=1257180 wall_s=0.001086182 cpu_s=0.001086241
+DECK shape=wide k=32768 raw=1870949 owned=1608813 literals=1833939 flat=2133117 restart=1927708 direct=1948651
+TRACE shape=wide schedule=scatter queries=1608813 cycles=1 views=1608813 restart_headers=13638576 raw=1541110 end=1 absent=67702 hops=14231 max_hops=15 literal_hits=1538633
+LOOKUP shape=wide schedule=scatter rep=0 table=flat verified=1608813 wall_s=0.006176719 cpu_s=0.006176110
+LOOKUP shape=wide schedule=scatter rep=0 table=restart verified=1608813 wall_s=0.166746599 cpu_s=0.166518520
+LOOKUP shape=wide schedule=scatter rep=0 table=direct verified=1608813 wall_s=0.027759820 cpu_s=0.027760331
+LOOKUP shape=wide schedule=scatter rep=1 table=direct verified=1608813 wall_s=0.027617309 cpu_s=0.027617872
+LOOKUP shape=wide schedule=scatter rep=1 table=restart verified=1608813 wall_s=0.167509500 cpu_s=0.167498101
+LOOKUP shape=wide schedule=scatter rep=1 table=flat verified=1608813 wall_s=0.006426489 cpu_s=0.006426970
+TRACE shape=wide schedule=head queries=32768 cycles=32 views=32768 restart_headers=278528 raw=32768 end=0 absent=0 hops=235197 max_hops=15 literal_hits=2285
+LOOKUP shape=wide schedule=head rep=0 table=flat verified=1048576 wall_s=0.003282145 cpu_s=0.003281824
+LOOKUP shape=wide schedule=head rep=0 table=restart verified=1048576 wall_s=0.107136273 cpu_s=0.107136711
+LOOKUP shape=wide schedule=head rep=0 table=direct verified=1048576 wall_s=0.032587157 cpu_s=0.032587299
+LOOKUP shape=wide schedule=head rep=1 table=direct verified=1048576 wall_s=0.032519057 cpu_s=0.032519169
+LOOKUP shape=wide schedule=head rep=1 table=restart verified=1048576 wall_s=0.110381948 cpu_s=0.110153425
+LOOKUP shape=wide schedule=head rep=1 table=flat verified=1048576 wall_s=0.003560575 cpu_s=0.003560716
+TRACE shape=wide schedule=scan queries=1936485 cycles=1 views=32768 restart_headers=278528 raw=1870949 end=1 absent=65535 hops=242749 max_hops=15 literal_hits=1833939
+LOOKUP shape=wide schedule=scan rep=0 table=flat verified=1936485 wall_s=0.001339472 cpu_s=0.001339262
+LOOKUP shape=wide schedule=scan rep=0 table=restart verified=1936485 wall_s=0.007235131 cpu_s=0.007235281
+LOOKUP shape=wide schedule=scan rep=0 table=direct verified=1936485 wall_s=0.004328216 cpu_s=0.004328357
+LOOKUP shape=wide schedule=scan rep=1 table=direct verified=1936485 wall_s=0.004298936 cpu_s=0.004299046
+LOOKUP shape=wide schedule=scan rep=1 table=restart verified=1936485 wall_s=0.007226080 cpu_s=0.007226181
+LOOKUP shape=wide schedule=scan rep=1 table=flat verified=1936485 wall_s=0.001768293 cpu_s=0.001768403
+DECK shape=deep k=16384 raw=1966080 owned=1835016 literals=491520 flat=2097176 restart=532488 direct=548888
+TRACE shape=deep schedule=scatter queries=1835016 cycles=1 views=1835016 restart_headers=15597576 raw=1800489 end=4 absent=34523 hops=10818280 max_hops=15 literal_hits=448293
+LOOKUP shape=deep schedule=scatter rep=0 table=flat verified=1835016 wall_s=0.005820438 cpu_s=0.005820209
+LOOKUP shape=deep schedule=scatter rep=0 table=restart verified=1835016 wall_s=0.112154931 cpu_s=0.112155128
+LOOKUP shape=deep schedule=scatter rep=0 table=direct verified=1835016 wall_s=0.053362466 cpu_s=0.053362790
+LOOKUP shape=deep schedule=scatter rep=1 table=direct verified=1835016 wall_s=0.053030706 cpu_s=0.053022590
+LOOKUP shape=deep schedule=scatter rep=1 table=restart verified=1835016 wall_s=0.111537050 cpu_s=0.111537477
+LOOKUP shape=deep schedule=scatter rep=1 table=flat verified=1835016 wall_s=0.005378817 cpu_s=0.005379138
+TRACE shape=deep schedule=head queries=16384 cycles=64 views=16384 restart_headers=139264 raw=16384 end=0 absent=0 hops=122880 max_hops=15 literal_hits=1024
+LOOKUP shape=deep schedule=head rep=0 table=flat verified=1048576 wall_s=0.002970795 cpu_s=0.002970865
+LOOKUP shape=deep schedule=head rep=0 table=restart verified=1048576 wall_s=0.059422065 cpu_s=0.059422309
+LOOKUP shape=deep schedule=head rep=0 table=direct verified=1048576 wall_s=0.032632696 cpu_s=0.032632839
+LOOKUP shape=deep schedule=head rep=1 table=direct verified=1048576 wall_s=0.032612677 cpu_s=0.032598119
+LOOKUP shape=deep schedule=head rep=1 table=restart verified=1048576 wall_s=0.059605945 cpu_s=0.059606099
+LOOKUP shape=deep schedule=head rep=1 table=flat verified=1048576 wall_s=0.002986955 cpu_s=0.002987115
+TRACE shape=deep schedule=scan queries=1998848 cycles=1 views=16384 restart_headers=139264 raw=1966080 end=1 absent=32767 hops=11796480 max_hops=15 literal_hits=491520
+LOOKUP shape=deep schedule=scan rep=0 table=flat verified=1998848 wall_s=0.001198652 cpu_s=0.001198422
+LOOKUP shape=deep schedule=scan rep=0 table=restart verified=1998848 wall_s=0.005865288 cpu_s=0.005865439
+LOOKUP shape=deep schedule=scan rep=0 table=direct verified=1998848 wall_s=0.010587885 cpu_s=0.010587995
+LOOKUP shape=deep schedule=scan rep=1 table=direct verified=1998848 wall_s=0.010959826 cpu_s=0.010959927
+LOOKUP shape=deep schedule=scan rep=1 table=restart verified=1998848 wall_s=0.006049589 cpu_s=0.006049739
+LOOKUP shape=deep schedule=scan rep=1 table=flat verified=1998848 wall_s=0.001206391 cpu_s=0.001206462

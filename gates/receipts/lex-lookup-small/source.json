@@ -1,0 +1,16 @@
+{
+  "artifacts": {
+    "build-and-fixtures.log": "f10969fffd236b618e361df4efa9872f9b4e032fc6e3c5a6fe393453214e3ebf",
+    "exits.log": "ac7aa68881eea66b404d4da6b831e8c29c39f513904a604fe612fc1a5c8dbfd8",
+    "fixture.log": "7d124ce5b524ba08feb5b1d66c047403e830fa0c557b962bdcb589dfd846812c",
+    "fixture.sha": "bc3e5c13507e8786989a2f9edccf7467b9d60561c96a698c1edb6e133162d7c8",
+    "inputs.json": "e6481e25fb9870f71d2983e6539f8dab612be3e0432f572e6c36bde80f06678d",
+    "meter.json": "68ed69a83228db2268dd29b8956f1f7d1f08ed4ee5b2194e86773e7dd8b39a6a",
+    "score.json": "e5f606ac2c00bba4f6a2d7d047cee4c37a8e07b7bd939ab7d2ca6de363f338c6"
+  },
+  "exit_code": 0,
+  "launcher": "proc_f082",
+  "native_sha256": "728fdf84ca5ed774e29b9c4ea175d65e57bfa0c79f3ab680986a47f6480b0a5f",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/lex-lookup-small-VkWtyp",
+  "revision": "1380ca65d118e29dcd32e7bc3893958a812baf78"
+}

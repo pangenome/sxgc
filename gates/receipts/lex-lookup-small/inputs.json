@@ -1,0 +1,33 @@
+{
+  "book": "/home/erikg/text/pg64317.txt",
+  "book_bytes": 306317,
+  "book_sha256": "43b101cc636c0214414fb994b71b2180074f3ec0b11d5699e7ce81450688dbd3",
+  "deadline": 1795528065,
+  "parent": 1977417,
+  "profile": "resident single-symbol lookups only; no Pile input",
+  "revision": "1380ca65d118e29dcd32e7bc3893958a812baf78",
+  "width": 3072,
+  "windows": 64,
+  "wire_bound": {
+    "direct_on_measured_10g_dimensions": {
+      "base_min_bytes": 8261040237,
+      "blocks": 14654546,
+      "extra_field_bytes_upper_by_threshold": {
+        "16777216": 0,
+        "256": 454290900,
+        "65536": 3630379
+      },
+      "literals": 7674858399,
+      "wire_upper": 8718961516
+    },
+    "direct_upper_over_uleb": 1.0532309502065416,
+    "hypothetical_ten_times_k_and_literals_same_maxima": {
+      "direct_wire_upper": 87189614888,
+      "pre_order_upper": 120063436080,
+      "room_before_order_in_hypothetical_140gib": 30260419280
+    },
+    "measured_10g_packed": 11942962780,
+    "measured_10g_uleb_wire": 8278299754,
+    "scope": "bounds from portable 10 GB witnesses only. No direct table built at that size, no product grant or 100 GB timing."
+  }
+}
