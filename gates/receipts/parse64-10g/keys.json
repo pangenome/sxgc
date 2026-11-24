@@ -1,0 +1,49 @@
+{
+  "after": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 2487464\nuser_usec 1723805\nsystem_usec 763659\ncore_sched.force_idle_usec 0\nnr_periods 41\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 1127\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "201277440",
+    "memory.swap.max": "0"
+  },
+  "before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 276931\nuser_usec 127968\nsystem_usec 148963\ncore_sched.force_idle_usec 0\nnr_periods 3\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "13701120",
+    "memory.swap.max": "0"
+  },
+  "cold_resident_pages": 0,
+  "private_stats": {
+    "1": [
+      66308,
+      11933285874,
+      2545315904,
+      1795529389545538624,
+      1795529389546538624
+    ],
+    "4": [
+      66308,
+      11933285872,
+      2545315904,
+      1795529384145538999,
+      1795529385981538872
+    ]
+  },
+  "second_copy_hash_cold": {
+    "per_device_io": null,
+    "read_cap": 2813751360,
+    "wall_s": 3.7641506446525455,
+    "worker_cpu_s": 2.12445398,
+    "worker_io": {
+      "read_bytes": 0,
+      "write_bytes": 2545319936
+    },
+    "write_cap": 2813751360
+  },
+  "sha256": "c72eb899c9e4464d23f5c2ad7a01adacf76cfced34f7c95d52e243a8c8c5ba54"
+}

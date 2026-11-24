@@ -1,0 +1,7 @@
+cca298fe03903d7ab88088ce6d29e582c1bf803b
+g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+Copyright (C) 2023 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+PASS 40 exact u64 suffix permutations across 1/4 workers, numeric extrema, lexical offset adapter, separate verifier, grant/refusal and >u32 dimension arithmetic

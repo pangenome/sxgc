@@ -1,0 +1,60 @@
+{
+  "affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "after": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 37593134\nuser_usec 27277506\nsystem_usec 10315628\ncore_sched.force_idle_usec 0\nnr_periods 121\nnr_throttled 31\nthrottled_usec 42004\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "25769803776",
+    "memory.peak": "12771889152",
+    "memory.swap.max": "0"
+  },
+  "argv": [
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/parse64-10g-BTeDWL/parse64",
+    "rank",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/parse64-10g-BTeDWL/keys-4.u64",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/parse64-10g-BTeDWL/inverse-4.u64",
+    "4",
+    "17179869184",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/parse64-10g-BTeDWL/stop.requested",
+    "1795529970"
+  ],
+  "before": {
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 378895\nuser_usec 190947\nsystem_usec 187948\ncore_sched.force_idle_usec 0\nnr_periods 4\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "25769803776",
+    "memory.peak": "14233600",
+    "memory.swap.max": "0"
+  },
+  "io_caps": [
+    2813751360,
+    2813751360
+  ],
+  "per_device_io": null,
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 0,
+    "cpu_s": 37.16,
+    "rchar": 11518,
+    "read_bytes": 2545319936,
+    "syscr": 21,
+    "syscw": 624,
+    "wchar": 2545317023,
+    "write_bytes": 2545328128
+  },
+  "rc": 0,
+  "sampled_rss": 12730671104,
+  "status": "COMPLETED",
+  "stop": null,
+  "wall_s": 11.65179384779185,
+  "whole_dir_sampled_allocated": 10129907712
+}

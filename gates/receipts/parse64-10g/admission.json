@@ -1,0 +1,33 @@
+{
+  "cores": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "counted_upper": 15765130940,
+  "deadline": 1795531002,
+  "immutable_column_sha256": {
+    "dictionary.packed": "2e68e3f5729b3c2d5c6665e5798af447194cb55514c2c9f2f6cfb71ec774fadd",
+    "parse.u32": "a56741994089e273fe11d27dd51ef09b68c04194f23c1bd70a1845a78e677092"
+  },
+  "originals": {
+    "dictionary.packed": [
+      66308,
+      8622678848,
+      11942962780,
+      1795486824470496500,
+      1795486824470496500
+    ],
+    "parse.u32": [
+      66308,
+      8592385746,
+      1272657952,
+      1795486831560496007,
+      1795486831560496007
+    ]
+  },
+  "parent": 2014405,
+  "profile": "all-u64 prepared parse, four then one worker; 10 GB rung only",
+  "rev": "cca298fe03903d7ab88088ce6d29e582c1bf803b"
+}

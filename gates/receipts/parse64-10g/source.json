@@ -1,0 +1,27 @@
+{
+  "artifacts": {
+    "admission.json": "66230f210fe1ce43bff6a25c881dbef29bd037f133579390ba582f0205a17469",
+    "build-and-test.log": "2da453444ba1024b20796857660fb585315c92c08fcfe72ebd04c7b358eaf9e0",
+    "copy.json": "69759938efa4fa17578eed143f7c5a3d01b7e171521387f6af315d8574553f0b",
+    "exits.log": "6de4355b1ee870504f66b8f519b65da999a4435f3242217f2ac75bfa9f8a76f4",
+    "identity1.json": "ce5409342ce332c922e91c0b22a8f987bdcb83d552404f0e3206c5a5f033a90c",
+    "identity4.json": "43cc119a74f46293bf0178a4d5b1dd75742c96e9ff03472c63a84ba2f10253a6",
+    "keys.json": "85ba54e0bae016b581cb2f7f639246c0dad411a96f755e5a23e67363f8a2ae73",
+    "lift.json": "e23c4aca2fd5b21538b83d74090f285c9c6d57aa487eb3d79499d6db609cb9dc",
+    "lift.log": "90229a2cc50315ef3ae3b91e09a08760c4f2319f281ded8c82724ac2e14d1d36",
+    "rank1.json": "c1f4e8abc676852f50bf1afc719d4dd77c0eee0cbf8e59210126b74305160d5b",
+    "rank1.log": "6e7350dedf82f351ad4035c69b0bb2180cf65d2c227ee944860aa524cf2d98df",
+    "rank4.json": "79a4daf4ccdb4b3f9c8c6444942df24fce91b238750e7ee5067bbae090964b46",
+    "rank4.log": "c2015e6173567d81738853d068bf4829fbaa8c5d43618524e2e73d54ceb19f8d",
+    "score.json": "3e05977d201c7afda0487314df9a22bf736154759da687a2c40869660776b37d",
+    "tools.json": "fbb649ba5aa5f70ab63def572844bf62ab7d493fa65cb5bbf9f10caabb2d1fa9",
+    "verify1.json": "481a8befa6908aaa8867a55da87cb32c878312c16fbf4ec0e1febb1824ffa0e1",
+    "verify1.log": "aa57a244306d56eaa3ee4bde6d1416d6e358908bc63fdaf5ed577f3549f38e9e",
+    "verify4.json": "02b73dd22bea92ded7c3bed9c6f8a0aced1bb2aaf2d36063fcfa901edce01099",
+    "verify4.log": "aa57a244306d56eaa3ee4bde6d1416d6e358908bc63fdaf5ed577f3549f38e9e"
+  },
+  "launcher": "proc_63bb",
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/parse64-10g-BTeDWL",
+  "rc": 0,
+  "revision": "cca298fe03903d7ab88088ce6d29e582c1bf803b"
+}

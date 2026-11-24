@@ -1,0 +1,41 @@
+{
+  "arms": {
+    "1": {
+      "cpu_s": 32.94,
+      "peak": 12765814784,
+      "per_device_io": null,
+      "prepared_s": 33.75856725219637,
+      "read_bytes": 2545319936,
+      "sha256": "b2adba88d6bd0bfee923928ba84cb4c9d7bc53eef17a84472fd6965bec8ec89f",
+      "verifier_s": 10.45454294513911,
+      "write_bytes": 2545332224
+    },
+    "4": {
+      "cpu_s": 37.16,
+      "peak": 12771889152,
+      "per_device_io": null,
+      "prepared_s": 11.65179384779185,
+      "read_bytes": 2545319936,
+      "sha256": "b2adba88d6bd0bfee923928ba84cb4c9d7bc53eef17a84472fd6965bec8ec89f",
+      "verifier_s": 10.650671035982668,
+      "write_bytes": 2545328128
+    }
+  },
+  "certified_parse": true,
+  "four_over_one": {
+    "cpu_s": 1.1281117182756526,
+    "prepared_s": 0.34515072161523,
+    "read_bytes": 1.0,
+    "write_bytes": 0.999998390779812
+  },
+  "geometry": {
+    "distinct": 234472723,
+    "keys_above_u32": 203696244,
+    "max_group": 375961,
+    "radix_passes": 5,
+    "rows": 318164488,
+    "unresolved": 99082360
+  },
+  "parallel_goal_met": true,
+  "scope": "prepared 64-bit token keys -> fsynced inverse.u64 only. Verifier and adapter separate; no raw product clock, 100 GB fit or launch."
+}
