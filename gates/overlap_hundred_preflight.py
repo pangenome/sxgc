@@ -116,7 +116,7 @@ def inventory():
                 observed_directories=[hundred, ten], measured_10g_front=c,
                 fixed_100g_bytes=dict(scratch_limit=2*N, bitmap=(N+8)//8, full_sa_tap=8*(N+1),
                                       oracle_pipe_volume=12*(N+1)),
-                missing_evidence=['published_verified_10g_product', 'small_exact_v10_replay',
+                independent_gates_not_scored_by_metadata_inventory=['published_verified_10g_product', 'small_exact_v10_replay',
                                   'wide_parse_and_bounded_dictionary_order', 'bounded_concurrent_tap',
                                   'matched_resource_time_and_verification_plan', 'published_measured_default'],
                 projected_linear_10g_not_100g_measurement=projected(*(10*c[key] for key in ('m','k','D'))))

@@ -1,0 +1,23 @@
+{
+  "before": {
+    "cpu.stat": "usage_usec 51103109788\nuser_usec 5717701899\nsystem_usec 45385407888\ncore_sched.force_idle_usec 0\nnr_periods 502402\nnr_throttled 6\nthrottled_usec 542997\nnr_bursts 0\nburst_usec 0",
+    "memory.max": "268435456",
+    "memory.current": "70361088",
+    "memory.events": "low 0\nhigh 0\nmax 62649\noom 0\noom_kill 0\noom_group_kill 0",
+    "cgroup.events": "populated 1\nfrozen 0",
+    "cgroup.procs": "3749617\n3749622"
+  },
+  "unit": "run-u137.service",
+  "private_run": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/private-pipeline-physical-1795447429450877172",
+  "no_final_exit_pair": true,
+  "old_producer_log": "STOP_OBSERVED where=descriptor-sort exit=75",
+  "time_unix": 1795497669.5482056,
+  "after": {
+    "cpu.stat": "usage_usec 51103114954\nuser_usec 5717702919\nsystem_usec 45385412035\ncore_sched.force_idle_usec 0\nnr_periods 502402\nnr_throttled 6\nthrottled_usec 542997\nnr_bursts 0\nburst_usec 0",
+    "memory.max": "268435456",
+    "memory.current": "70361088",
+    "memory.events": "low 0\nhigh 0\nmax 62649\noom 0\noom_kill 0\noom_group_kill 0",
+    "cgroup.events": "populated 1\nfrozen 1",
+    "cgroup.procs": "3749617\n3749622"
+  }
+}

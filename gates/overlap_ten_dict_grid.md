@@ -11,8 +11,8 @@ bash gates/overlap_ten_dict_grid.sh "$RECEIPT10" "$PAIR1" "$DEADLINE"
 contains `comparison.json` and `batch.json` from `overlap_radix_product.sh
 --include-batch`; speed misses are allowed, incomplete or unverified arms are
 not. The grid refuses rather than waiting for prerequisites. A nonblocking
-grid lock and peer process checks supplement the launcher's obligation to
-reserve exclusive timing. Deadline caps the build, fixtures and systemd worker.
+lock shared with the 10 GB product gate and peer-process checks supplement the launcher's obligation to
+reserve exclusive timing. The deadline caps compilation and fixtures. The worker requests cooperative stop at the next boundary (never a signal inside libsais); admission reserves at least 4,200 seconds.
 Requires Linux cgroup v2, user systemd, GCC/libgomp, local Cargo dependency
 cache and the pinned source `sandbox/packed-front-10g-YebiCY/columns`. Copy,
 private eviction/mincore verification and producer share one 200 GiB, 400%,

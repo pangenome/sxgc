@@ -1,0 +1,19 @@
+{
+  "before_emit_bound": 13224009340,
+  "counted_bound": 13224009340,
+  "finish_bound": 10422409197,
+  "front_limit": 20000000000,
+  "limit": 20000000000,
+  "parts": {
+    "bitmap": 1250000001,
+    "control_margin": 8388608,
+    "ef_spools": 1294231276,
+    "lcp_runs": 2556383072,
+    "pfck": 3636363712,
+    "pieces": 92021280,
+    "retained": 1272657952,
+    "slices": 285215744,
+    "sparse": 27147552
+  },
+  "rule": "retire fresh packed tape before starting consumers"
+}

@@ -1,0 +1,40 @@
+{
+  "cold_input_bytes": 23215620732,
+  "normalized_io_pass": true,
+  "normalized_prepared_io": {
+    "packed-3g-bitmap": {
+      "read_bytes": 1.0154334506219553,
+      "write_bytes": 0.9853545000795267
+    },
+    "packed-raw-1g": {
+      "read_bytes": 0.9554825968097151,
+      "write_bytes": 0.5192944102887433
+    }
+  },
+  "normalized_raw_io": {
+    "packed-3g-bitmap": {
+      "read_bytes": 1.0164730571925213,
+      "write_bytes": 0.9645387482349628
+    },
+    "packed-raw-1g": {
+      "read_bytes": 0.973602712836945,
+      "write_bytes": 0.7279471346649513
+    }
+  },
+  "normalized_wall": {
+    "packed-3g-bitmap": {
+      "raw_to_product_s": 1.8343806927748856,
+      "wall_s": 1.872865093068001
+    },
+    "packed-raw-1g": {
+      "raw_to_product_s": 2.2289162141187147,
+      "wall_s": 2.298916890421098
+    }
+  },
+  "normalized_write_ratio_vs_wide_disk": 0.18385010439067195,
+  "prepared_read_bytes": 23853682688,
+  "prepared_write_bytes": 17762623488,
+  "promotion_under_3x": true,
+  "relative_to": "normalized cross-rung, not same-text A/B; v8 profile, rung-specific frozen finish/remap",
+  "target_under_2x": false
+}
