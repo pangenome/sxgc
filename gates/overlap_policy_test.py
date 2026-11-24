@@ -4,11 +4,15 @@ import subprocess as sp
 import sys, select as poll
 from tempfile import TemporaryDirectory
 from overlap_resident_gate import release_unowned_pipe
+from overlap_timing_idle import worker_name
 import unittest
 from overlap_published import published_main
 from overlap_scaling_policy import select
 
 class PolicyTest(unittest.TestCase):
+    def test_actual_worker_not_shell_code(self):
+        for args in [['bash','-c','git show gates/a; diff bin/overlap_resident'],['rg','something','gates/overlap_radix_product.sh'],['python3','-c','print(1)','# /overlap_resident']]:self.assertIsNone(worker_name(args))
+        for args in [['bash','-e','--','gates/overlap_ten_product.sh'],['/tmp/tool/overlap_resident','columns'],['/usr/bin/python3','-B','/gates/overlap_resident_gate.py','build']]:self.assertIsNotNone(worker_name(args))
     def test_non_deadline_stop_unblocks_unowned_full_pipe(self):
         with TemporaryDirectory() as tmp:
             flag=Path(tmp)/'stop.requested'
