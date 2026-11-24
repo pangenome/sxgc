@@ -1,0 +1,3 @@
+PASS exact fixture census, cells, forced collision/segmented merge, limits and cleanup
+PASS all 65,792 descriptor cells vs independent little-endian hash; EOF, same-word end tag, split buffer, malformed, stop and exact-rung refusals
+PASS brute contiguous capacities at 1..6 cells, occurrence/descriptor separation, limits and packed-space model

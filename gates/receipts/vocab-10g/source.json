@@ -1,0 +1,22 @@
+{
+  "artifacts": {
+    "binaries.log": "6259e6b06d10246b682e3e12eaa70c368ab6549fd36fed04f9fb265602da9288",
+    "census.out": "016f755ff8cc72863dac5daa182a502c70a830af1df5828f3d20bec6691e542d",
+    "exits.log": "dfcf8e1d0063d1a918d9f8c382b40fb7ac1590c836eb44344eb077dce083e026",
+    "fixtures.log": "997ecc5cad5997bb5668fcc2e1758ececb48c5adc15da8d3bd534de36e7f5237",
+    "front.json": "06073498eaea0b0602c9af17be03699d8ee139acf624a331aad77c2c22c1417e",
+    "inputs.json": "926f81e2b5f97323500789fa5e4517cb114feeaba85ec0aa8c200706a604927b",
+    "model.json": "02b3be9cf269b5654a3bc6f533bdc48fd280a0e1a54617bc4fafacf473602bcc",
+    "reference.out": "8899714b2a16c4459f19acfc9f852d7c1ede32228f738851b60133dfab65185f",
+    "verify.json": "dc9e36b2283551bcf0ee49deace50a422dfc7abf2ba6d7fe1cc38f4c3afdc09e"
+  },
+  "launcher_rc": 0,
+  "native": {
+    "census": "4d311bbb5ce56c15f08ad580635cdca7d98c1db46a97a9c81e39439047c04996",
+    "reference": "a3bcb5afffd1932c3d7c9d34c106c4b28cd0f13e996e3acd6ec5f604f5e80ec2"
+  },
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/vocab-10g-CsiXpF",
+  "process": "proc_bebf",
+  "revision": "1fdfcf597f04eda50c1e2a66ab6f9162f85e09db",
+  "scope": "fixed 10 GB exact distinct census and independent immutable-tape reference, no product"
+}

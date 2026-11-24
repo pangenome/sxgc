@@ -1,0 +1,33 @@
+{
+  "banked_tape": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-front-10g-YebiCY/columns/dictionary.packed",
+  "deadline": 1795521427,
+  "plan": {
+    "counted_bound": 16635919512,
+    "counted_limit": 20000000000,
+    "created_segments_upper": 3444,
+    "first_pass_bytes": 13817973848,
+    "logical_peak_upper": 16631725208,
+    "logical_scratch_traffic_upper": 125815686208,
+    "max_raw_segments_per_bucket": 414,
+    "merge_levels_upper": 3,
+    "one_count_run_pass_upper": 16363289752,
+    "small_control_reserve": 4194304
+  },
+  "raw": "/mnt/nvme2n1/erikg/pf-10gb.txt",
+  "raw_sha256": "178f411b196e6741c473b4bbf442086bc64e8c4ae102359fc3c0e3f17a12085d",
+  "revision": "1fdfcf597f04eda50c1e2a66ab6f9162f85e09db",
+  "source_stat": [
+    66308,
+    31764165843,
+    10000000000,
+    1792357584906949472,
+    1792357584906949472
+  ],
+  "tape_stat": [
+    66308,
+    8622678848,
+    11942962780,
+    1795486824470496500,
+    1795486824470496500
+  ]
+}

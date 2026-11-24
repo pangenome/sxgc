@@ -1,0 +1,593 @@
+{
+  "D": 11239544612,
+  "comparison_to_140_gib_only": {
+    "emit_over_budget": 0,
+    "emit_room_for_whole_arena": 126691819364,
+    "six_k_and_pre_emit_phases_fit": true
+  },
+  "descriptors": 9129290112,
+  "distinct_cells_sha256": "9dd335deb9aee14fdfe112d1821da41953cea1542c747b135855f9a6c3a14b5e",
+  "heap_bytes_upper_without_windows": 4249429240,
+  "hypothetical_8byte_descriptor_arenas": {
+    "1073741824": null,
+    "17179869184": {
+      "max_text_rows": 2351841077,
+      "range_count": 5,
+      "ranges_first_last_descriptors_rows": [
+        [
+          31,
+          12901,
+          2147336069,
+          2351841077
+        ],
+        [
+          12902,
+          26067,
+          2089433482,
+          2296860760
+        ],
+        [
+          26068,
+          28381,
+          2136030929,
+          2334868685
+        ],
+        [
+          28382,
+          30172,
+          2145757027,
+          2350214577
+        ],
+        [
+          30173,
+          62852,
+          610732605,
+          666214901
+        ]
+      ]
+    },
+    "2147483648": {
+      "max_text_rows": 302524015,
+      "range_count": 38,
+      "ranges_first_last_descriptors_rows": [
+        [
+          31,
+          8255,
+          110635325,
+          123274111
+        ],
+        [
+          8257,
+          8274,
+          263920925,
+          302524015
+        ],
+        [
+          8275,
+          8321,
+          204857038,
+          223009793
+        ],
+        [
+          8322,
+          8325,
+          262028342,
+          284568866
+        ],
+        [
+          8326,
+          8333,
+          233758154,
+          252498432
+        ],
+        [
+          8334,
+          8339,
+          213216550,
+          231649025
+        ],
+        [
+          8340,
+          8343,
+          252473255,
+          273689971
+        ],
+        [
+          8344,
+          11339,
+          247192040,
+          271009907
+        ],
+        [
+          11341,
+          12367,
+          264904612,
+          287385727
+        ],
+        [
+          12369,
+          16778,
+          268297116,
+          294556627
+        ],
+        [
+          16779,
+          21447,
+          267878576,
+          298834978
+        ],
+        [
+          21448,
+          25035,
+          268067879,
+          296635742
+        ],
+        [
+          25036,
+          25044,
+          228156374,
+          248735935
+        ],
+        [
+          25045,
+          25540,
+          255018531,
+          279542778
+        ],
+        [
+          25541,
+          25731,
+          196891279,
+          217326974
+        ],
+        [
+          25733,
+          25988,
+          242458765,
+          264432942
+        ],
+        [
+          25990,
+          26054,
+          248978169,
+          271758351
+        ],
+        [
+          26055,
+          26067,
+          208036621,
+          227267663
+        ],
+        [
+          26068,
+          26073,
+          250461053,
+          273309657
+        ],
+        [
+          26074,
+          26572,
+          257476844,
+          282314997
+        ],
+        [
+          26573,
+          26829,
+          150885020,
+          163982464
+        ],
+        [
+          26830,
+          27085,
+          255282550,
+          278358536
+        ],
+        [
+          27086,
+          27097,
+          263930653,
+          289709468
+        ],
+        [
+          27098,
+          27854,
+          268426570,
+          293792775
+        ],
+        [
+          27855,
+          28114,
+          250858370,
+          274522694
+        ],
+        [
+          28115,
+          28370,
+          260116377,
+          284106162
+        ],
+        [
+          28371,
+          28386,
+          223913417,
+          244669850
+        ],
+        [
+          28387,
+          28637,
+          256747580,
+          280969469
+        ],
+        [
+          28638,
+          28646,
+          258719488,
+          283700230
+        ],
+        [
+          28647,
+          29395,
+          253463863,
+          277927496
+        ],
+        [
+          29396,
+          29413,
+          257148424,
+          282095417
+        ],
+        [
+          29414,
+          29656,
+          247730276,
+          268956651
+        ],
+        [
+          29657,
+          29843,
+          218537931,
+          239504804
+        ],
+        [
+          29845,
+          29916,
+          224133705,
+          245445796
+        ],
+        [
+          29917,
+          29926,
+          259974351,
+          284874046
+        ],
+        [
+          29927,
+          30423,
+          261587043,
+          287577636
+        ],
+        [
+          30424,
+          31208,
+          265395146,
+          289313038
+        ],
+        [
+          31209,
+          62852,
+          207731900,
+          226166977
+        ]
+      ]
+    },
+    "268435456": null,
+    "4294967296": {
+      "max_text_rows": 589804137,
+      "range_count": 18,
+      "ranges_first_last_descriptors_rows": [
+        [
+          31,
+          8307,
+          525761782,
+          589804137
+        ],
+        [
+          8308,
+          8332,
+          524153898,
+          569016493
+        ],
+        [
+          8333,
+          8343,
+          490973909,
+          532393583
+        ],
+        [
+          8344,
+          12385,
+          533736075,
+          582103094
+        ],
+        [
+          12386,
+          21692,
+          530868110,
+          588555595
+        ],
+        [
+          21693,
+          25045,
+          521812080,
+          571839224
+        ],
+        [
+          25046,
+          25797,
+          530830331,
+          582459196
+        ],
+        [
+          25798,
+          26065,
+          531851054,
+          581567864
+        ],
+        [
+          26066,
+          26502,
+          501582444,
+          548929742
+        ],
+        [
+          26504,
+          27093,
+          526512219,
+          573273562
+        ],
+        [
+          27094,
+          27861,
+          525309607,
+          575959571
+        ],
+        [
+          27862,
+          28371,
+          511278991,
+          558725422
+        ],
+        [
+          28372,
+          28641,
+          528242283,
+          578814682
+        ],
+        [
+          28642,
+          29399,
+          455387198,
+          498465069
+        ],
+        [
+          29400,
+          29660,
+          513784621,
+          560978638
+        ],
+        [
+          29661,
+          29917,
+          518315805,
+          567172743
+        ],
+        [
+          29918,
+          30694,
+          531899162,
+          583557198
+        ],
+        [
+          30695,
+          62852,
+          326990543,
+          356384187
+        ]
+      ]
+    }
+  },
+  "k": 234472723,
+  "largest_descriptor_cell": [
+    25990,
+    212471462,
+    231078052
+  ],
+  "largest_row_cell": [
+    25990,
+    212471462,
+    231078052
+  ],
+  "lexical_codec_and_navigation": {
+    "lexical_blocks": {
+      "16": {
+        "directory": 117236376,
+        "literal_bytes": 7674858399,
+        "max_block_bytes": 89135,
+        "measured_dimensions_model": {
+          "adjusted_byte_plcp": 477246776,
+          "alignment_with_ids_no_SA": 12520175466,
+          "arrays_compare_gib": 140,
+          "build_psi_before_dictionary": 5514533576,
+          "emit_before_order": 11565682010,
+          "heads": 205163672,
+          "lexical_payload_and_directory": 8278299754,
+          "old_packed_T": 11942962780,
+          "parse_4k_no_dict": 13866416896,
+          "parse_6k_no_dict": 17617980464,
+          "predecessor_bytes": 318164488,
+          "preorder_room": 138758173350,
+          "psi": 1272657952,
+          "rank_block_tree": 318164496,
+          "rank_sample_extent_ok": true,
+          "sample_b8": 218738096,
+          "starts": 477246776
+        },
+        "payload": 8161063378,
+        "tenfold_sensitivity_only": {
+          "adjusted_byte_plcp": 4772467360,
+          "alignment_with_ids_no_SA": 125201753236,
+          "arrays_compare_gib": 140,
+          "build_psi_before_dictionary": 55145335272,
+          "emit_before_order": 115656818596,
+          "heads": 2051636328,
+          "lexical_payload_and_directory": 82782997404,
+          "old_packed_T": 119429627872,
+          "parse_4k_no_dict": 138664168960,
+          "parse_6k_no_dict": 176179804640,
+          "predecessor_bytes": 3181644880,
+          "preorder_room": 34667036764,
+          "psi": 12726579520,
+          "rank_block_tree": 3181644880,
+          "rank_sample_extent_ok": true,
+          "sample_b8": 2187380864,
+          "starts": 4772467360
+        }
+      },
+      "4": {
+        "directory": 468945456,
+        "literal_bytes": 8340902130,
+        "max_block_bytes": 88582,
+        "measured_dimensions_model": {
+          "adjusted_byte_plcp": 477246776,
+          "alignment_with_ids_no_SA": 13497784457,
+          "arrays_compare_gib": 140,
+          "build_psi_before_dictionary": 5514533576,
+          "emit_before_order": 12543291001,
+          "heads": 205163672,
+          "lexical_payload_and_directory": 9255908745,
+          "old_packed_T": 11942962780,
+          "parse_4k_no_dict": 13866416896,
+          "parse_6k_no_dict": 17617980464,
+          "predecessor_bytes": 318164488,
+          "preorder_room": 137780564359,
+          "psi": 1272657952,
+          "rank_block_tree": 318164496,
+          "rank_sample_extent_ok": true,
+          "sample_b8": 218738096,
+          "starts": 477246776
+        },
+        "payload": 8786963289,
+        "tenfold_sensitivity_only": {
+          "adjusted_byte_plcp": 4772467360,
+          "alignment_with_ids_no_SA": 134977843194,
+          "arrays_compare_gib": 140,
+          "build_psi_before_dictionary": 55145335272,
+          "emit_before_order": 125432908554,
+          "heads": 2051636328,
+          "lexical_payload_and_directory": 92559087362,
+          "old_packed_T": 119429627872,
+          "parse_4k_no_dict": 138664168960,
+          "parse_6k_no_dict": 176179804640,
+          "predecessor_bytes": 3181644880,
+          "preorder_room": 24890946806,
+          "psi": 12726579520,
+          "rank_block_tree": 3181644880,
+          "rank_sample_extent_ok": true,
+          "sample_b8": 2187380864,
+          "starts": 4772467360
+        }
+      },
+      "8": {
+        "directory": 234472736,
+        "literal_bytes": 7896869035,
+        "max_block_bytes": 88800,
+        "measured_dimensions_model": {
+          "adjusted_byte_plcp": 477246776,
+          "alignment_with_ids_no_SA": 12846041288,
+          "arrays_compare_gib": 140,
+          "build_psi_before_dictionary": 5514533576,
+          "emit_before_order": 11891547832,
+          "heads": 205163672,
+          "lexical_payload_and_directory": 8604165576,
+          "old_packed_T": 11942962780,
+          "parse_4k_no_dict": 13866416896,
+          "parse_6k_no_dict": 17617980464,
+          "predecessor_bytes": 318164488,
+          "preorder_room": 138432307528,
+          "psi": 1272657952,
+          "rank_block_tree": 318164496,
+          "rank_sample_extent_ok": true,
+          "sample_b8": 218738096,
+          "starts": 477246776
+        },
+        "payload": 8369692840,
+        "tenfold_sensitivity_only": {
+          "adjusted_byte_plcp": 4772467360,
+          "alignment_with_ids_no_SA": 128460411472,
+          "arrays_compare_gib": 140,
+          "build_psi_before_dictionary": 55145335272,
+          "emit_before_order": 118915476832,
+          "heads": 2051636328,
+          "lexical_payload_and_directory": 86041655640,
+          "old_packed_T": 119429627872,
+          "parse_4k_no_dict": 138664168960,
+          "parse_6k_no_dict": 176179804640,
+          "predecessor_bytes": 3181644880,
+          "preorder_room": 31408378528,
+          "psi": 12726579520,
+          "rank_block_tree": 3181644880,
+          "rank_sample_extent_ok": true,
+          "sample_b8": 2187380864,
+          "starts": 4772467360
+        }
+      }
+    },
+    "scope": "Only wire sizes at original dimensions are exact. Modeled payloads exclude orderer, heaps, buffers, stacks, allocator and consumers. No large compressed loader/producer, no time or launch claim."
+  },
+  "m": 318164488,
+  "minimum_whole_cell_capacity_by_range_limit": {
+    "16": {
+      "descriptor_slots": 581649719,
+      "max_text_rows": 648807919,
+      "payload_bytes": 4653197752,
+      "range_count": 16
+    },
+    "31": {
+      "descriptor_slots": 320270500,
+      "max_text_rows": 361956376,
+      "payload_bytes": 2562164000,
+      "range_count": 31
+    },
+    "63": {
+      "descriptor_slots": 212471462,
+      "max_text_rows": 238682265,
+      "payload_bytes": 1699771696,
+      "range_count": 50
+    },
+    "8": {
+      "descriptor_slots": 1155096684,
+      "max_text_rows": 1274126532,
+      "payload_bytes": 9240773472,
+      "range_count": 8
+    }
+  },
+  "n": 10000000000,
+  "native_dictionary_sa_alone": 89916356896,
+  "note": "Measured census inputs, modeled ranges/space. Payload excludes heap, stack, classification passes, allocator/consumers. Range caps are not actual equal-key or rank-window work. 140 GiB is the 10 GB array comparison, not a new grant. No product dispatch.",
+  "old_bounded_phase_array_model": {
+    "aux_alignment": 24603132028,
+    "emit_before_arena": 23632035996,
+    "lists": 28722667812,
+    "parse_wide_four_k_alternative": 13866416896,
+    "parse_wide_six_k": 17617980464
+  },
+  "packed_bytes": 11942962780,
+  "packed_widths": {
+    "bounded_m_fits": true,
+    "old_parse_extent_fits_i32": true,
+    "parse_sort_extent": 1725000826
+  },
+  "parse_u32_bytes": 1272657952,
+  "prefix_cell_encoding": "raw_first*257+second: END=0, raw+1; global END separate",
+  "row_cells_sha256": "786d44073b3c562a47f8bc10fc64e0c2db7480bbc686ea65971101bce1402a90"
+}

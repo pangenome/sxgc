@@ -1,0 +1,59 @@
+{
+  "model_sha256": "02b3be9cf269b5654a3bc6f533bdc48fd280a0e1a54617bc4fafacf473602bcc",
+  "packed_tape_sha256": "2e68e3f5729b3c2d5c6665e5798af447194cb55514c2c9f2f6cfb71ec774fadd",
+  "product": false,
+  "reference": {
+    "after": {
+      "cpu.max": "100000 100000",
+      "cpu.stat": "usage_usec 30752991\nuser_usec 28246509\nsystem_usec 2506482\ncore_sched.force_idle_usec 0\nnr_periods 315\nnr_throttled 2\nthrottled_usec 35\nnr_bursts 0\nburst_usec 0",
+      "io.stat": null,
+      "memory.events": "low 0\nhigh 0\nmax 44870\noom 0\noom_kill 0\noom_group_kill 0",
+      "memory.max": "201326592",
+      "memory.peak": "201326592",
+      "memory.swap.max": "0"
+    },
+    "argv": [
+      "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/vocab-10g-CsiXpF/reference",
+      "--ten-reference",
+      "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-front-10g-YebiCY/columns/dictionary.packed",
+      "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/vocab-10g-CsiXpF/stop.requested",
+      "1795521427"
+    ],
+    "before": {
+      "cpu.max": "100000 100000",
+      "cpu.stat": "usage_usec 111862\nuser_usec 85894\nsystem_usec 25968\ncore_sched.force_idle_usec 0\nnr_periods 2\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+      "io.stat": null,
+      "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "memory.max": "201326592",
+      "memory.peak": "20516864",
+      "memory.swap.max": "0"
+    },
+    "device_io": null,
+    "peak_sampled_rss": 9342976,
+    "process": {
+      "RssAnon": 0,
+      "VmHWM": 0,
+      "VmRSS": 0,
+      "cancelled_write_bytes": 0,
+      "cpu_s": 30.58,
+      "rchar": 11942982626,
+      "read_bytes": 11942961152,
+      "syscr": 11411,
+      "syscw": 1,
+      "wchar": 584,
+      "write_bytes": 4096
+    },
+    "rc": 0,
+    "rw_caps": [
+      12010071644,
+      67108864
+    ],
+    "sampled_bucket_allocated": 0,
+    "sampled_bucket_logical": 0,
+    "scans": 0,
+    "stop": null,
+    "wall_s": 31.31468195654452
+  },
+  "reference_cold_claim": false,
+  "status": "VERIFIED_10G_VOCABULARY_ONLY"
+}

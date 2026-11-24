@@ -1,0 +1,111 @@
+{
+  "census": {
+    "after": {
+      "cpu.max": "100000 100000",
+      "cpu.stat": "usage_usec 228939407\nuser_usec 202985278\nsystem_usec 25954129\ncore_sched.force_idle_usec 0\nnr_periods 2444\nnr_throttled 128\nthrottled_usec 343061\nnr_bursts 0\nburst_usec 0",
+      "io.stat": null,
+      "memory.events": "low 0\nhigh 0\nmax 92768\noom 0\noom_kill 0\noom_group_kill 0",
+      "memory.max": "201326592",
+      "memory.peak": "201326592",
+      "memory.swap.max": "0"
+    },
+    "argv": [
+      "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/vocab-10g-CsiXpF/census",
+      "--internal-calibrate-10g",
+      "1795520563"
+    ],
+    "before": {
+      "cpu.max": "100000 100000",
+      "cpu.stat": "usage_usec 11086459\nuser_usec 6874711\nsystem_usec 4211747\ncore_sched.force_idle_usec 0\nnr_periods 172\nnr_throttled 1\nthrottled_usec 233591\nnr_bursts 0\nburst_usec 0",
+      "io.stat": null,
+      "memory.events": "low 0\nhigh 0\nmax 9368\noom 0\noom_kill 0\noom_group_kill 0",
+      "memory.max": "201326592",
+      "memory.peak": "201318400",
+      "memory.swap.max": "0"
+    },
+    "device_io": null,
+    "peak_sampled_rss": 51138560,
+    "process": {
+      "RssAnon": 0,
+      "VmHWM": 0,
+      "VmRSS": 0,
+      "cancelled_write_bytes": 7655878656,
+      "cpu_s": 217.4,
+      "rchar": 37847300810,
+      "read_bytes": 23767887872,
+      "syscr": 1866412,
+      "syscw": 850275,
+      "wchar": 27847756363,
+      "write_bytes": 27849408512
+    },
+    "rc": 0,
+    "rw_caps": [
+      160000000000,
+      160000000000
+    ],
+    "sampled_bucket_allocated": 17163485184,
+    "sampled_bucket_logical": 13818865696,
+    "scans": 57,
+    "stop": null,
+    "wall_s": 227.24964618310332
+  },
+  "copy_cold": {
+    "per_device_io": null,
+    "read_cap": 10067108864,
+    "wall_s": 16.01698254235089,
+    "worker_cpu_s": 10.555761162,
+    "worker_io": {
+      "read_bytes": 0,
+      "write_bytes": 10000003072
+    },
+    "write_cap": 10067108864
+  },
+  "counted_peak_plus_control": 13823060000,
+  "distinct_digest": "9dd335deb9aee14fdfe112d1821da41953cea1542c747b135855f9a6c3a14b5e",
+  "mincore_resident_pages": 0,
+  "out_sha256": "016f755ff8cc72863dac5daa182a502c70a830af1df5828f3d20bec6691e542d",
+  "private_bytes": 10000000000,
+  "private_stat": [
+    66308,
+    25772348140,
+    10000000000,
+    1795519363381235349,
+    1795519363382235349
+  ],
+  "product": false,
+  "raw_sha256": "178f411b196e6741c473b4bbf442086bc64e8c4ae102359fc3c0e3f17a12085d",
+  "row_digest": "786d44073b3c562a47f8bc10fc64e0c2db7480bbc686ea65971101bce1402a90",
+  "status": "RAW_CENSUS_COMPARED",
+  "summary": {
+    "D": 11239544612,
+    "U": 9129290112,
+    "alphabet": 243,
+    "buckets": 256,
+    "eof_raw_length": 80,
+    "eof_start": 9999999920,
+    "files": 1245,
+    "global_end_rows": 1,
+    "k": 234472723,
+    "largest_bucket_bytes": 59623851,
+    "m": 318164488,
+    "max_owned_stride": 88460,
+    "max_phrase": 88468,
+    "merge_input_records": 240487083,
+    "merge_levels": 1,
+    "merge_output_records": 234472723,
+    "merge_reduce_us": 25463856,
+    "n": 10000000000,
+    "nonempty_buckets": 256,
+    "peak": 13818865696,
+    "raw_segments": 512,
+    "scan_us": 91719324,
+    "scratch_read": 27847294120,
+    "scratch_write": 27847294120,
+    "segment": 33554432,
+    "segment_sort_reduce_us": 108883277,
+    "single_segment_buckets": 0,
+    "sort_compare_calls": 7510238367,
+    "starts_above_u32": 181581998,
+    "tape": 11942962780
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "actual_10g": {
+    "D": 11239544612,
+    "U": 9129290112,
+    "census_s": 227.24964618310332,
+    "compact_bytes_if_20_per_cursor_for_one_largest_finite_group": 10920840,
+    "copy_cold_s": 16.01698254235089,
+    "counted_scratch_with_margin": 13823060000,
+    "finite_groups": 7385616097,
+    "k": 234472723,
+    "largest_finite_group_descriptors": 546042,
+    "largest_two_code_descriptor_cell": [
+      25990,
+      212471462,
+      231078052
+    ],
+    "logical_scratch_read_plus_write": 55694588240,
+    "m": 318164488,
+    "minimum_largest_group_windows_if_8192_cursors": 67,
+    "n": 10000000000,
+    "separate_reference_s": 31.31468195654452,
+    "singleton_group_lower": 5641942082
+  },
+  "certain_partition_work_at_100g_if_same_census": {
+    "min_merge_levels": 2,
+    "min_segments_in_largest_bucket": 17,
+    "raw_bytes_in_buckets_needing_multilevel_at_least": 69456537112
+  },
+  "codec": {
+    "16": {
+      "exact_wire_bytes_this_tape": 8278299754,
+      "tenfold_only_emit_before_order_bytes": 115656818596,
+      "tenfold_only_room_in_140gib_before_order_bytes": 34667036764
+    },
+    "4": {
+      "exact_wire_bytes_this_tape": 9255908745,
+      "tenfold_only_emit_before_order_bytes": 125432908554,
+      "tenfold_only_room_in_140gib_before_order_bytes": 24890946806
+    },
+    "8": {
+      "exact_wire_bytes_this_tape": 8604165576,
+      "tenfold_only_emit_before_order_bytes": 118915476832,
+      "tenfold_only_room_in_140gib_before_order_bytes": 31408378528
+    }
+  },
+  "profile_for_measured_tie": "packed-10g-l2-b1-t4-r1",
+  "scope": "verified 10 GB component; scaled working sets and cursor costs are models, no 100 GB vocabulary, fit or time verdict"
+}
