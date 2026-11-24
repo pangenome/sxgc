@@ -2,7 +2,11 @@
 #[path = "../overlap_min.rs"]
 mod min;
 #[path = "../overlap_range_order.rs"]
-mod range;
+mod overlap_range_order;
+use overlap_range_order as range;
+#[allow(dead_code)]
+#[path = "../overlap_compact_order.rs"]
+mod compact;
 #[path = "../overlap_row43.rs"]
 mod row43;
 #[allow(dead_code)]
@@ -43,7 +47,7 @@ struct Packed {
 }
 impl Packed {
     // Compact forward in the original allocation: a four-byte header pays for SEP and optional END.
-    fn load(mut bytes: Vec<u8>, k: usize, eof: usize) -> Self {
+    fn load(mut bytes: Vec<u8>, k: usize, eof: usize, flag: &Path) -> Self {
         let mut used = [false; 256];
         let mut starts = Vec::with_capacity(k + 1);
         let mut i = 0;
@@ -71,6 +75,7 @@ impl Packed {
             }
         }
         assert_eq!(i, bytes.len(), "packed dictionary count");
+        stop(flag);
         let mut encode = [0; 256];
         let mut decode = [0; 256];
         for (j, b) in (0..256).filter(|&b| used[b]).enumerate() {
@@ -123,16 +128,60 @@ fn phase_bytes(m: u64, k: u64, t: u64, arena: u64) -> PhaseBytes {
     let tree = 16 * m.div_ceil(16);
     PhaseBytes {
         aligned: base + 28 * m + 8,
-        lists: base + 37 * m + 8 + tree + 8 * (k + 1),
+        lists: base + 37 * m + 8 + tree + 4 * (k + 1),
         emit: base + 21 * m + tree + 4 * (k + 1) + u128::from(arena),
     }
 }
+// Arithmetic only: no file arguments, cgroup operations, or producer dispatch.
+fn component_plan(profile: &std::ffi::OsStr) {
+    let (n, m, k, t, u, grant, arena, cap) = match profile.to_str() {
+        Some("100m") => (
+            100_000_503,
+            3_170_531,
+            2_689_467,
+            127_708_112,
+            95_434_516,
+            320 << 20,
+            64 << 20,
+            8192,
+        ),
+        Some("1g") => (
+            1_000_000_665,
+            31_784_026,
+            25_336_659,
+            1_242_219_181,
+            938_179_281,
+            3 << 30,
+            512 << 20,
+            65536,
+        ),
+        _ => panic!("plan accepts banked 100m or 1g only"),
+    };
+    let phases = phase_bytes(m, k, t, arena);
+    let parse = wide::plan(m, k, wide::Workspace::SixK, grant).unwrap();
+    assert!(phases.aligned.max(phases.lists).max(phases.emit) <= u128::from(grant));
+    // These profiles use the conservative two-order admission (32 passes each).
+    let slots =
+        (arena as usize - cap * size_of::<Cursor>() - compact::fixed_bytes(32).unwrap()) / 8;
+    let min_distributions = (u as usize).div_ceil(slots);
+    assert!(min_distributions < 32);
+    let column_bytes = t + 4 * m;
+    let scratch = column_bytes + (4 << 20); // reserved for all pipes, queues, and bounded logs
+    assert!(scratch <= 2 * n);
+    println!("PLAN_ONLY n={n} m={m} k={k} descriptors={u} tape={t} array_grant={grant} arena={arena} cursor_cap={cap} slots={slots} min_distributions={min_distributions} parse={} {phases:?} scratch={scratch} scratch_limit={} launch=false",parse.peak_array_bytes,2*n);
+}
 fn main() {
     let args: Vec<_> = std::env::args_os().collect();
+    if args.get(1).is_some_and(|s| s == "--plan-component") {
+        assert_eq!(args.len(), 3);
+        component_plan(&args[2]);
+        return;
+    }
+    let compact = args.get(1).is_some_and(|s| s == "--fixture-compact");
+    let required = if compact { 7 } else { 6 };
     assert!(
-        (args.len() == 6 || args.len() == 7) && args[1] == "--fixture",
-        "--fixture COLUMNS STOP ARRAY_BYTES ARENA_BYTES [EXPECTED_RANKS]"
-    );
+        (required..=required + 1).contains(&args.len()) && (compact || args[1] == "--fixture"),
+        "--fixture COLUMNS STOP ARRAY_BYTES ARENA_BYTES [EXPECTED_RANKS] or --fixture-compact COLUMNS STOP ARRAY_BYTES ARENA_BYTES CURSOR_CAP [EXPECTED_RANKS]");
     let dir = Path::new(&args[2]);
     let flag = Path::new(&args[3]);
     stop(flag);
@@ -149,12 +198,13 @@ fn main() {
     assert!(m > 0 && m <= FIXTURE && 4 * m == mb && mb <= grant);
     let mut ids = Vec::with_capacity(m);
     {
-        let mut f = BufReader::new(input);
+        let mut f = BufReader::with_capacity(8192, input);
         for _ in 0..m {
             ids.push(word(&mut f));
         }
         end(&mut f);
     }
+    stop(flag);
     let k = 1 + *ids.iter().max().unwrap() as usize;
     assert!(k <= m);
     let eof = ids[m - 1] as usize;
@@ -171,24 +221,40 @@ fn main() {
         "phase grant"
     );
     let bins = (1 << BITS) * size_of::<range::Load>();
-    let slots =
-        arena.checked_sub(bins).expect("arena census") / (size_of::<Tail>() + size_of::<Cursor>());
-    assert!(slots > 0, "empty arena");
+    let (cap, workspace) = if compact {
+        let requested: usize = args[6].to_str().unwrap().parse().unwrap();
+        assert!(requested > 0, "empty cursor cap");
+        let cap = requested.min(k);
+        (
+            cap,
+            arena
+                .checked_sub(cap.checked_mul(size_of::<Cursor>()).unwrap())
+                .expect("cursor budget"),
+        )
+    } else {
+        let slots = arena.checked_sub(bins).expect("arena census")
+            / (size_of::<Tail>() + size_of::<Cursor>());
+        assert!(slots > 0, "empty arena");
+        (slots.min(k), bins + slots * size_of::<Tail>())
+    };
     let ranks =
         wide::wide_parse_ranks(&ids, k as u64, wide::Workspace::SixK, grant as u64).unwrap();
     stop(flag);
-    if let Some(path) = args.get(6) {
-        let mut f = BufReader::new(File::open(path).unwrap());
+    if let Some(path) = args.get(required) {
+        let mut f = BufReader::with_capacity(8192, File::open(path).unwrap());
         for &r in &ranks {
             assert_eq!(r, word(&mut f), "rank oracle");
         }
         end(&mut f);
     }
+    stop(flag);
     let mut tape = vec![0; t];
     file.read_exact(&mut tape).unwrap();
     end(&mut file);
     drop(file);
-    let packed = Packed::load(tape, k, eof);
+    stop(flag);
+    let packed = Packed::load(tape, k, eof, flag);
+    stop(flag);
     let width = |v| packed.key(v).len() - if v == eof { 1 } else { W };
     let mut counts = vec![0u64; k];
     let mut starts = Vec::with_capacity(m + 1);
@@ -212,6 +278,7 @@ fn main() {
     assert!(counts.iter().all(|&x| x > 0), "unused lexical ID");
     stop(flag);
     let pl = wide::ParsePlcp::build(&ids, ranks, grant as u64).unwrap();
+    stop(flag);
     let mut h = vec![0; m];
     pl.fill_aligned(
         &starts,
@@ -220,8 +287,10 @@ fn main() {
         &mut h,
     )
     .unwrap();
+    stop(flag);
     let order = pl.into_order();
     let rmq = min::BlockMin::new(h);
+    stop(flag);
     let mut loc = Vec::with_capacity(k + 1);
     loc.push(0u32);
     for &c in &counts {
@@ -232,15 +301,15 @@ fn main() {
                 .unwrap(),
         );
     }
-    let mut cur = loc.clone();
+    assert_eq!(loc[k] as usize, m);
     let mut positions = vec![0u64; m];
     let mut next = vec![0; m];
     let mut pred = vec![0u8; m];
     for (j, r) in order.continuations() {
         let j = j as usize;
         let v = ids[j] as usize;
-        let i = cur[v] as usize;
-        cur[v] += 1;
+        let i = loc[v] as usize;
+        loc[v] = loc[v].checked_add(1).unwrap();
         positions[i] = starts[j];
         next[i] = r;
         if j > 0 {
@@ -248,8 +317,11 @@ fn main() {
             pred[i] = packed.decode[packed.key(w)[width(w) - 1] as usize];
         }
     }
-    assert_eq!(cur[..k], loc[1..]);
-    drop(cur);
+    for v in (0..k).rev() {
+        assert_eq!(loc[v], loc[v + 1]);
+        loc[v] = loc[v].checked_sub(counts[v].try_into().unwrap()).unwrap();
+    }
+    assert_eq!(loc[0], 0);
     drop(order);
     drop(ids);
     drop(starts);
@@ -261,35 +333,71 @@ fn main() {
         eof,
     };
     let last = packed.decode[packed.key(eof)[width(eof) - 1] as usize];
-    let mut out = BufWriter::new(std::io::stdout().lock());
+    let mut out = BufWriter::with_capacity(8192, std::io::stdout().lock());
     let mut rows = 0u64;
-    let mut heap = BinaryHeap::<Cursor>::with_capacity(slots.min(k));
+    let mut heap = BinaryHeap::<Cursor>::with_capacity(cap);
     let mut previous_length = None;
     let mut max_ties = 0;
-    let census = range::order(
-        &d,
-        range::Limits {
-            workspace_bytes: bins + slots * size_of::<Tail>(),
-            prefix_bits: BITS,
-            rows_per_range: n,
-            distributions: 64,
-        },
-        |ties, head| {
-            if rows == 0 {
-                stop(flag);
-                out.write_all(&row43::encode(n, 0, last as u32)).unwrap();
-                rows += 1;
-            }
-            assert!(ties.len() <= slots.min(k));
-            let len = d.key(ties[0]).len();
-            assert!(
-                previous_length != Some(head),
-                "finite tails not prefix-free"
-            );
-            previous_length = Some(len);
-            max_ties = max_ties.max(ties.len());
-            for &Tail { word: v, offset } in ties {
-                let i = loc[v];
+    // One successor per occurrence; rank m can occur, rank 0 is END.
+    let rank_end = m + 1;
+    let mut passes = 64;
+    if compact && cap < k {
+        let descriptors: usize = (0..k).map(width).sum();
+        let cost = rank_end.div_ceil(cap) as u128 * 2 * (m.ilog2() + 2) as u128;
+        if descriptors as u128 * cost > 100_000_000 {
+            // Budget two deterministic orders *together*. Pre-count only oversized
+            // complete groups; no merge, cursor copies, row buffer or output.
+            passes /= 2;
+            let mut probes = 0u128;
+            let c = compact::order_checked(
+                &d,
+                compact::Limits {
+                    workspace_bytes: workspace,
+                    rows_per_range: n,
+                    passes,
+                },
+                || stop(flag),
+                |ties, _| {
+                    if ties.len() > cap {
+                        probes += ties.len() as u128 * cost;
+                        assert!(probes <= 100_000_000, "rank window work cap");
+                    }
+                },
+            )
+            .unwrap();
+            eprintln!("compact admission_passes={}+{} admission_digit_reads={} window_probes_bound={probes}",c.census_passes,c.distributions,c.radix_digit_reads);
+        }
+    }
+    let mut emit = |nt: usize, at: &dyn Fn(usize) -> Tail, head: usize| {
+        if rows == 0 {
+            stop(flag);
+            out.write_all(&row43::encode(n, 0, last as u32)).unwrap();
+            rows += 1;
+        }
+        assert!(nt <= k);
+        let len = d.key(at(0)).len();
+        assert!(
+            previous_length != Some(head),
+            "finite tails not prefix-free"
+        );
+        previous_length = Some(len);
+        max_ties = max_ties.max(nt);
+        let mut prior = None;
+        let step = if nt <= cap { rank_end } else { cap };
+        for lo in (0..rank_end).step_by(step) {
+            for t in 0..nt {
+                let Tail { word: v, offset } = at(t);
+                let mut i = loc[v];
+                let mut end = loc[v + 1];
+                if nt > cap {
+                    let list = &next[i as usize..end as usize];
+                    end = i + list.partition_point(|&r| (r as usize) < lo + step) as u32;
+                    i += list.partition_point(|&r| (r as usize) < lo) as u32;
+                    if i == end {
+                        continue;
+                    }
+                }
+                assert!(heap.len() < cap);
                 let b = if offset == 0 {
                     0
                 } else {
@@ -298,12 +406,11 @@ fn main() {
                 heap.push(Reverse((
                     next[i as usize],
                     i,
-                    loc[v + 1],
+                    end,
                     offset.try_into().unwrap(),
                     b,
                 )));
             }
-            let mut prior = None;
             while let Some(Reverse((r, i, end, off, b))) = heap.pop() {
                 if rows % 4096 == 0 {
                     stop(flag);
@@ -330,16 +437,44 @@ fn main() {
                     heap.push(Reverse((next[j + 1], i + 1, end, off, b)));
                 }
             }
-        },
-    )
-    .unwrap();
-    assert_eq!((rows, census.total.rows), (n + 1, n));
+        }
+    };
+    let (total, ranges) = if compact {
+        let c = compact::order_checked(
+            &d,
+            compact::Limits {
+                workspace_bytes: workspace,
+                rows_per_range: n,
+                passes,
+            },
+            || stop(flag),
+            |ties, h| emit(ties.len(), &|i| ties[i].into(), h),
+        )
+        .unwrap();
+        eprintln!(
+            "compact passes={}+{} digit_reads={} heap_cap={cap}",
+            c.census_passes, c.distributions, c.radix_digit_reads
+        );
+        (c.total, c.distributions)
+    } else {
+        let c = range::order(
+            &d,
+            range::Limits {
+                workspace_bytes: workspace,
+                prefix_bits: BITS,
+                rows_per_range: n,
+                distributions: 64,
+            },
+            |ties, h| emit(ties.len(), &|i| ties[i], h),
+        )
+        .unwrap();
+        (c.total, c.ranges)
+    };
+
+    assert_eq!((rows, total.rows), (n + 1, n));
     stop(flag);
     out.flush().unwrap();
-    eprintln!(
-        "bounded rows={rows} max_ties={max_ties} ranges={}",
-        census.ranges
-    );
+    eprintln!("bounded rows={rows} max_ties={max_ties} ranges={}", ranges);
 }
 
 #[cfg(test)]
@@ -358,7 +493,7 @@ mod tests {
             phases,
             PhaseBytes {
                 aligned: 246_031_320_145,
-                lists: 296_605_586_793,
+                lists: 287226677869,
                 emit: 236_320_359_781 + (128 << 30)
             }
         );

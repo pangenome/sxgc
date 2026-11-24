@@ -142,41 +142,59 @@ fn visit(
     }
     Ok(())
 }
-/// In-place binary MSD. Skip uniform bytes, split at highest varying bit.
-/// Only the smaller partition recurses (at most log2(slots) nested calls).
-fn radix(d: &Dictionary<'_>, mut a: &mut [PackedTail], mut depth: usize, reads: &mut u128) {
-    while a.len() > 1 {
-        let get = |t: PackedTail| digit(d.key(t.into()), depth);
-        let base = get(a[0]);
-        let varied = a[1..].iter().fold(0, |bits, &t| bits | (get(t) ^ base));
-        *reads += a.len() as u128;
-        if varied == 0 {
-            if base == 0 {
-                return;
+type Pending = [(usize, usize, usize); usize::BITS as usize];
+/// Process the smaller partition first. Every pending sibling corresponds to
+/// a halving, so the fixed stack covers every representable slice length.
+fn radix(d: &Dictionary<'_>, arena: &mut [PackedTail], depth: usize, reads: &mut u128) {
+    let mut pending: Pending = [(0, 0, 0); usize::BITS as usize];
+    let mut count = 0;
+    let (mut lo, mut hi, mut depth) = (0, arena.len(), depth);
+    loop {
+        while hi - lo > 1 {
+            let a = &mut arena[lo..hi];
+            let get = |t: PackedTail| digit(d.key(t.into()), depth);
+            let base = get(a[0]);
+            let varied = a[1..].iter().fold(0, |bits, &t| bits | (get(t) ^ base));
+            *reads += a.len() as u128;
+            if varied == 0 {
+                if base == 0 {
+                    break;
+                }
+                depth += 1;
+                continue;
             }
-            depth += 1;
-            continue;
-        }
-        let mask = 0x80 >> varied.leading_zeros();
-        let mut mid = 0;
-        for j in 0..a.len() {
-            if get(a[j]) & mask == 0 {
-                a.swap(mid, j);
-                mid += 1
+            let mask = 0x80 >> varied.leading_zeros();
+            let mut mid = 0;
+            for j in 0..a.len() {
+                if get(a[j]) & mask == 0 {
+                    a.swap(mid, j);
+                    mid += 1
+                }
             }
+            *reads += a.len() as u128;
+            let cut = lo + mid;
+            let (small, big) = if mid < hi - cut {
+                ((lo, cut), (cut, hi))
+            } else {
+                ((cut, hi), (lo, cut))
+            };
+            pending[count] = (big.0, big.1, depth);
+            count += 1;
+            (lo, hi) = small;
         }
-        *reads += a.len() as u128;
-        let (l, r) = a.split_at_mut(mid);
-        let (small, big) = if l.len() < r.len() { (l, r) } else { (r, l) };
-        radix(d, small, depth, reads);
-        a = big;
+        if count == 0 {
+            break;
+        }
+        count -= 1;
+        (lo, hi, depth) = pending[count];
     }
 }
-/// Histogram plus pre-admitted plan payload. Remaining workspace buys 8-byte slots.
+/// Histogram, pre-admitted plan and explicit radix stack payload. Remaining workspace buys 8-byte slots.
 pub fn fixed_bytes(passes: usize) -> Option<usize> {
     passes
         .checked_mul(size_of::<Band>())?
-        .checked_add(size_of::<[Bin; 256]>())
+        .checked_add(size_of::<[Bin; 256]>())?
+        .checked_add(size_of::<Pending>())
 }
 
 /// No callback before complete admission. A group is one finite key; its members
@@ -184,9 +202,19 @@ pub fn fixed_bytes(passes: usize) -> Option<usize> {
 pub fn order(
     d: &Dictionary<'_>,
     lim: Limits,
+    group: impl FnMut(&[PackedTail], usize),
+) -> Result<Counts, Refusal> {
+    order_checked(d, lim, || {}, group)
+}
+
+pub fn order_checked(
+    d: &Dictionary<'_>,
+    lim: Limits,
+    mut boundary: impl FnMut(),
     mut group: impl FnMut(&[PackedTail], usize),
 ) -> Result<Counts, Refusal> {
     validate(d)?;
+    boundary();
     let slots = lim
         .workspace_bytes
         .checked_sub(fixed_bytes(lim.passes).ok_or(Refusal::Budget)?)
@@ -237,6 +265,7 @@ pub fn order(
             )?;
             Ok(())
         })?;
+        boundary();
         // Replace the parent in-place by a lexically ordered cover. A pending
         // split needs at least one more scan, as does each finished band.
         let mut inserted = 0;
@@ -304,6 +333,7 @@ pub fn order(
             arena.push(t);
             Ok(())
         })?;
+        boundary();
         assert_eq!(arena.len(), b.load.descriptors);
         radix(d, &mut arena, b.depth, &mut c.radix_digit_reads);
         for ties in
@@ -316,6 +346,7 @@ pub fn order(
             c.groups += 1;
         }
         c.distributions += 1;
+        boundary();
     }
     Ok(c)
 }
