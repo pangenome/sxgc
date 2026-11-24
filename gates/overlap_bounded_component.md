@@ -2,7 +2,9 @@
 
 `gates/overlap_bounded_component.sh ABSOLUTE_UNIX_DEADLINE` creates a new private receipt and **refuses** unless the pin below exists in a clean, published main; the portable `radix-full-1g` product comparison and batch comparison both replay and pass; the series flock is obtained without waiting; and known timed workers are idle. No 1 GB input (or larger), automatic retry, product build, default selection or promotion. `--plan-component` remains arithmetic only. Do not call the native binaries as a substitute for qualification. `--component-100m COLUMNS STOP` has no adjustable caps, expected-rank file, or generic rung parameter; both fixture entry caps are unchanged.
 
-## Missing source pin is a stop, not a trust-on-first-use opportunity
+## Fixed source pin, not trust on first use
+
+The [three-copy source pin](receipts/bounded-component-100m/source.md) is now published and digest-bound in `pin()`. Its raw SHA and the narrow row SHA have different meanings. For replay, inspect `source-pin.json` and `provenance.json`; do not rehash the originals to time a producer.
 
 Publish exactly these four fields in `gates/receipts/bounded-component-100m/source-pin.json`:
 

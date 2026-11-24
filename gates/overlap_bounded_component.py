@@ -45,7 +45,12 @@ def pin():
     p = json.loads(PIN.read_text())
     check(set(p) == {'source','n','raw_sha256','narrow_row_sha256'} and p['source']==str(SOURCE)
           and p['n']==N and p['narrow_row_sha256']==DIGEST and re.fullmatch('[0-9a-f]{64}',p['raw_sha256']), 'invalid source pin')
-    sp.run(['git','-C',REPO,'ls-files','--error-unmatch',PIN.relative_to(REPO)],check=True,stdout=sp.DEVNULL)
+    # Closed fixed-rung study. Bind the reviewed *three distinct raw hashes* and
+    # their verified row source before opening any payload; a local n/digest alone isn't provenance.
+    proof=PIN.with_name('provenance.json')
+    check(sha(PIN)=='51b6d8552601cc7e67e985614663fcc65453e13a1552a5b36469c5584487b01d' and
+          sha(proof)=='871c6d432e1570f93ddb45ec753f1cc6171cbb6ba605ce1aefbaf13426b15702','different/unreviewed 100 MB source evidence')
+    sp.run(['git','-C',REPO,'ls-files','--error-unmatch',PIN.relative_to(REPO),proof.relative_to(REPO)],check=True,stdout=sp.DEVNULL)
     return p
 
 

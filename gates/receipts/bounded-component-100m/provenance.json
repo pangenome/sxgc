@@ -1,0 +1,63 @@
+{
+  "cgroup_after": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 712798\nuser_usec 417917\nsystem_usec 294880\ncore_sched.force_idle_usec 0\nnr_periods 14\nnr_throttled 1\nthrottled_usec 86220\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 56\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "201318400",
+    "memory.swap.max": "0"
+  },
+  "cgroup_before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 70932\nuser_usec 54947\nsystem_usec 15984\ncore_sched.force_idle_usec 0\nnr_periods 1\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "12439552",
+    "memory.swap.max": "0"
+  },
+  "logical_read_bytes": 300001509,
+  "published_main": "684c4d6c7a3a189dcd241033e215e55c1bb35755",
+  "sources": {
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pile-slice100.bin": {
+      "bytes": 100000503,
+      "dev_ino": [
+        66308,
+        25771846551
+      ],
+      "mtime_ns": 1795211702184614933,
+      "sha256": "3c965f581b46ba72abfd7fee7a0ce2efac5a61cd4dc5725e9253dcebcccc2383"
+    },
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/radix-emit-100m-YQ7txA/verify/in/corpus": {
+      "bytes": 100000503,
+      "dev_ino": [
+        66308,
+        11933318640
+      ],
+      "mtime_ns": 1795491060802202114,
+      "sha256": "3c965f581b46ba72abfd7fee7a0ce2efac5a61cd4dc5725e9253dcebcccc2383"
+    },
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/radix-emit-100m-YQ7txA/verify/oracle-corpus": {
+      "bytes": 100000503,
+      "dev_ino": [
+        66308,
+        10830492577
+      ],
+      "mtime_ns": 1795491060824202113,
+      "sha256": "3c965f581b46ba72abfd7fee7a0ce2efac5a61cd4dc5725e9253dcebcccc2383"
+    }
+  },
+  "status": "SOURCE_PIN_VERIFIED",
+  "verified_receipt_sha256": {
+    "result.json": "dd3a42c83a8213e524740c4010f0de0772477fda87662cf46b0bb9dac1715015",
+    "verify/digest.log": "8887ba75e3d59d27086fcace4c77195a247c769660e262c1941121e3b9de4778",
+    "verify/metrics.json": "ff912a1f6af57e04ae630daa49414d41957ec6501db8a47dd43e3b51d75eb366",
+    "verify/oracle.log": "bc9d316b68d7d7baab8bce2002bacb62b1dd3f3b71faffc691b230a80263c2b4"
+  },
+  "wall_s": 0.27805514819920063,
+  "worker_io": {
+    "read_bytes": 199917568,
+    "write_bytes": 0
+  }
+}
