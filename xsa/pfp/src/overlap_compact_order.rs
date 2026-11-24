@@ -102,6 +102,64 @@ fn validate(d: &Dictionary<'_>) -> Result<(), Refusal> {
     }
     Ok(())
 }
+/// Exact maximum number of descriptors (not occurrence rows) in one finite-key
+/// class. Dropping leading bytes from equal non-EOF tails maps distinct words
+/// injectively into the same shortest (W+1)-byte class. Every such shortest
+/// tail is itself owned. All EOF tails are singletons. No hashes or row visits.
+/// The caller may reuse `workspace_bytes` after return; sorting is in-place.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ShortestCensus {
+    pub entries: usize,
+    pub payload_bytes: usize,
+    pub largest_class: usize,
+}
+pub fn shortest_census(
+    d: &Dictionary<'_>,
+    workspace_bytes: usize,
+    mut boundary: impl FnMut(),
+) -> Result<ShortestCensus, Refusal> {
+    type Key = [u8; 9]; // Ordinary words own offsets 0 .. len-W; shortest has W+1 bytes.
+    let entries = d
+        .occurrences
+        .len()
+        .checked_sub(1)
+        .ok_or(Refusal::Dictionary)?;
+    let payload_bytes = entries
+        .checked_mul(size_of::<Key>())
+        .ok_or(Refusal::Overflow)?;
+    if payload_bytes > workspace_bytes {
+        return Err(Refusal::Budget);
+    }
+    boundary();
+    validate(d)?; // In particular, no data byte can be the unique EOF code.
+    let mut keys = Vec::<Key>::new();
+    keys.try_reserve_exact(entries)
+        .map_err(|_| Refusal::Allocation)?;
+    for i in 0..d.occurrences.len() {
+        if i % 65536 == 0 {
+            boundary();
+        }
+        if i != d.eof {
+            let w = d.key(Tail { word: i, offset: 0 });
+            keys.push(*w.last_chunk::<9>().ok_or(Refusal::Dictionary)?);
+        }
+    }
+    debug_assert_eq!(keys.len(), entries);
+    boundary();
+    keys.sort_unstable();
+    boundary();
+    let largest_class = keys
+        .chunk_by(|a, b| a == b)
+        .map(|g| g.len())
+        .max()
+        .unwrap_or(1);
+    Ok(ShortestCensus {
+        entries,
+        payload_bytes,
+        largest_class,
+    })
+}
+
 #[derive(Default, Clone, Copy)]
 struct Band {
     witness: PackedTail,

@@ -178,14 +178,15 @@ fn main() {
         return;
     }
     let component = args.get(1).is_some_and(|s| s == "--component-100m");
-    let compact = component || args.get(1).is_some_and(|s| s == "--fixture-compact");
+    let shortest = args.get(1).is_some_and(|s| s == "--fixture-shortest");
+    let compact = component || shortest || args.get(1).is_some_and(|s| s == "--fixture-compact");
     let required = if compact { 7 } else { 6 };
     if component {
         assert_eq!(args.len(), 4, "--component-100m COLUMNS STOP");
     } else {
         assert!(
         (required..=required + 1).contains(&args.len()) && (compact || args[1] == "--fixture"),
-        "--fixture COLUMNS STOP ARRAY_BYTES ARENA_BYTES [EXPECTED_RANKS] or --fixture-compact COLUMNS STOP ARRAY_BYTES ARENA_BYTES CURSOR_CAP [EXPECTED_RANKS]");
+        "--fixture COLUMNS STOP ARRAY_BYTES ARENA_BYTES [EXPECTED_RANKS] or --fixture-compact|--fixture-shortest COLUMNS STOP ARRAY_BYTES ARENA_BYTES CURSOR_CAP [EXPECTED_RANKS]");
     }
     let dir = Path::new(&args[2]);
     let flag = Path::new(&args[3]);
@@ -378,6 +379,7 @@ fn main() {
     // One successor per occurrence; rank m can occur, rank 0 is END.
     let rank_end = m + 1;
     let mut passes = 64;
+    let mut shortest_peak = None;
     if compact && cap < k {
         let descriptors: usize = (0..k).map(width).sum();
         let cost = rank_end.div_ceil(cap) as u128 * 2 * (m.ilog2() + 2) as u128;
@@ -385,24 +387,45 @@ fn main() {
             // Budget two deterministic orders *together*. Pre-count only oversized
             // complete groups; no merge, cursor copies, row buffer or output.
             passes /= 2;
-            let mut probes = 0u128;
-            let c = compact::order_checked(
-                &d,
-                compact::Limits {
-                    workspace_bytes: workspace,
-                    rows_per_range: n,
-                    passes,
-                },
-                || stop(flag),
-                |ties, _| {
-                    if ties.len() > cap {
-                        probes += ties.len() as u128 * cost;
-                        assert!(probes <= 100_000_000, "rank window work cap");
+            if shortest {
+                match compact::shortest_census(&d, workspace, || stop(flag)) {
+                    Ok(s) => {
+                        shortest_peak = Some(s.largest_class);
+                        eprintln!("shortest entries={} payload_bytes={} exact_peak={} heap_cap={cap} dry_order_needed={}", s.entries, s.payload_bytes, s.largest_class, s.largest_class > cap);
+                        // A single proved oversized group already charges this much to
+                        // the unchanged conservative work ledger. Otherwise count all
+                        // oversized groups unless we just proved there are none.
+                        assert!(
+                            s.largest_class <= cap || s.largest_class as u128 * cost <= 100_000_000,
+                            "rank window work cap"
+                        );
                     }
-                },
-            )
-            .unwrap();
-            eprintln!("compact admission_passes={}+{} admission_digit_reads={} window_probes_bound={probes}",c.census_passes,c.distributions,c.radix_digit_reads);
+                    Err(compact::Refusal::Budget) => {
+                        eprintln!("shortest insufficient_workspace dry_order_needed=true")
+                    }
+                    Err(err) => panic!("invalid shortest-tail census: {err:?}"),
+                }
+            }
+            if !shortest_peak.is_some_and(|peak| peak <= cap) {
+                let mut probes = 0u128;
+                let c = compact::order_checked(
+                    &d,
+                    compact::Limits {
+                        workspace_bytes: workspace,
+                        rows_per_range: n,
+                        passes,
+                    },
+                    || stop(flag),
+                    |ties, _| {
+                        if ties.len() > cap {
+                            probes += ties.len() as u128 * cost;
+                            assert!(probes <= 100_000_000, "rank window work cap");
+                        }
+                    },
+                )
+                .unwrap();
+                eprintln!("compact admission_passes={}+{} admission_digit_reads={} window_probes_bound={probes}",c.census_passes,c.distributions,c.radix_digit_reads);
+            }
         }
     }
     let mut emit = |nt: usize, at: &dyn Fn(usize) -> Tail, head: usize| {
@@ -509,6 +532,12 @@ fn main() {
     };
 
     assert_eq!((rows, total.rows), (n + 1, n));
+    if let Some(peak) = shortest_peak {
+        assert_eq!(
+            max_ties, peak,
+            "shortest-tail certificate disagrees with actual groups"
+        );
+    }
     stop(flag);
     out.flush().unwrap();
     eprintln!("bounded rows={rows} max_ties={max_ties} ranges={}", ranges);

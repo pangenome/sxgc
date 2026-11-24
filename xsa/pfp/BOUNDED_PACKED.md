@@ -92,6 +92,8 @@ vector headers, decoder maps, main/C stack, libsais internal scratch, allocator
 rounding/metadata, executable and page cache outside logical arrays. Only an
 actual finite cgroup with headroom bounds the process; arrays do **not** certify RSS.
 
+**Follow-up fixture only:** `--fixture-shortest` accepts the same tiny fixtures and caps as `--fixture-compact`. It can certify the *exact maximum* finite tie from the last nine bytes of each ordinary word, before full finite-key order. See [proof, costs and falsifiable prediction](SHORTEST_TIE.md). `--component-100m` is the banked two-order control path and has **not** been switched to this certificate. The original [100 MB component](../../gates/receipts/bounded-component-100m/) passed all rows but missed the performance requirement.
+
 ## Intermediate handoff — metadata preflight, NOT a launch path
 
 `xsa/target/release/overlap_bounded_packed --plan-component 100m` (or `1g`)

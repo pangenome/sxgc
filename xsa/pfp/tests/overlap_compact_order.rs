@@ -49,6 +49,10 @@ impl Input {
                 total.descriptors += 1
             }
         }
+        let s = compact::shortest_census(&d, 9 * (self.words.len() - 1), || {}).unwrap();
+        assert_eq!(s.entries, self.words.len() - 1);
+        assert_eq!(s.payload_bytes, 9 * s.entries);
+        assert_eq!(s.largest_class, brute.values().map(Vec::len).max().unwrap());
         let mut prev = vec![];
         let expected: Vec<_> = brute
             .into_iter()
@@ -129,6 +133,40 @@ fn adaptive_skew_ties_and_long_prefix() {
     words.push(vec![64; 32]);
     let c = Input::new(words).verify(50, 256, 180);
     assert!(c.census_passes > 1 && c.distributions > 1 && c.groups < c.total.descriptors);
+}
+#[test]
+fn shortest_counts_the_ninth_byte_not_trigger_or_occurrence_mass() {
+    let mut input = Input::new(vec![
+        [vec![22; 3], vec![40; 9]].concat(),
+        [vec![33; 5], vec![40; 9]].concat(),
+        [vec![33; 3], vec![40; 8]].concat(),
+        vec![40; 9], // EOF word ends in END, not another member of the ordinary tie
+    ]);
+    input.mass = vec![9_000_000_000, 3, 2, 1];
+    let d = input.dict();
+    assert_eq!(
+        compact::shortest_census(&d, 27, || {})
+            .unwrap()
+            .largest_class,
+        2
+    );
+    assert_eq!(
+        compact::shortest_census(&d, 26, || {}),
+        Err(compact::Refusal::Budget)
+    );
+    let only = Input::new(vec![vec![255]]);
+    assert_eq!(
+        compact::shortest_census(&only.dict(), 0, || {})
+            .unwrap()
+            .largest_class,
+        1
+    );
+    let mut bad = input.bytes.clone();
+    bad[2] = 1; // EOF marker in ordinary data would invalidate the singleton argument
+    assert_eq!(
+        compact::shortest_census(&reference::Dictionary { bytes: &bad, ..d }, 27, || {}),
+        Err(compact::Refusal::Dictionary)
+    );
 }
 #[test]
 fn refusals_are_atomic() {

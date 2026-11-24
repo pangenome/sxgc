@@ -114,6 +114,24 @@ def main():
         b = subprocess.run([BIN, cols, flag, '200000000'], env=env, capture_output=True)
         assert a.returncode == b.returncode == c.returncode == 0, (a.stderr,b.stderr,c.stderr)
         assert a.stdout == b.stdout == c.stdout and b'window_probes_bound=0' in c.stderr
+        # The 9-byte shortest-tail certificate counts only the two ordinary words.
+        # At cap 2 it can skip the complete dry order; at cap 1 it must still
+        # account for *all* oversized groups. Same raw rows in both cases.
+        for cap in (1, 2):
+            sc = subprocess.run([PRODUCER, '--fixture-shortest', cols, flag, '2000000',
+                                 '100000', str(cap)], capture_output=True)
+            assert sc.returncode == 0 and sc.stdout == b.stdout, sc.stderr
+            assert f'shortest entries=2 payload_bytes=18 exact_peak=2 heap_cap={cap}'.encode() in sc.stderr
+            assert (b'compact admission_passes=' in sc.stderr) == (cap == 1)
+        # In this other parse the actual shortest class alone would exceed the
+        # original rank-window work bound. No dry full order, no END on refusal.
+        words = [b'ABCDEFGH'+bytes([i])+b'9ABCDEFGH' for i in range(32)] + [b'ABCDEFGH\xff']
+        (cols/'dictionary.packed').write_bytes(b''.join(struct.pack('<I', len(w)|((i==32)<<31))+w
+                                                       for i,w in enumerate(words)))
+        (cols/'parse.u32').write_bytes(struct.pack('<32I', *range(32))*2812 + struct.pack('<I',32))
+        refused = subprocess.run([PRODUCER, '--fixture-shortest', cols, flag, '8000000', '100000', '1'], capture_output=True)
+        refuse(refused, b'rank window work cap')
+        assert b'exact_peak=32' in refused.stderr and b'compact admission_passes=' not in refused.stderr
         tie_columns(d)
         refuse(run(BINS+36), b'Bucket')
         refuse(run(BINS, BINS), b'phase grant')

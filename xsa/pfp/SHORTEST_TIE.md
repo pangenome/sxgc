@@ -1,0 +1,24 @@
+# Certifying the largest finite tie with one short key per word
+
+The [100 MB bounded component](../../gates/receipts/bounded-component-100m/) used 2 census + 16 distribution scans, and 11.77 billion local radix digit reads, **twice**. The first complete order only bounded continuation-window probes before any output. It discovered zero affected groups. Can we rule out over-cap groups without ordering all owned offsets?
+
+**Exact invariant.** An ordinary word `w` of length `l > W` contributes precisely the finite tails `w[i..l]` for `0 <= i < l-W`; its shortest one has length **W+1**, not W. For a tied finite key of length `j >= W+1`, the length uniquely fixes the offset in each contributing word (`l-j`). Discarding the leading `j-(W+1)` bytes thus injects every descriptor of that class into one class of shortest tails, without merging two descriptors from the same word. Conversely, the shortest tails are actual descriptors, so their largest class is attained, not just an upper bound. EOF is distinguished in the finite key; the single tagged EOF word's tails of different lengths all have multiplicity one. Thus for W=8:
+
+```
+maximum cursor-bearing descriptors per finite key =
+    max(1, maximum multiplicity of the last 9 data bytes of distinct ordinary words).
+```
+
+Multiplicity is over **words**, not occurrences or expanded rows. Two different ninth-from-last bytes with the same trigger do not suffice; an untagged EOF would also invalidate the argument. This does not determine how many *longer* keys overflow a smaller cap, or give suffix order, seam LCPs or successor ranks.
+
+**Implementation.** `overlap_compact_order::shortest_census` validates the encoded dictionary, stores `k-1` fixed nine-byte keys (no SEP or EOF), sorts them in-place and counts complete equal runs. Lexical remapping is injective. No hash equality, `m`-entry permutation, per-owned-offset records or corpus reads. Payload `9(k-1)` bytes, validation O(D), extraction O(k), O(k log k) fixed-width comparisons plus O(k) counting. Headers, sort stack, allocator and host cache are not included in payload. Release before allocating the order arena; keep the separate `20*C` cursor reserve. A single library sort is not cooperatively interruptible; there are stop boundaries on either side of it and during extraction.
+
+`--fixture-shortest` otherwise follows `--fixture-compact` with the same small-input, array and 100-million-probe limits. When the all-descriptors probe bound is already safe, nothing changes. Otherwise both variants still allow 32 full classifications for emission. The new fixture tries the certificate *before* a possible dry order:
+
+* If its payload fits and `peak <= C`, no group needs rank windows. Skip the complete dry order. Check the actual maximum again after streaming.
+* If `peak > C`, one oversized group alone charges at least `peak * ceil((m+1)/C) * 2 * (floor(log2(m))+2)` to the existing conservative ledger. Refuse before END if that already exceeds 100 million. Otherwise dry-order as before to count **all** oversized descriptors. The lower bound is on this admission ledger, not on CPU time.
+* If the nine-byte payload doesn't fit, keep the existing dry-order guard. Never use a collision-prone estimate or the *previous run's* observed maximum to bypass admission.
+
+**Prediction, not timing.** At the 100 MB measured dimensions the certificate needs **24,205,194 B** from the 64 MiB arena after the 163,840-byte heap reservation. On those same verified columns it should report 6,545, avoid exactly 18 full classifications and 11,770,915,334 local digit reads, and leave the emitted stream unchanged. This exchanges the dry order for one checked `k`-key sort; it does *not* predict a 2× wall improvement. At the banked control clocks a future isolated candidate needs less than **108.231 s prepared** and **119.597 s raw** even for `<3×` on this component, i.e. savings greater than 69.539 and 61.813 s respectively over the measured bounded candidate. No seconds were measured for the dry order in isolation.
+
+At the 10 GB measured `k`, this exact in-memory method would need **2,110,254,498 B** for keys alone. A 546,042-member true tie doesn't fit 8,192 cursors. Certifying overflow cannot make that heap or its work guard sufficient. A fixed 100 GB `m` does not give the actual `k` or largest tie there, nor a new memory grant. The fixture entry does not enable any real-rung producer.
