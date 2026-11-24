@@ -118,7 +118,7 @@ def inventory():
                                       oracle_pipe_volume=12*(N+1)),
                 missing_evidence=['published_verified_10g_product', 'small_exact_v10_replay',
                                   'wide_parse_and_bounded_dictionary_order', 'bounded_concurrent_tap',
-                                  'matched_resource_time_and_verification_plan', 'operator_approval'],
+                                  'matched_resource_time_and_verification_plan', 'published_measured_default'],
                 projected_linear_10g_not_100g_measurement=projected(*(10*c[key] for key in ('m','k','D'))))
 
 
