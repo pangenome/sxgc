@@ -1,5 +1,6 @@
 """Small exact byte oracle, including final triggers and unequal spans with equal tails."""
 import itertools
+import os
 from pathlib import Path
 import random
 import struct
@@ -23,7 +24,11 @@ def prepare(d, text):
     parse = [ids[w] for w in words]
     (d/'corpus').write_bytes(text)
     (d/'dictionary.refs').write_bytes(b''.join(struct.pack('<II', *refs[w]) for w in ids))
-    (d/'parse.u32').write_bytes(struct.pack('<%dI'%len(parse), *parse))
+    encoded=struct.pack('<%dI'%len(parse), *parse)
+    (d/'parse.u32').write_bytes(encoded)
+    # Separate directory: packed mode cannot accidentally read corpus/refs.
+    tape=d/'columns'; tape.mkdir(exist_ok=True); (tape/'parse.u32').write_bytes(encoded)
+    (tape/'dictionary.packed').write_bytes(b''.join(struct.pack('<I',len(raw)|(eof<<31))+raw for raw,eof in ids))
     inv = [0]*len(parse)
     for r,i in enumerate(sorted(range(len(parse)),key=lambda j:parse[j:]), 1): inv[i] = r
     (d/'expected').write_bytes(struct.pack('<%dI'%len(inv), *inv))
@@ -38,8 +43,10 @@ def main():
         d=Path(tmp); args=[BIN,d,d/'stop','200000000',d/'expected']
         for text in cases:
             prepare(d,text); n=len(text)
-            rc=subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            rc=subprocess.run(args,capture_output=True,env=dict(os.environ,XSA_RESIDENT_PACKED='0'))
             assert rc.returncode==0, rc.stderr
+            packed=subprocess.run([BIN,d/'columns',*args[2:]],capture_output=True,env=dict(os.environ,XSA_RESIDENT_PACKED='1'))
+            assert packed.returncode==0 and packed.stdout==rc.stdout, packed.stderr
             rows=list(struct.iter_unpack('<III',rc.stdout)); sa=sorted(range(n+1),key=lambda i:text[i:]); assert len(rows)==len(sa)
             for r,(p,h,b) in enumerate(rows):
                 want=sum(1 for _ in itertools.takewhile(lambda pair:pair[0]==pair[1],zip(text[p:],text[sa[r-1]:]))) if r else 0
@@ -47,7 +54,11 @@ def main():
         (d/'expected').write_bytes(bytes((d/'expected').stat().st_size)); wrong=subprocess.run(args,capture_output=True); assert wrong.returncode and b'external rank mismatch' in wrong.stderr and not wrong.stdout
         small=subprocess.run([*args[:3],'32'],capture_output=True); assert small.returncode and not small.stdout
         prepare(d,bytes(range(256))); wide=subprocess.run(args,capture_output=True); assert wide.returncode and b'two free codes' in wide.stderr and not wide.stdout
+        t=d/'columns'; path=t/'dictionary.packed'; (t/'parse.u32').write_bytes(struct.pack('<II',0,1)); sample=struct.pack('<I',9)+b'a'*9+struct.pack('<I',0x80000008)+b'b'*8
+        for data,refusal in ((sample,b'broken packed parse overlap'),(sample[:-1],b'invalid packed word span'),(sample+b'!',b'invalid packed word count/header')):
+            path.write_bytes(data); bad=subprocess.run([BIN,t,*args[2:4]],env=dict(os.environ,XSA_RESIDENT_PACKED='1'),capture_output=True)
+            assert bad.returncode and refusal in bad.stderr and not bad.stdout, bad.stderr
         (d/'stop').touch(); assert subprocess.run(args,capture_output=True).returncode==75
-    print(f'PASS {len(cases)} complete SA/LCP/BWT streams; wrong rank, width, budget refusals; stop=75')
+    print(f'PASS {len(cases)} exact streams in both refs and packed-only modes; rank, width, budget, span, count, overlap refusals; stop=75')
 
 if __name__=='__main__': main()

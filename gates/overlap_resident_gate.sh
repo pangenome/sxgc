@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO=$PWD
-case ${1:-narrow} in narrow|wide|wide-handoff) profile=${1:-narrow};; *) echo 'usage: overlap_resident_gate.sh [narrow|wide|wide-handoff]' >&2; exit 2;; esac
+case ${1:-narrow} in narrow|wide|wide-handoff|packed-raw) profile=${1:-narrow};; *) echo 'usage: overlap_resident_gate.sh [narrow|wide|wide-handoff|packed-raw]' >&2; exit 2;; esac
 (cd xsa && cargo build --release -p pfp --bin pfp_sort_r --bin overlap_resident)
 if [[ $profile != narrow ]]; then XSA_RESIDENT_WIDE_DICT=1 python3 gates/overlap_resident_test.py; else XSA_RESIDENT_WIDE_DICT=0 python3 gates/overlap_resident_test.py; fi
 ROOT=/mnt/nvme2n1/erikg/TAPEREADER; S=$ROOT/sandbox; R=$ROOT/climb/rung1
@@ -14,12 +14,16 @@ cc -O2 -Wall -Wextra -Werror -shared -fPIC -pthread gates/finish_stop_monitor.c 
 mkdir "$D/in"
 cp --reflink=never "$R/pile-slice1g.bin" "$D/in/corpus"
 cp --reflink=never "$R/remap-256.bin" "$D/in/remap"
-cp --reflink=never "$S/dict-adj-kIPyZL/columns/"{parse.u32,dictionary.refs} "$D/in/"
+if [[ $profile == packed-raw ]]; then
+    g++ -O2 -Wall -Wextra -Werror -std=c++17 gates/overlap_lexparse.cpp -o "$T/lexparse"
+else
+    cp --reflink=never "$S/dict-adj-kIPyZL/columns/"{parse.u32,dictionary.refs} "$D/in/"
+fi
 cp --reflink=never "$S/parse-ranks-Ys27jk/work/inverse.u32" "$D/inverse.check"
 cp --reflink=never "$R/pile-slice1g.bin" "$D/oracle-corpus"
-{ git rev-parse HEAD; git status --porcelain; sha256sum "$T/monitor.so" "$T/oracle" /tmp/xsa_finish_cur xsa/target/release/{overlap_resident,pfp_sort_r} "$D/in/remap"; } > "$D/binaries.sha"
+{ git rev-parse HEAD; git status --porcelain; sha256sum "$T/monitor.so" "$T/oracle" /tmp/xsa_finish_cur xsa/target/release/{overlap_resident,pfp_sort_r} "$D/in/remap"; if [[ $profile == packed-raw ]]; then sha256sum "$T/lexparse"; fi; } > "$D/binaries.sha"
 python3 gates/private_cold.py "$D/in/"* "$D/inverse.check" "$D/oracle-corpus"
-echo 'private corpus, remap, refs, parse, rank check and oracle copy: mincore zero pages' | tee "$D/cold.log"
+echo 'all private stage inputs, rank check and oracle copy: mincore zero pages' | tee "$D/cold.log"
 # A fresh user service for each meter, no cache flush, swap or machine-wide dials.
 run=(systemd-run --user --quiet --collect --wait --pipe -p MemorySwapMax=0 -p Nice=10)
 set +e

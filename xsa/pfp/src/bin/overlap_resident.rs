@@ -1,5 +1,5 @@
-//! Resident comparison from the external lexparse's `dictionary.refs` and
-//! `parse.u32`. No on-disk sort columns. Stdout: LE u32 (pos, byte LCP, BWT),
+//! Resident comparison from `parse.u32` and either raw text + dictionary refs
+//! or the self-contained length-tagged `dictionary.packed`. No on-disk sort columns. Stdout: LE u32 (pos, byte LCP, BWT),
 //! including END; an optional inherited FD gets the *same* blocks for audit.
 //! Deliberately limited to the measured rung/widths, not the Pile builder.
 use std::{
@@ -100,6 +100,43 @@ impl Word {
             self.raw().checked_sub(W).unwrap()
         }
     }
+}
+// In a packed input Word.pos is relative to this tape, not to the corpus.
+// The grant is checked BEFORE loading the tape or allocating this index.
+fn packed_words(tape: &[u8], k: usize) -> Vec<Word> {
+    let mut words = Vec::with_capacity(k);
+    let mut i = 0;
+    while i < tape.len() {
+        assert!(
+            tape.len() - i >= 4 && words.len() < k,
+            "invalid packed word count/header"
+        );
+        let w = Word {
+            pos: u32::try_from(i + 4).unwrap(),
+            span: le(&tape[i..i + 4]),
+        };
+        i += 4;
+        assert!(
+            w.raw() <= tape.len() - i && w.raw() > if w.eof() { 0 } else { W },
+            "invalid packed word span"
+        );
+        if let Some(&prev) = words.last() {
+            let prev: Word = prev;
+            let a = prev.pos as usize;
+            assert!(
+                (&tape[a..a + prev.raw()], prev.eof()) < (&tape[i..i + w.raw()], w.eof()),
+                "packed words not in strict lexical ID order"
+            );
+        }
+        i += w.raw();
+        words.push(w);
+    }
+    assert_eq!(
+        words.len(),
+        k,
+        "packed dictionary count disagrees with parse"
+    );
+    words
 }
 fn le(a: &[u8]) -> u32 {
     u32::from_le_bytes(a.try_into().unwrap())
@@ -207,41 +244,65 @@ fn main() {
     let grant: usize = args[2].to_str().unwrap().parse().unwrap();
     let phase = |name| Phase::begin(name, flag);
     let p = phase("load_ids");
-    let n = size(&dir.join("corpus"));
-    let kb = size(&dir.join("dictionary.refs"));
+    let packed = match std::env::var("XSA_RESIDENT_PACKED").as_deref() {
+        Ok("1") => true,
+        Ok("0") | Err(std::env::VarError::NotPresent) => false,
+        _ => panic!("invalid packed input switch"),
+    };
     let mb = size(&dir.join("parse.u32"));
-    let (k, m) = (kb / 8, mb / 4);
+    let m = mb / 4;
     assert!(
-        n > 0
-            && n <= 1_000_000_665
-            && k > 0
-            && k <= m
-            && m <= n
-            && k <= 26_000_000
-            && m <= 32_000_000
-            && kb == 8 * k
-            && mb == 4 * m
+        m > 0 && m <= 32_000_000 && mb == 4 * m && grant >= 2 * mb,
+        "invalid parse size/grant"
     );
-    assert!(grant >= 2 * kb + 2 * mb, "column load exceeds array grant");
-    let words: Vec<_> = fs::read(dir.join("dictionary.refs"))
-        .unwrap()
-        .chunks_exact(8)
-        .map(|r| Word {
-            pos: le(&r[..4]),
-            span: le(&r[4..]),
-        })
-        .collect();
     let mut pa: Vec<i32> = fs::read(dir.join("parse.u32"))
         .unwrap()
         .chunks_exact(4)
         .map(|r| i32::try_from(le(r)).unwrap())
         .collect();
-    assert!(pa.iter().all(|&v| (v as usize) < k));
+    let k = 1 + *pa.iter().max().unwrap() as usize;
+    assert!(k <= m && k <= 26_000_000);
+    let data_path = dir.join(if packed {
+        "dictionary.packed"
+    } else {
+        "corpus"
+    });
+    let source_bytes = size(&data_path);
+    let (words, tape, n) = if packed {
+        assert!(
+            source_bytes <= 1_500_000_000 && grant >= source_bytes + 8 * k + mb,
+            "packed tape exceeds array grant"
+        );
+        let bytes = fs::read(&data_path).unwrap();
+        let words = packed_words(&bytes, k);
+        let n: usize = pa.iter().map(|&v| words[v as usize].width()).sum();
+        (words, Some(bytes), n)
+    } else {
+        let kb = size(&dir.join("dictionary.refs"));
+        assert!(
+            kb == 8 * k && grant >= 2 * kb + 2 * mb,
+            "invalid refs size/grant"
+        );
+        let words = fs::read(dir.join("dictionary.refs"))
+            .unwrap()
+            .chunks_exact(8)
+            .map(|r| Word {
+                pos: le(&r[..4]),
+                span: le(&r[4..]),
+            })
+            .collect();
+        (words, None, source_bytes)
+    };
+    assert!(
+        n > 0 && n <= 1_000_000_665 && m <= n,
+        "outside measured corpus rung"
+    );
+    eprintln!("RESIDENT_INPUT packed={packed} source_bytes={source_bytes} n={n} m={m} k={k}");
     let eof = pa[m - 1] as usize;
     let mut d = 1;
     let mut descriptors = 0;
     for (i, &w) in words.iter().enumerate() {
-        assert!(w.eof() == (i == eof) && w.width() > 0 && w.pos as usize + w.raw() <= n);
+        assert!(w.eof() == (i == eof) && w.width() > 0 && w.pos as usize + w.raw() <= source_bytes);
         d += w.raw() + 1;
         descriptors += w.width();
     }
@@ -261,8 +322,8 @@ fn main() {
     // Bytes of simultaneously live arrays, not file-cache residency. Reserve
     // extra SA space for recursion, and bound doubled heap capacity by 2*k:
     // a finite equal key ends at a word boundary -> at most one offset/word.
-    let parse_bound = 8 * m + 8 * k + 24 * k; // parse/SA, refs, 6k extra SA slots
-    let aux_bound = n + d + 24 * (k + 1) + 32 * m;
+    let parse_bound = 8 * m + 8 * k + 24 * k + tape.as_ref().map_or(0, Vec::len);
+    let aux_bound = source_bytes + d + 25 * (k + 1) + 32 * m;
     let retained = 12 * (k + 1) + 9 * m + 4 * m + 8 * m.div_ceil(16);
     let sa_bytes = if wide { 8 * d } else { 4 * d };
     let owner_bytes = if wide { RankStarts::bytes(d) } else { 4 * d };
@@ -307,11 +368,19 @@ fn main() {
         p.end();
     }
     let p = phase("pack_dictionary");
-    let corpus = fs::read(dir.join("corpus")).unwrap();
-    let last = corpus[n - 1];
+    let source = tape.unwrap_or_else(|| fs::read(data_path).unwrap());
     let mut used = [false; 256];
-    for &b in &corpus {
-        used[b as usize] = true;
+    if packed {
+        for w in &words {
+            let i = w.pos as usize;
+            for &b in &source[i..i + w.raw()] {
+                used[b as usize] = true;
+            }
+        }
+    } else {
+        for &b in &source {
+            used[b as usize] = true;
+        }
     }
     let mut encode = [0; 256];
     let mut decode = [0; 256];
@@ -333,11 +402,13 @@ fn main() {
         eof_id: eof,
         decode,
     };
+    let mut last_owned = Vec::with_capacity(k);
     for &w in &words {
         dict.start.push(dict.bytes.len() as u64);
         let i = w.pos as usize;
         dict.bytes
-            .extend(corpus[i..i + w.raw()].iter().map(|&b| encode[b as usize]));
+            .extend(source[i..i + w.raw()].iter().map(|&b| encode[b as usize]));
+        last_owned.push(source[i + w.width() - 1]);
         if w.eof() {
             dict.bytes.push(1);
         }
@@ -345,6 +416,8 @@ fn main() {
     }
     assert_eq!(dict.bytes.len(), d);
     dict.start.push(d as u64);
+    drop(source);
+    let last = last_owned[eof];
     p.end();
 
     let p = phase("aligned_and_lists");
@@ -354,8 +427,16 @@ fn main() {
     for (i, &id) in pa.iter().enumerate() {
         let v = id as usize;
         assert!((i == m - 1) == words[v].eof());
+        if packed && i > 0 {
+            let prev = pa[i - 1] as usize;
+            let at = dict.start[prev] as usize + words[prev].width();
+            assert!(
+                words[v].raw() >= W && dict.bytes[at..at + W] == dict.key(v)[..W],
+                "broken packed parse overlap"
+            );
+        }
         s.push(pos);
-        pos += words[v].width() as u32;
+        pos = u32::checked_add(pos, words[v].width() as u32).expect("wide corpus offset required");
         loc[v + 1] += 1;
     }
     s.push(pos);
@@ -389,8 +470,8 @@ fn main() {
         cur[v] += 1;
         let pos = s[j];
         pair[i] = [pos, next];
-        if pos > 0 {
-            pred[i] = corpus[pos as usize - 1];
+        if j > 0 {
+            pred[i] = last_owned[pa[j - 1] as usize];
         }
     };
     insert(m - 1, 0);
@@ -404,7 +485,7 @@ fn main() {
     drop(pa);
     drop(ps);
     drop(s);
-    drop(corpus);
+    drop(last_owned);
     let lists = Lists {
         pair,
         pred,

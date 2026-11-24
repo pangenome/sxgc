@@ -70,6 +70,7 @@ def footprint(d,retained,ram=False):
             rel=Path(e.path).relative_to(d); f=e.name
             if rel.parts[0]=='in' or len(rel.parts)==1 and (f in ('oracle-corpus','inverse.check','product.sxi2','product.sxi2.partial','stop.requested') or f.endswith(('.log','.json','.sha'))):continue
             if ram: group={'pieces':'ram_pieces','bands':'ram_slices'}[rel.parts[0]]
+            elif rel.parts[0]=='columns': group='generated_lexparse'
             else: group=rel.parts[0] if len(rel.parts)==1 else ('pieces' if '.pieces' in str(rel.parent) else 'slices' if rel.parts[0]=='bands' else f)
             parts[group]=parts.get(group,0)+st.st_size
     return whole,parts
@@ -85,10 +86,45 @@ def oracle(d,tools):
     save(d/'oracle.json',dict(rc=rc,process=stats,sampled_peak_rss=peak,cgroup=cg_info(),wall_including_wait_s=time.monotonic()-start))
     assert rc==0 and f'ORACLE rows={N+1} independent_final_rank={N+1} all_adjacent_sa_lcp_bwt_verified=1' in (d/'oracle.log').read_text()
 
+def pack_front(d,tools):
+    """Produce *fresh* columns from private cold raw text. The packer itself
+    charges each bucket, assignment and output before writing (limit 2N).
+    No active sink/finish until the new dictionary tape has been retired.
+    """
+    from private_cold import cold
+    cols=d/'columns'; assert not cols.exists() and not (d/'merged').exists()
+    start=time.monotonic(); peak=allocated=0
+    with (d/'pack.log').open('xb') as log:
+        p=sp.Popen([tools/'lexparse',d/'in/corpus',cols,'--packed'],stdout=log,stderr=log)
+        with open(f'/proc/{p.pid}/io') as io:
+            while not finished(p):
+                peak=max(peak,proc_info(p.pid,io)['VmHWM']); wh,parts=footprint(d,0); allocated=max(allocated,wh)
+                if sum(parts.values())>2*N or time.monotonic()-start>600:(d/'stop.requested').touch()
+                time.sleep(.25)
+            info=proc_info(p.pid,io); code=p.wait()
+    front=dict(rc=code,process=info,sampled_peak_rss=peak,sampled_allocated=allocated,wall_s=time.monotonic()-start,cgroup_after=cg_info())
+    save(d/'front-end.json',front); assert code==0 and not (d/'stop.requested').exists()
+    log=(d/'pack.log').read_text(); match=re.search(r'^LEXPARSE n=(\d+) phrases=(\d+) distinct=(\d+) .* peak_counted=(\d+) final_columns=(\d+) ',log,re.M)
+    assert match; n,m,k,peak_counted,total=map(int,match.groups()); assert (n,m,k)==(N,31_784_026,25_336_659)
+    sizes={p.name:p.stat().st_size for p in cols.iterdir()}; assert set(sizes)=={'parse.u32','dictionary.packed'}
+    assert sizes['parse.u32']==4*m and sum(sizes.values())==total<=peak_counted<=2*N
+    # Conservative reproducible cut: evict only this gate's freshly generated
+    # columns and private corpus (even the finish must pay for cold text).
+    t=time.monotonic()
+    for path in (cols/'dictionary.packed',cols/'parse.u32',d/'in/corpus'): cold(path)
+    front.update(counted_front_peak=peak_counted,columns=sizes,cold_barrier_s=time.monotonic()-t)
+    save(d/'front-end.json',front); say('PACKED_FRONT',m,k,peak_counted,round(front['wall_s'],3)); return front
+
 def build(d,tools,profile):
-    assert profile in ('narrow','wide','wide-handoff')
+    assert profile in ('narrow','wide','wide-handoff','packed-raw')
     assert (CG/'memory.max').read_text().strip()==str(20*GIB) and (CG/'memory.swap.max').read_text().strip()=='0'
-    src=d/'in'; corpus=src/'corpus'; retained=sum((src/f).stat().st_size for f in ('parse.u32','dictionary.refs')); assert corpus.stat().st_size==N
+    src=d/'in'; corpus=src/'corpus'; assert corpus.stat().st_size==N
+    packed=profile=='packed-raw'; raw_start=time.monotonic(); cg0=cg_info()
+    if packed:
+        front=pack_front(d,tools); producer_in=d/'columns'; retained=front['columns']['parse.u32'] # through finish
+    else:
+        producer_in=src; retained=sum((src/f).stat().st_size for f in ('parse.u32','dictionary.refs'))
+    retired=False
     refs=members(ANCHOR); rows=N+1
     # Same finish profile; reserve its full-sized named spools conservatively
     # even though some do not coexist. 64 slices (all escapes worst case).
@@ -98,10 +134,13 @@ def build(d,tools,profile):
               lcp_runs=refs[14][2],ef_spools=refs[5][2],pieces=104*(per_piece+40),
               slices=64*(48+17*262144),control_margin=8<<20)
     bound=sum(plan.values()); assert bound<2*N
-    save(d/'scratch-plan.json',dict(parts=plan,counted_bound=bound,limit=2*N))
+    before_emit=sum(front['columns'].values())+plan['control_margin'] if packed else bound
+    post_bound=max(before_emit,bound); assert post_bound<=2*N
+    save(d/'scratch-plan.json',dict(parts=plan,counted_bound=post_bound,limit=2*N,before_emit_bound=before_emit,finish_bound=bound,
+                                   front_limit=2*N if packed else None,rule='retire fresh packed tape before starting consumers' if packed else 'prepared refs/IDs stay live'))
     (d/'merged').mkdir(); flag=d/'stop.requested'; ram=None; temp=None; extra_env={}; bands=d/'bands'
     reserve=plan['pieces']+plan['slices']+plan['control_margin']; rampeak=shmempeak=0
-    if profile=='wide-handoff':
+    if profile in ('wide-handoff','packed-raw'):
         # Only transient handoff. Retained parse, PFCK/bitmap/m14 spools and
         # published container stay on NVMe. Service cgroup charges tmpfs pages.
         assert any(line.split()[4]=='/dev/shm' and ' - tmpfs ' in line for line in Path('/proc/self/mountinfo').read_text().splitlines())
@@ -109,7 +148,7 @@ def build(d,tools,profile):
         temp=tempfile.TemporaryDirectory(prefix='xsa-volatile-',dir='/dev/shm'); ram=Path(temp.name)
         bands=ram/'bands'; extra_env={'XSA_GATE_VOLATILE_PIECES':str(ram/'pieces')}
     bands.mkdir(); start=time.monotonic()
-    cg0=cg_info(); env={k:v for k,v in os.environ.items() if not k.startswith(('XSA_','SS_','CROSS_','PFCK_','TRIE_','LD_PRELOAD'))}
+    env={k:v for k,v in os.environ.items() if not k.startswith(('XSA_','SS_','CROSS_','PFCK_','TRIE_','LD_PRELOAD'))}
     env.update(SS_LCP_SLICE_WINDOW='64',CROSS_V2_PIECES='1',CROSS_V2_PIECE_WINDOW='32',PFCK_SPACING='22')
     common=['--corpus',corpus,'--remap',src/'remap','--threads','2']; pref=d/'merged/frag'
     w={}; proc={}; iofiles={}; exitcode={}; times={}; peaks={}; logs={}; started={}; tail=None
@@ -122,8 +161,8 @@ def build(d,tools,profile):
         md=d/'merged/modeb';
         if md.exists():(md/'stop.requested').touch(exist_ok=True)
     audit=os.dup(1)
-    launch('resident',[BIN/'overlap_resident',src,flag,str(14*GIB),d/'inverse.check'],
-           env=dict(env,XSA_RESIDENT_WIDE_DICT=str(int(profile!='narrow')),XSA_RESIDENT_AUDIT_FD=str(audit)),stdout=sp.PIPE,pass_fds=(audit,)); os.close(audit)
+    launch('resident',[BIN/'overlap_resident',producer_in,flag,str(14*GIB),d/'inverse.check'],
+           env=dict(env,XSA_RESIDENT_PACKED=str(int(packed)),XSA_RESIDENT_WIDE_DICT=str(int(profile!='narrow')),XSA_RESIDENT_AUDIT_FD=str(audit)),stdout=sp.PIPE,pass_fds=(audit,)); os.close(audit)
     counted_peak=0; disk_peak=0; at_peak={}; each={}; last_disk=0; active='start'; samples={}
     with (d/'resident.log').open() as tail:
         while True:
@@ -131,6 +170,11 @@ def build(d,tools,profile):
                 if l.startswith('RESIDENT_'):say(l.rstrip())
                 if l.startswith('RESIDENT_BEGIN'):active=l.strip().split('=')[-1]
             if active=='emit' and 'sink' not in w and not flag.exists():
+                # Only this invocation's newly created packed tape. The binary
+                # has closed it and starts emitting only from anonymous arrays.
+                if packed:
+                    tape=producer_in/'dictionary.packed'; assert tape.stat().st_size==front['columns'][tape.name]
+                    tape.unlink(); retired=True; say('PACKED_RETIRE bytes='+str(front['columns'][tape.name]))
                 # Don't charge a sort's idle wall to the finish. Frozen data path.
                 launch('sink',[BIN/'pfp_sort_r',*common,'--out-prefix',pref,'--bands',bands,'--scratch-budget-bytes',str(2*N-retained)],
                        env=dict(env,**extra_env,XSA_TEST_RESIDENT_TRIPLES='1'),stdin=w['resident'].stdout,stdout=sp.DEVNULL); w['resident'].stdout.close()
@@ -143,7 +187,7 @@ def build(d,tools,profile):
                     exitcode[name]=p.wait();times[name]=time.monotonic()-started[name];say('EXIT',name,exitcode[name],round(times[name],3))
                     if exitcode[name]: request(f'{name} rc={exitcode[name]}')
             if time.monotonic()-last_disk>1 or len(exitcode)==len(w):
-                last_disk=time.monotonic(); whole,parts=footprint(d,retained); disk_peak=max(disk_peak,whole)
+                last_disk=time.monotonic(); whole,parts=footprint(d,0 if packed else retained); disk_peak=max(disk_peak,whole)
                 if ram is not None:
                     allocated,rparts=footprint(ram,0,ram=True); rparts.pop('prepared_refs_ids'); parts.update(rparts)
                     rampeak=max(rampeak,allocated); shmempeak=max(shmempeak,int(re.search(r'^shmem (\d+)$',(CG/'memory.stat').read_text(),re.M)[1]))
@@ -151,7 +195,7 @@ def build(d,tools,profile):
                 counted=sum(parts.values());
                 for k,v in parts.items(): each[k]=max(each.get(k,0),v)
                 if counted>counted_peak: counted_peak=counted;at_peak=parts
-                if counted>bound:request('counted scratch crossed reservation')
+                if counted>(before_emit if packed and not retired else bound):request('counted scratch crossed reservation')
             mem=int((CG/'memory.current').read_text()); samples[active]=max(samples.get(active,0),mem)
             if flag.exists():request('private flag')
             if sum(x['read_bytes'] for x in proc.values())>20*N or time.monotonic()-start>3600:request('runaway read/time guard')
@@ -161,8 +205,12 @@ def build(d,tools,profile):
     rc=dict(profile=profile,rc=exitcode,sampled_wall_s=times,phase_sampled_shared=samples,process=proc,sampled_peak_rss=peaks,
             counted_sampled_peak=counted_peak,counted_at_peak=at_peak,individual_sampled_peaks=each,whole_dir_sampled_allocated=disk_peak,
             wall_s=time.monotonic()-start,shared_before=cg0,shared_after=cg_info(),stop=flag.exists())
+    if packed:
+        rc.update(raw_to_product_s=time.monotonic()-raw_start,raw_front_wall_s=front['wall_s'],packed_tape_retired=retired,
+                  raw_counted_highwater=max(front['counted_front_peak'],counted_peak),raw_dir_sampled_allocated=max(front['sampled_allocated'],disk_peak),
+                  raw_worker_io={k:front['process'][k]+sum(x[k] for x in proc.values()) for k in ('read_bytes','write_bytes')})
     if ram is not None:
-        rc['volatile_handoff']=dict(reserved_bytes=reserve,sampled_tmpfs_allocated=rampeak,sampled_cgroup_shmem=shmempeak,swap_max=0,mode='restart from prepared inputs, no handoff recovery')
+        rc['volatile_handoff']=dict(reserved_bytes=reserve,sampled_tmpfs_allocated=rampeak,sampled_cgroup_shmem=shmempeak,swap_max=0,mode='replay from raw input' if packed else 'restart from prepared inputs, no handoff recovery')
         link=Path(str(pref)+'.pieces')
         if link.is_symlink() and link.readlink()==ram/'pieces':link.unlink()
         temp.cleanup()  # only this gate's fresh volatile directory

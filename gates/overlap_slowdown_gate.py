@@ -22,7 +22,7 @@ def verified(path):
 
 def main(candidate):
     i,b,o,n=verified(candidate); ref,baseline,ro,bn=verified(BASE)
-    assert n==bn==1_000_000_665 and i==ref and b['profile'] in ('wide','wide-handoff')
+    assert n==bn==1_000_000_665 and i==ref and b['profile'] in ('wide','wide-handoff','packed-raw')
     assert 'RESIDENT_INDEX wide=true' in (candidate/'resident.log').read_text()
     for meter,refmeter in [(b['shared_after'],baseline['shared_after']),(o['cgroup'],ro['cgroup'])]:
         assert all(meter[k]==refmeter[k] for k in ('memory.max','memory.swap.max','cpu.max'))
@@ -32,6 +32,11 @@ def main(candidate):
     data=dict(phase='prepared IDs/refs to completed container including pipe audit',input_bytes=n,
               reference_commit='143ade3253f95984ca48069b2d772abfa5254bf6',reference_wall_s=baseline['wall_s'],wall_s=b['wall_s'],
               strict_limit_s=n/bn*baseline['wall_s']*10,slowdown=ratio,pass_strictly_under_10x=passed)
+    if b['profile']=='packed-raw':
+        front=read(candidate/'front-end.json'); assert front['rc']==0 and b['packed_tape_retired']
+        assert b['raw_counted_highwater']<=2*n and front['counted_front_peak']<=2*n and b['raw_to_product_s']>=b['wall_s']+front['wall_s']
+        assert 'RESIDENT_INPUT packed=true' in (candidate/'resident.log').read_text()
+        data.update(phase='prepared packed words/IDs through product vs reference prepared refs/IDs',raw_to_product_s=b['raw_to_product_s'],raw_slowdown=None)
     (candidate/'speed.json').write_text(json.dumps(data,indent=2)+'\n')
     def traffic(build,key): return sum(worker[key] for worker in build['process'].values())
     goals=dict(target_under_2x=ratio<2, promotion_under_3x=ratio<3,
@@ -48,6 +53,15 @@ def main(candidate):
         goals.update(write_ratio_vs_wide_disk=drop,read_ratio_vs_wide_disk=reads,wall_ratio_vs_wide_disk=b['wall_s']/wide['wall_s'],
                      handoff_io_pass=drop<=0.5 and reads<=1.05)
         print(f"HANDOFF writes_vs_wide_disk={drop:.4f} target=<=0.5 read_ratio={reads:.4f} target=<=1.05")
+    if b['profile']=='packed-raw':
+        _,wide,_,_=verified(BASE.parent/'resident-wide-1g')
+        # The finish no longer shares corpus pages loaded by the producer. Allow
+        # one sequential-equivalent read of all cold inputs, including the audit ranks.
+        cold=sum(front['columns'].values())+n+front['columns']['parse.u32']; actual=traffic(b,'read_bytes')
+        drop=traffic(b,'write_bytes')/traffic(wide,'write_bytes'); ok=actual<=1.05*cold and drop<=0.5
+        goals.update(prepared_read_bytes=actual,cold_input_bytes=cold,prepared_write_ratio_vs_wide_disk=drop,handoff_io_pass=ok,
+                     raw_worker_io=b['raw_worker_io'],raw_time_note='measured raw-to-product, no matched raw baseline')
+        print('PACKED_IO prepared_reads',actual,'cold_input_bytes',cold,'prepared_write_ratio',round(drop,4),'raw_wall_s',round(b['raw_to_product_s'],3))
     (candidate/'goals.json').write_text(json.dumps(goals,indent=2)+'\n')
     print(f"SPEED {'PASS' if ratio<3 else 'REFUSED'} wall_s={b['wall_s']:.3f} normalized_slowdown={ratio:.4f} target=<2 promotion=<3")
     if not (goals['promotion_under_3x'] and goals.get('handoff_io_pass',True)): raise SystemExit(75)
