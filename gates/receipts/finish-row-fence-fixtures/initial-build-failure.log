@@ -1,0 +1,13 @@
+/etc/bash.bashrc: line 7: PS1: unbound variable
+In file included from gates/overlap_finish_row_fence.cpp:3:
+gates/overlap_finish_row_fence.hpp: In member function ‘void rowfence::Block::add(rowfence::U)’:
+gates/overlap_finish_row_fence.hpp:20:25: error: ‘bit_width’ is not a member of ‘std’
+   20 |         unsigned w=std::bit_width(h); ++bits[w];
+      |                         ^~~~~~~~~
+gates/overlap_finish_row_fence.cpp: At global scope:
+gates/overlap_finish_row_fence.cpp:20:20: error: ‘std::endian’ has not been declared
+   20 | static_assert(std::endian::native==std::endian::little && sizeof(size_t)==8);
+      |                    ^~~~~~
+gates/overlap_finish_row_fence.cpp:20:41: error: ‘std::endian’ has not been declared
+   20 | static_assert(std::endian::native==std::endian::little && sizeof(size_t)==8);
+      |                                         ^~~~~~

@@ -1,0 +1,33 @@
+{
+  "banked_utc": "2026-11-24T19:33:55.430492+00:00",
+  "base_revision": "b14b596b9ee8df409639cfe4e20692634bfe9107",
+  "failure": {
+    "original_directory": "/tmp/verified-row-fence-7r7yRx",
+    "process": "proc_fd3c",
+    "rc": 1
+  },
+  "files": {
+    "exits.log": "db6b89f962f3268fdcbfaa0b909a31af30dee64b2fdabaed3bafcddba6f36899",
+    "fixtures.log": "8f2e2b8cffe0e1c9959a314d8015479817ab59d37a5c4c2926e20c8b97b34b30",
+    "initial-build-failure.log": "bbfda496c3ae775b1cc835e520d15ba7918fd5875698d11f81863f73cce87697",
+    "initial-exits.log": "91d957f8f2748a950526d4d21e0d5cd3bf5518e6c60b1beb470a13be1f978b1d",
+    "member.log": "f44415d5e6b7835f290b19be47ca9cba712b5a20a155b5a25d41aeb0135f12fb"
+  },
+  "native_tools": {
+    "blocks": "67e57825ef10797527427c500b111a6b0ff6a314d3ed7e69ac706a29aa419e0f",
+    "fixture": "d03eb1d4f47aed0a2cb19edc8185d9c719ba45b1ceb65d42cc9dcad7759e1659",
+    "real": "d7d887a5a6adabbcbf7d751ee46758316c0fe6d9bfb7d6c33976843ef42ed24b"
+  },
+  "sources": {
+    "gates/overlap_finish_row_fence.cpp": "03fc0b1ac4831e484fd4388e84a8f698659a9750a441c45c53713f1eeb0bc32a",
+    "gates/overlap_finish_row_fence.hpp": "7e53844e71dab1317799877f5b6b9bb4d8bdef17d1b4b314260660ab03f5b1e4",
+    "gates/overlap_finish_row_fence_blocks.cpp": "d99b686ed8b348b6bdf5cec672f40c62c8a561bc0317cebf4f02769b1d54100e",
+    "gates/overlap_finish_row_fence_fixtures.sh": "089e96d640dcaa91e1a811610f31a7e41819d35b8ef6c1adb804a82ec464ad4d",
+    "gates/overlap_finish_row_fence_test.py": "46e01f4e9974c36df33307b222330f63562ba07e5dc45a8df1475c14d16c5422"
+  },
+  "success": {
+    "original_directory": "/tmp/verified-row-fence-ebNm3L",
+    "process": "proc_276a",
+    "rc": 0
+  }
+}

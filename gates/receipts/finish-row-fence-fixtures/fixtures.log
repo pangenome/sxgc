@@ -1,0 +1,2 @@
+PASS 6 exact raw row43 -> narrow streams incl SXLS and 8192-row EOF cuts, 59 refused inputs/caps with final packet withheld, 36 m14 boundary blocks, stalled read/write STOP, wrong rung, file and deadline refusals
+PASS 12276 finite-credit schedules, 7079 necessary-slice refusals, both crossed credit stalls, malformed evidence, v8 release floors, held-space model and retired launcher
