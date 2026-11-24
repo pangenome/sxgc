@@ -1,16 +1,34 @@
-// AMENDMENT R: the deepest level's SA kernel via FFI - libsais
-// (vendored at runtime/bit6/third_party/libsais, Apache-2.0).
-// The opt-in wide *byte dictionary* API is a separate object in the archive;
-// it does not promote the uncertified recursive integer residual.
 fn main() {
-    let src = env!("CARGO_MANIFEST_DIR").to_string() + "/../runtime/bit6/third_party/libsais/token-libsais.c";
-    println!("cargo:rerun-if-changed={}", src);
+    let narrow = "../runtime/bit6/third_party/libsais";
+    let wide = "vendor/libsais64";
+    for file in ["token-libsais.c", "token-libsais.h", "libsais.h"] {
+        println!("cargo:rerun-if-changed={narrow}/{file}");
+    }
+    println!("cargo:rerun-if-changed={wide}/libsais64.c");
+    println!("cargo:rerun-if-changed={wide}/libsais64.h");
+    println!("cargo:rerun-if-env-changed=XSA_BUILD_DICT_OPENMP");
+    println!("cargo:rustc-check-cfg=cfg(dict_openmp)");
     let mut b = cc::Build::new();
-    println!("cargo:rerun-if-changed=vendor/libsais64/libsais64.c");
-    println!("cargo:rerun-if-changed=vendor/libsais64/libsais64.h");
-    b.file(src).file("vendor/libsais64/libsais64.c")
-        .include("../runtime/bit6/third_party/libsais").opt_level(3);
-    // the OPENMP variant is not built (the sequential libsais_int is
-    // the certified kernel; the parallel guard is upstream's own flag)
+    b.file(format!("{narrow}/token-libsais.c"))
+        .file(format!("{wide}/libsais64.c"))
+        .include(narrow)
+        .opt_level(3);
+    let omp = match std::env::var("XSA_BUILD_DICT_OPENMP").as_deref() {
+        Ok("1") => true,
+        Ok("0") | Err(std::env::VarError::NotPresent) => false,
+        _ => panic!("XSA_BUILD_DICT_OPENMP must be 0 or 1"),
+    };
+    if omp {
+        assert!(
+            std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
+                && b.get_compiler().is_like_gnu(),
+            "dictionary OpenMP build requires Linux/GCC/libgomp"
+        );
+        b.define("LIBSAIS_OPENMP", None).flag("-fopenmp");
+        println!("cargo:rustc-cfg=dict_openmp");
+    }
     b.compile("libsais_r");
+    if omp {
+        println!("cargo:rustc-link-lib=gomp");
+    }
 }

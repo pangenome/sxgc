@@ -525,7 +525,8 @@ fn run<C: Coord>(ten: bool, fixture: bool) {
     let retained = 12 * (k + 1) + (5 + 2 * cb) * m + 2 * cb * m.div_ceil(16);
     let sa_bytes = if wide { 8 * d } else { 4 * d };
     let owner_bytes = if wide { RankStarts::bytes(d) } else { 4 * d };
-    let dict_bound = d + sa_bytes + retained + (64 << 20);
+    let dict_sort = index::DictSort::from_env(wide);
+    let dict_bound = d + sa_bytes + retained + (64 << 20) + dict_sort.workspace_bytes(d);
     let mode = radix::Mode::from_env(n);
     let emit_bound =
         d + sa_bytes + owner_bytes + retained + 40 * k + (8 << 20) + mode.extra_bytes(d);
@@ -715,7 +716,7 @@ fn run<C: Coord>(ten: bool, fixture: bool) {
 
     let p = phase("dictionary_sort");
     // SEP < END < any raw byte. Equal finite tails are merged by continuation.
-    let sa = Suffixes::sort(&dict.bytes, wide);
+    let sa = dict_sort.sort(&dict.bytes);
     p.end();
     let p = phase("owner_map");
     use radix::Owners;
