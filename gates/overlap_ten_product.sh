@@ -10,17 +10,7 @@ pinned_repo() {
 }
 # Detect old (non-locking) harnesses and timing workers as well as locking
 # concurrent matched invocations. The operator still schedules the host.
-idle() {
-    python3 - <<'PYIDLE'
-from pathlib import Path
-import os
-for cmd in Path('/proc').glob('[0-9]*/cmdline'):
-    if int(cmd.parent.name) in (os.getpid(),os.getppid()):continue
-    try:a=[Path(os.fsdecode(x)).name for x in cmd.read_bytes().split(b'\0') if x]
-    except (OSError,ValueError):continue
-    if any(x in ('overlap_resident','pfp_sort_r','xsa_finish_cur','overlap_resident_gate.py','overlap_ten_product.sh') or x.startswith('overlap_') and x.endswith('.sh') for x in a):raise SystemExit('other timing arm: '+str(cmd.parent))
-PYIDLE
-}
+idle() { python3 -B gates/overlap_timing_idle.py; }
 clock_check() { if [[ $(date +%s) -ge $deadline ]];then echo 'deadline expired' >&2;exit 75;fi; }
 case $#:${1:-} in
 0:) ;;

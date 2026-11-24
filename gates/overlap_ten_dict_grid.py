@@ -13,6 +13,7 @@ import time
 from overlap_resident_gate import ROOT, TEN, cg_info, save
 from overlap_radix_product_score import metrics
 from private_cold import cold
+from overlap_timing_idle import exclusive
 
 SANDBOX = ROOT / 'sandbox'
 SOURCE = SANDBOX / 'packed-front-10g-YebiCY'
@@ -28,23 +29,6 @@ def load(d, name):
 
 def before(deadline):
     assert time.time() < int(deadline), 'absolute deadline expired'
-
-
-def exclusive(own_pid=None):
-    # Other managed producers, validators and builds do not all share a lock.
-    for cmd in Path('/proc').glob('[0-9]*/cmdline'):
-        if int(cmd.parent.name) == own_pid:
-            continue
-        try:
-            args = cmd.read_bytes().rstrip(b'\0').split(b'\0')
-        except (FileNotFoundError, PermissionError, ProcessLookupError):
-            continue
-        names = [os.path.basename(x) for x in args[:3]]
-        if any(x in (b'overlap_resident', b'pfp_sort_r', b'overlap_resident_gate.py', b'cargo',
-                     b'xsa_finish_cur', b'overlap_ten_product.sh', b'overlap_radix_product.sh',
-                     b'overlap_resident_gate.sh', b'overlap_radix_stage.sh', b'cc1', b'cc1plus', b'rustc') or
-               (x.startswith(b'overlap_') and (b'100g' in x or x.endswith(b'_gate.sh'))) for x in names):
-            raise RuntimeError(f'concurrent managed process: {cmd.parent.name} {names}')
 
 
 def prerequisites(ten, pair, deadline):
@@ -109,18 +93,23 @@ def worker(d, exe, ten, pair, deadline):
     with open('/dev/full','wb') as no_rows, (d/'resident.log').open('xb') as log:
         p = sp.Popen([exe,col,d/'stop.requested',str(140<<30)], env=env, stdout=no_rows, stderr=sp.PIPE)
         def drain():
-            for line in p.stderr: log.write(line); log.flush()
+            for line in p.stderr:
+                log.write(line); log.flush()
+                if line.startswith((b'DICT_GRID ',b'RESIDENT_DICT_SORT ')):
+                    print(line.decode().rstrip(),flush=True)
         reader = threading.Thread(target=drain); reader.start()
         try:
             while p.poll() is None:
-                if flag.exists():
-                    # libsais cannot poll the flag inside a long native call.
-                    p.terminate()
-                    break
-                before(deadline); exclusive(p.pid)
-                time.sleep(1)
+                # No signals to an in-flight native sort. It checks the flag at
+                # the next phase/hash boundary. Reserve ample time at admission.
+                if not flag.exists():
+                    try: before(deadline); exclusive(p.pid)
+                    except (AssertionError,RuntimeError) as e:
+                        flag.write_text(str(e)+'\n'); print('STOP_REQUEST',e,flush=True)
+                try: p.wait(timeout=5)
+                except sp.TimeoutExpired: pass
         finally:
-            if p.poll() is None: p.kill()
+            if p.poll() is None: flag.touch()
             p.wait(); reader.join()
             cg = cg_info(); save(d/'exit.json',dict(rc=p.returncode,cgroup=cg))
     if flag.exists() or p.returncode == 75: raise SystemExit(75)

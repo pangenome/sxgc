@@ -59,7 +59,9 @@ def verified_arm(d):
         sink=d/'sink.log' if (d/'sink.log').exists() else d/'sink-metrics.log'
         lines=sink.read_text().splitlines();assert [x for x in lines if x.startswith('SS_PRIVATE_SXLS_RECLAIM ')]==(['SS_PRIVATE_SXLS_RECLAIM window=64 resume=unsupported'] if reclaim else [])
         marks=b['sxls_markers'];expected_markers=128 if reclaim else 2*((TEN.n+1+262143)//262144)
-        assert marks['bands_on_tmpfs'] and marks['reclaim']==bool(reclaim) and marks['exact_final']==expected_markers and marks['sampled_peak']==marks['exact_final']
+        assert marks['bands_on_tmpfs'] and marks['reclaim']==bool(reclaim) and marks['exact_final']==expected_markers and marks['sampled_peak']>0
+        # scandir+stat is not an atomic dentry snapshot. Exact quiescent count
+        # is a hard invariant; report the sampled peak without assuming equality.
         assert all(b['individual_sampled_peaks'].get(k,0)>0 for k in ('ram_slices','ram_pieces'))
         assert not any(b['individual_sampled_peaks'].get(k,0) for k in ('slices','pieces','frag.chi-bitmap'))
         assert [x for x in lines if x.startswith('SS_SXLS_WRITER ')]==[f'SS_SXLS_WRITER batched_escapes={str(bool(batch)).lower()}']
