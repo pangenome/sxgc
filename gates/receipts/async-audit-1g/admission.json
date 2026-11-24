@@ -1,0 +1,12 @@
+{
+  "baseline_raw_s": 304.062186694704,
+  "deadline": 1795527665,
+  "decisions": {
+    "10g": "packed-10g-l2-b1-t4-r1",
+    "1g": "packed-radix-4-batch"
+  },
+  "expected_profile": "packed-radix-4-batch",
+  "required_s": 1364,
+  "rev": "75869a3b4010f6b086f9fb5e76d3a9ce68d5bc8e",
+  "source": "/mnt/nvme2n1/erikg/TAPEREADER/climb/rung1/pile-slice1g.bin"
+}

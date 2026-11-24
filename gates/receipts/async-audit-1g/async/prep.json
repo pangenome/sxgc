@@ -1,0 +1,107 @@
+{
+  "arm": "async",
+  "cgroup_after": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 2991297\nuser_usec 1553776\nsystem_usec 1437521\ncore_sched.force_idle_usec 0\nnr_periods 45\nnr_throttled 3\nthrottled_usec 77008\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 1560\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "201326592",
+    "memory.swap.max": "0"
+  },
+  "cgroup_before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 81871\nuser_usec 60904\nsystem_usec 20967\ncore_sched.force_idle_usec 0\nnr_periods 1\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "13516800",
+    "memory.swap.max": "0"
+  },
+  "mincore_checked_pages": {
+    "in/corpus": 244141,
+    "in/remap": 1,
+    "inverse.check": 31040,
+    "oracle-corpus": 244141
+  },
+  "mincore_resident_pages": 0,
+  "private_copy_and_cold": {
+    "per_device_io": null,
+    "read_cap": 3067110859,
+    "wall_s": 3.313422500155866,
+    "worker_cpu_s": 2.4282365240000003,
+    "worker_io": {
+      "read_bytes": 0,
+      "write_bytes": 2127147008
+    },
+    "write_cap": 3067110859
+  },
+  "private_stat": {
+    "in/corpus": [
+      66308,
+      33287229439,
+      1000000665,
+      1795525659390797835,
+      1795525659391797835
+    ],
+    "in/remap": [
+      66308,
+      33290845312,
+      256,
+      1795525660938797727,
+      1795525660938797727
+    ],
+    "inverse.check": [
+      66308,
+      32235565406,
+      127136104,
+      1795525661106797716,
+      1795525661106797716
+    ],
+    "oracle-corpus": [
+      66308,
+      32235565405,
+      1000000665,
+      1795525660894797730,
+      1795525660894797730
+    ]
+  },
+  "revision": "75869a3b4010f6b086f9fb5e76d3a9ce68d5bc8e",
+  "sha256": {
+    "in/corpus": "c382daa53d0e66fdc921c32d356961b7e8189ceee0a435bb3b66e06b203ebb61",
+    "in/remap": "e7dbaf89d26000465d6bc317292b350d83c4e0fc5c5380d924a4381f3d929c46",
+    "inverse.check": "fb61ecc02387c80245d99bee6b094715dbdebda957d9d3a0b4c0edcb18997697",
+    "oracle-corpus": "c382daa53d0e66fdc921c32d356961b7e8189ceee0a435bb3b66e06b203ebb61"
+  },
+  "source_stat": {
+    "in/corpus": [
+      66308,
+      10830449283,
+      1000000665,
+      1795234658861019659,
+      1795234658861019659
+    ],
+    "in/remap": [
+      66308,
+      10830449284,
+      256,
+      1795234666777019108,
+      1795234666777019108
+    ],
+    "inverse.check": [
+      66308,
+      10830492551,
+      127136104,
+      1795456081928632820,
+      1795456081928632820
+    ],
+    "oracle-corpus": [
+      66308,
+      10830449283,
+      1000000665,
+      1795234658861019659,
+      1795234658861019659
+    ]
+  },
+  "status": "PRIVATE_COLD"
+}

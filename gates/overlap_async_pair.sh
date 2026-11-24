@@ -2,7 +2,9 @@
 # Optional same-binary cold 1 GB full products with the verifier attached (no hash-sink).
 set -euo pipefail
 [[ $# == 1 && $1 =~ ^[1-9][0-9]{9}$ ]] && (( $1<=1795531169 && $1>$(date +%s) )) || exit 75
-cd "$(dirname "$0")/..";source gates/overlap_pin.sh;overlap_pin_series gates/overlap_async_pair.sh "$1"
+cd "$(dirname "$0")/.."
+[[ ! -e gates/receipts/async-audit-1g/comparison.json ]] || { echo 'Audit pair is banked; replay gates/overlap_async_review.py, do not repeat measured arms.' >&2; exit 75; }
+source gates/overlap_pin.sh;overlap_pin_series gates/overlap_async_pair.sh "$1"
 exec 9>"${XDG_RUNTIME_DIR:?}/overlap-ten-timing.lock";flock -n 9 || exit 75
 end=$1;repo=$PWD;s=/mnt/nvme2n1/erikg/TAPEREADER/sandbox;d=$(mktemp -d "$s/async-pair-1g-XXXXXX");t=$d/tools;echo "ASYNC_SERIES receipt=$d"
 py=/usr/bin/python3;pair=$repo/gates/overlap_async_pair.py;worker=$repo/gates/overlap_resident_gate.py

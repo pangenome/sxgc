@@ -1,0 +1,4 @@
+SS_TAPE_START corpus_bytes=1000000665 out_prefix=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/async-pair-1g-qci1PA/async/merged/frag threads=2 memory_gb=196 rule=amendment_r_transliteration
+SS_SXLS_WRITER batched_escapes=true
+SS_SCRATCH_PEAK peak_live_bytes=624936898 budget_bytes=1872865226 pairs_live=0 pieces=622386658 bands=0 columns_legal_sublinear=0 rule=amendment_b4_the_scratch_law;operator_clause_2xN;the_fat_is_named
+SS_DONE_R overlap_stream rows=1000000666 total_s=210.13

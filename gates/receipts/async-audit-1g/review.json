@@ -1,0 +1,52 @@
+{
+  "async_over_original_default_wall_for_context_not_pair": {
+    "prepared": 1.0843871448927724,
+    "raw": 1.0585672764762177
+  },
+  "async_worker_s": {
+    "worker_wall_s": 206.044219,
+    "worker_write_s": 131.810029
+  },
+  "blocks": 66593,
+  "build_cpu_ratio": 0.8692228224825513,
+  "container_sha256": "b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3",
+  "descriptors": 938179281,
+  "finite_groups": 798648752,
+  "lanes": 4,
+  "matched_hypothesis": true,
+  "max_group": 59835,
+  "max_range_rows": 103397,
+  "mean_data_packet_bytes": 180199.23986004535,
+  "post_front_io_ratio": {
+    "read_bytes": 1.0000049220753437,
+    "write_bytes": 0.9999772041844
+  },
+  "publisher": {
+    "async": {
+      "drain_s": 0.001302,
+      "enqueue_s": 0.069043,
+      "ordered_receive_s": 81.254794,
+      "other_publisher_elapsed_s": 0.3506009999999833,
+      "plan_s": 2.519072,
+      "publisher_audit_write_s": 5e-06,
+      "sink_write_s": 124.371996
+    },
+    "sync": {
+      "ordered_receive_s": 11.49942,
+      "other_publisher_elapsed_s": 0.4487450000000024,
+      "plan_s": 3.430681,
+      "publisher_audit_write_s": 135.759585,
+      "sink_write_s": 93.518114
+    }
+  },
+  "ranges": 66589,
+  "rows": 1000000666,
+  "scope": "verified 1 GB matched audit pair; publisher partition excludes overlapping audit worker and verifier. No new default or larger-rung qualification.",
+  "score_sha256": "97a41868eaa5e8e781ae32470d0302faf025997df6eccdf1d5513203c98bf7fb",
+  "time_ratio": {
+    "emit": 0.8524881809313543,
+    "prepared": 0.8894960280464527,
+    "raw": 0.8986607380879024
+  },
+  "verified_full_products": true
+}

@@ -123,7 +123,8 @@ def score(d):
 
 if __name__=='__main__':
     need(__debug__,'assertions required');mode=sys.argv[1];d=Path(sys.argv[2]);
-    if mode=='admit':private(d);need(not any(d.iterdir()),'not a fresh study');save(d/'admission.json',published(int(sys.argv[3])))
+    if mode=='admit':
+        need(not (BANK/'async-audit-1g/comparison.json').exists(),'closed measured pair; replay overlap_async_review.py');private(d);need(not any(d.iterdir()),'not a fresh study');save(d/'admission.json',published(int(sys.argv[3])))
     elif mode=='prepare':prepare(d,Path(sys.argv[3]),sys.argv[4],int(sys.argv[5]))
     elif mode=='single':print('AUDIT_VERIFIED',json.dumps(measurements(d,d.name)))
     elif mode=='score':v=score(d);save(d/'comparison.json',v);print('AUDIT_PAIR',json.dumps(v))

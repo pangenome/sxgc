@@ -1,0 +1,126 @@
+{
+  "async_audit": {
+    "arm": "async",
+    "build_cpu_s": 917.238307,
+    "certificate_wall_s": 0.76,
+    "cpu_by_worker_s": {
+      "finish": 288.7,
+      "resident": 492.76,
+      "sink": 69.08
+    },
+    "oracle_cpu_s": 112.58,
+    "oracle_io": {
+      "read_bytes": 1000001536,
+      "write_bytes": 4096
+    },
+    "oracle_s": 322.3900418523699,
+    "peak_shared": 14337560576,
+    "prepared_counted": 1375646741,
+    "prepared_device_io": null,
+    "prepared_io": {
+      "read_bytes": 2496520192,
+      "write_bytes": 1796780032
+    },
+    "prepared_reserved": 1400704518,
+    "private_copy_cold": {
+      "per_device_io": null,
+      "read_cap": 3067110859,
+      "wall_s": 3.313422500155866,
+      "worker_cpu_s": 2.4282365240000003,
+      "worker_io": {
+        "read_bytes": 0,
+        "write_bytes": 2127147008
+      },
+      "write_cap": 3067110859
+    },
+    "queue_reserved": 6291456,
+    "raw_counted": 1635681177,
+    "raw_device_io": null,
+    "raw_io": {
+      "read_bytes": 3496521728,
+      "write_bytes": 5057675264
+    },
+    "tee": {
+      "audit_bytes": 12000007992,
+      "data_bytes": 12000007980,
+      "drain_s": 0.001302,
+      "enqueue_s": 0.069043,
+      "peak_inflight_blocks": 8,
+      "sink_bytes": 12000007992,
+      "worker_wall_s": 206.044219,
+      "worker_write_s": 131.810029
+    },
+    "wall": {
+      "audit_writes": 5e-06,
+      "emit": 208.566813,
+      "prepared": 292.38739159237593,
+      "raw": 321.87028084881604,
+      "sink_writes": 124.371996
+    },
+    "whole_private_allocated": 4837920768
+  },
+  "build_cpu_ratio": 0.8692228224825513,
+  "matched_product_speed_io_cpu_pass": true,
+  "post_front_io_ratio": {
+    "read_bytes": 1.0000049220753437,
+    "write_bytes": 0.9999772041844
+  },
+  "scope": "standalone fixed 1 GB A/B only. Async audit_write_s covers END; worker times overlap. No change to the banked rung policy, no 10 GB or 100 GB projection.",
+  "sync": {
+    "arm": "sync",
+    "build_cpu_s": 1055.239558,
+    "certificate_wall_s": 0.77,
+    "cpu_by_worker_s": {
+      "finish": 275.7,
+      "resident": 630.26,
+      "sink": 75.71
+    },
+    "oracle_cpu_s": 145.36,
+    "oracle_io": {
+      "read_bytes": 1000001536,
+      "write_bytes": 4096
+    },
+    "oracle_s": 358.90173983201385,
+    "peak_shared": 14335475712,
+    "prepared_counted": 1375646741,
+    "prepared_device_io": null,
+    "prepared_io": {
+      "read_bytes": 2496507904,
+      "write_bytes": 1796820992
+    },
+    "prepared_reserved": 1400704518,
+    "private_copy_cold": {
+      "per_device_io": null,
+      "read_cap": 3067110859,
+      "wall_s": 3.545729801990092,
+      "worker_cpu_s": 2.447135052,
+      "worker_io": {
+        "read_bytes": 4096,
+        "write_bytes": 2127147008
+      },
+      "write_cap": 3067110859
+    },
+    "queue_reserved": 6291456,
+    "raw_counted": 1635681177,
+    "raw_device_io": null,
+    "raw_io": {
+      "read_bytes": 3496607744,
+      "write_bytes": 5057720320
+    },
+    "tee": {},
+    "wall": {
+      "audit_writes": 135.759585,
+      "emit": 244.656545,
+      "prepared": 328.71129535511136,
+      "raw": 358.16662195976824,
+      "sink_writes": 93.518114
+    },
+    "whole_private_allocated": 4830748672
+  },
+  "time_ratio": {
+    "emit": 0.8524881809313543,
+    "prepared": 0.8894960280464527,
+    "raw": 0.8986607380879024
+  },
+  "verified_full_products": true
+}

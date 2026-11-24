@@ -1,0 +1,25 @@
+RESIDENT_BEGIN phase=load_ids
+RESIDENT_INPUT packed=true source_bytes=1242219181 n=1000000665 m=31784026 k=25336659
+RESIDENT_TRANSPORT row43=false text_width=4 lcp_width=4 rank_width=4
+RESIDENT_INDEX wide=true sa_bytes=9329673640 owner_bytes=291552304 start_bytes=202693280 native_above_i32=false
+RESIDENT_PLAN n=1000000665 m=31784026 k=25336659 dict_symbols=1166209205 descriptors=938179281 parse_bound=2307264477 aux_bound=4058933718 dict_bound=11296115983 emit_bound=12569740055 array_grant=15032385536
+RESIDENT_PHASE phase=load_ids seconds=1.568207 peak_rss=1574416384 read_bytes=1369362432 write_bytes=0
+RESIDENT_BEGIN phase=parse_sort
+RESIDENT_PHASE phase=parse_sort seconds=3.041662 peak_rss=2308317184 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=check_ranks
+RESIDENT_CHECK inverse_ranks=31784026 virtual_end=0
+RESIDENT_PHASE phase=check_ranks seconds=0.385075 peak_rss=1826770944 read_bytes=127139840 write_bytes=0
+RESIDENT_BEGIN phase=pack_dictionary
+RESIDENT_PHASE phase=pack_dictionary seconds=2.046583 peak_rss=3093954560 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=aligned_and_lists
+RESIDENT_PHASE phase=aligned_and_lists seconds=12.977493 peak_rss=2409316352 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=dictionary_sort
+RESIDENT_DICT_SORT kernel=wide_via_narrow wide=true selected_threads=1 fs=0 thread_workspace_bytes=0
+RESIDENT_PHASE phase=dictionary_sort seconds=49.715172 peak_rss=11231477760 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=owner_map
+RESIDENT_PHASE phase=owner_map seconds=0.208582 peak_rss=11523031040 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=emit
+RESIDENT_RADIX_PLAN lanes=4 sa_ranks_per_tile=16384 raw_tiles=71180 ranges=66589 empty=4565 adjusted=8521 absorbed=26 heap_bound=12462060 block_bytes=786432 row_queue_reserved=6291456 plan_s=3.430681
+RESIDENT_RADIX_JOIN lanes=4 ranges=66589 blocks=66593 max_range_rows=103397 order_wait_s=11.499420 lane_rows=[250039775, 250201957, 250167900, 249591033] serial_row_comparisons=0
+RESIDENT_STREAM rows=1000000666 descriptors=938179281 groups=798648752 max_group=59835 sink_write_s=93.518114 audit_write_s=135.759585
+RESIDENT_PHASE phase=emit seconds=244.656545 peak_rss=11535790080 read_bytes=0 write_bytes=4096

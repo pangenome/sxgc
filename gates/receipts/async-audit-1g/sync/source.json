@@ -1,0 +1,20 @@
+{
+  "complete_arm": true,
+  "identity": true,
+  "score": "see goals/comparison separately, not attested by this copy",
+  "selected_logs": {
+    "finish.log": {
+      "original_bytes": 560184,
+      "original_lines": 7308,
+      "selected_lines": 17,
+      "sha256": "0299a131ec095fe39da40bbc51e791bc69190fdd4d9e616b9f48c522c4e22aa2"
+    },
+    "sink.log": {
+      "original_bytes": 845119,
+      "original_lines": 3823,
+      "selected_lines": 4,
+      "sha256": "b9bd3127fbf418c43cfe48fb6f1af5fe95faa88db36e7a7be738f8425f1605aa"
+    }
+  },
+  "source": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/async-pair-1g-qci1PA/sync"
+}
