@@ -8,6 +8,9 @@ from pathlib import Path
 from overlap_resident_gate import ONE, THREE
 
 def read(path,name): return json.loads((path/name).read_text())
+def binaries(arm):
+    return {Path(p).name:h for h,p in (l.split('  ',1) for l in (arm/'binaries.sha').read_text().splitlines() if '  /' in l)}
+
 def main(d):
     base=Path(__file__).resolve().parent/'receipts/packed-raw-1g'
     for arm,cfg in ((base,ONE),(d,THREE)):
@@ -30,6 +33,22 @@ def main(d):
     result=dict(relative_to='verified 1 GB raw packed product; normalized by input bytes',normalized_wall=ratios,
                 target_under_2x=max(ratios.values())<2,promotion_under_3x=max(ratios.values())<3,
                 prepared_attributed_read_bytes=rr,cold_input_bytes=cold,prepared_writes_vs_disk_control_per_byte=wr,normalized_io_pass=io_ok)
+    if b['profile']=='packed-3g-bitmap':
+        control=base.parent/'packed-native-3g'; cb=read(control,'build.json'); cf=read(control,'front-end.json')
+        assert cb['profile']=='packed-3g' and read(control,'identity.json')==ident
+        for key in ('D','columns','m','k','descriptors','array_bounds'):assert f[key]==cf[key]
+        for k,v in binaries(control).items(): assert binaries(d).get(k)==v,k
+        bm=b['bitmap_placement']; expected=(THREE.n+1+7)//8
+        assert bm==dict(bytes_reserved=expected,sampled_bytes=expected,events=['GATE_BITMAP create=tmpfs exclusive=1','GATE_BITMAP unlink=tmpfs'],empty_after_finish=True),bm
+        assert b['individual_sampled_peaks'].get('frag.chi-bitmap',0)==0 and cb['individual_sampled_peaks']['frag.chi-bitmap']==expected
+        assert b['volatile_handoff']['reserved_bytes']==cb['volatile_handoff']['reserved_bytes']+expected
+        assert read(d,'scratch-plan.json')==read(control,'scratch-plan.json')
+        ratios_io={k:sum(p[k] for p in b['process'].values())/sum(p[k] for p in cb['process'].values()) for k in ('read_bytes','write_bytes')}
+        raw_ratios={k:v/cb['raw_worker_io'][k] for k,v in b['raw_worker_io'].items()}
+        wall={k:b[k]/cb[k] for k in ('wall_s','raw_to_product_s')}
+        matched=ratios_io['read_bytes']<=1.05 and ratios_io['write_bytes']<=0.50 and max(wall.values())<3
+        result.update(matched_prepared_io=ratios_io,matched_raw_io=raw_ratios,matched_wall=wall,matched_bitmap_pass=matched)
+        io_ok=io_ok and matched
     (d/'goals.json').write_text(json.dumps(result,indent=2)+'\n');print('NATIVE_3G_SCORE',result,flush=True)
     if not(io_ok and result['promotion_under_3x']):raise SystemExit(75)
 

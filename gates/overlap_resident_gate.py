@@ -1,4 +1,4 @@
-"""Measured, rung1-only, from prepared lexparse. Invoked by overlap_resident_gate.sh.
+"""Measured 1/3 GB overlap gates, from raw or prepared lexical parse.
 Build stdout is reserved for the separate raw verifier. No Python per-row path.
 """
 from dataclasses import dataclass
@@ -21,7 +21,7 @@ class Rung:
 ROOT=Path('/mnt/nvme2n1/erikg/TAPEREADER')
 ONE=Rung(1_000_000_665,'b20ceebe91707dbac80c2ea12c99e704c6b6a734293f3a558c90ce090c21f6a3',ROOT/'climb/rung1/run_wide/product.sxi2',Path('/tmp/xsa_finish_cur'),('--with-chi','--container-stream'),20,14,1400)
 THREE=Rung(3_000_000_000,'3935e8f1d220092d2cd12081938748e8a62f02e882bd021781ec7c3d0cabe7f3',ROOT/'bins-p1/run14e/reader/product.sxi2',ROOT/'bins-p1/bin/xsa_finish',(),60,42,4200)
-def config(profile): return THREE if profile=='packed-3g' else ONE
+def config(profile): return THREE if profile in ('packed-3g','packed-3g-bitmap') else ONE
 GIB = 1 << 30
 CG = Path('/sys/fs/cgroup')/Path('/proc/self/cgroup').read_text().strip().split('::/')[1]
 
@@ -73,7 +73,7 @@ def footprint(d,retained,ram=False):
             if e.is_dir(follow_symlinks=False):stack.append(e.path);continue
             rel=Path(e.path).relative_to(d); f=e.name
             if rel.parts[0]=='in' or len(rel.parts)==1 and (f in ('oracle-corpus','inverse.check','product.sxi2','product.sxi2.partial','stop.requested') or f.endswith(('.log','.json','.sha'))):continue
-            if ram: group={'pieces':'ram_pieces','bands':'ram_slices'}[rel.parts[0]]
+            if ram: group={'pieces':'ram_pieces','bands':'ram_slices','bitmap':'ram_bitmap'}[rel.parts[0]]
             elif rel.parts[0]=='columns': group='generated_lexparse'
             else: group=rel.parts[0] if len(rel.parts)==1 else ('pieces' if '.pieces' in str(rel.parent) else 'slices' if rel.parts[0]=='bands' else f)
             parts[group]=parts.get(group,0)+st.st_size
@@ -128,7 +128,8 @@ def pack_front(d,tools,cfg):
     save(d/'front-end.json',front); say('PACKED_FRONT',m,k,peak_counted,round(front['wall_s'],3)); return front
 
 def build(d,tools,profile):
-    assert profile in ('narrow','wide','wide-handoff','packed-raw','packed-3g'); cfg=config(profile); N=cfg.n
+    assert profile in ('narrow','wide','wide-handoff','packed-raw','packed-3g','packed-3g-bitmap'); cfg=config(profile); N=cfg.n
+    bitmap=profile=='packed-3g-bitmap'
     assert (CG/'memory.max').read_text().strip()==str(cfg.shared_gib*GIB) and (CG/'memory.swap.max').read_text().strip()=='0'
     src=d/'in'; corpus=src/'corpus'; assert corpus.stat().st_size==N
     packed=profile.startswith('packed-'); raw_start=time.monotonic(); cg0=cg_info()
@@ -151,14 +152,17 @@ def build(d,tools,profile):
     save(d/'scratch-plan.json',dict(parts=plan,counted_bound=post_bound,limit=2*N,before_emit_bound=before_emit,finish_bound=bound,
                                    front_limit=2*N if packed else None,rule='retire fresh packed tape before starting consumers' if packed else 'prepared refs/IDs stay live'))
     (d/'merged').mkdir(); flag=d/'stop.requested'; ram=None; temp=None; extra_env={}; bands=d/'bands'
-    reserve=plan['pieces']+plan['slices']+plan['control_margin']; rampeak=shmempeak=0
+    # Bitmap already charged once in plan/bound. A tmpfs copy does not
+    # coexist with a disk copy. Additionally reserve its RAM until unlink.
+    reserve=plan['pieces']+plan['slices']+plan['control_margin']+(plan['bitmap'] if bitmap else 0); rampeak=shmempeak=0
     if profile=='wide-handoff' or packed:
-        # Only transient handoff. Retained parse, PFCK/bitmap/m14 spools and
-        # published container stay on NVMe. Service cgroup charges tmpfs pages.
+        # PFCK, m14, EF spools, retained parse and product always on NVMe.
+        # Bitmap stays there too except in the explicit one-file A/B.
         assert any(line.split()[4]=='/dev/shm' and ' - tmpfs ' in line for line in Path('/proc/self/mountinfo').read_text().splitlines())
         assert shutil.disk_usage('/dev/shm').free>=reserve and cfg.arrays_gib*GIB+reserve+wit_budget(cfg)<cfg.shared_gib*GIB
         temp=tempfile.TemporaryDirectory(prefix='xsa-volatile-',dir='/dev/shm'); ram=Path(temp.name)
         bands=ram/'bands'; extra_env={'XSA_GATE_VOLATILE_PIECES':str(ram/'pieces')}
+        if bitmap:(ram/'bitmap').mkdir(mode=0o700)
     bands.mkdir(); start=time.monotonic()
     env={k:v for k,v in os.environ.items() if not k.startswith(('XSA_','SS_','CROSS_','PFCK_','TRIE_','LD_PRELOAD'))}
     env.update(SS_LCP_SLICE_WINDOW='64',CROSS_V2_PIECES='1',CROSS_V2_PIECE_WINDOW='32',PFCK_SPACING='22')
@@ -193,8 +197,17 @@ def build(d,tools,profile):
                 # Don't charge a sort's idle wall to the finish. Frozen data path.
                 launch('sink',[binary_dir/'pfp_sort_r',*common,'--out-prefix',pref,'--bands',bands,'--scratch-budget-bytes',str(2*N-retained)],
                        env=dict(env,**extra_env,XSA_TEST_RESIDENT_TRIPLES='1'),stdin=w['resident'].stdout,stdout=sp.DEVNULL); w['resident'].stdout.close()
-                launch('finish',[cfg.finish,*common,'--prefix',pref,'--lcp-bands',bands,'--output',d/'product.sxi2','--poll-timeout','0','--wit-ram-budget',str(wit_budget(cfg)),*cfg.finish_flags],
-                       env=dict(env,LD_PRELOAD=str(tools/'monitor.so'),XSA_GATE_PRIVATE_STOP=str(flag)))
+                finish_env=dict(env,LD_PRELOAD=str(tools/'monitor.so'),XSA_GATE_PRIVATE_STOP=str(flag)); fds=()
+                if bitmap:
+                    # Only this finish child can create the one mapped file in
+                    # its private tmpfs directory. No changed binary or flags.
+                    fds=(os.open(ram/'bitmap',os.O_DIRECTORY|os.O_NOFOLLOW),)
+                    finish_env.update(LD_PRELOAD=finish_env['LD_PRELOAD']+':'+str(tools/'bitmap.so'),
+                                      XSA_GATE_BITMAP_PATH=str(pref)+'.chi-bitmap',XSA_GATE_BITMAP_DIRFD=str(fds[0]))
+                try:
+                    launch('finish',[cfg.finish,*common,'--prefix',pref,'--lcp-bands',bands,'--output',d/'product.sxi2','--poll-timeout','0','--wit-ram-budget',str(wit_budget(cfg)),*cfg.finish_flags],env=finish_env,pass_fds=fds)
+                finally:
+                    for fd in fds:os.close(fd)
             for name,p in w.items():
                 if name in exitcode: continue
                 done=finished(p); info=proc_info(p.pid,iofiles[name]);proc[name]=info;peaks[name]=max(peaks[name],info['VmHWM'])
@@ -206,7 +219,8 @@ def build(d,tools,profile):
                 if ram is not None:
                     allocated,rparts=footprint(ram,0,ram=True); rparts.pop('prepared_refs_ids'); parts.update(rparts)
                     rampeak=max(rampeak,allocated); shmempeak=max(shmempeak,int(re.search(r'^shmem (\d+)$',(CG/'memory.stat').read_text(),re.M)[1]))
-                    if max(allocated,sum(rparts.values()))>reserve:request('volatile handoff exceeded reserved RAM')
+                    if max(allocated,sum(rparts.values()))>reserve:request('volatile scratch exceeded reserved RAM')
+                    if bitmap and ('frag.chi-bitmap' in parts or rparts.get('ram_bitmap',0)>plan['bitmap']):request('wrong bitmap placement/extent')
                 counted=sum(parts.values());
                 for k,v in parts.items(): each[k]=max(each.get(k,0),v)
                 if counted>counted_peak: counted_peak=counted;at_peak=parts
@@ -226,6 +240,10 @@ def build(d,tools,profile):
                   raw_worker_io={k:front['process'][k]+sum(x[k] for x in proc.values()) for k in ('read_bytes','write_bytes')})
     if ram is not None:
         rc['volatile_handoff']=dict(reserved_bytes=reserve,sampled_tmpfs_allocated=rampeak,sampled_cgroup_shmem=shmempeak,swap_max=0,mode='replay from raw input' if packed else 'restart from prepared inputs, no handoff recovery')
+        if bitmap:
+            marks=[l for l in (d/'finish.log').read_text().splitlines() if l.startswith('GATE_BITMAP ')] if (d/'finish.log').exists() else []
+            rc['bitmap_placement']=dict(bytes_reserved=plan['bitmap'],sampled_bytes=each.get('ram_bitmap',0),events=marks,
+                                        empty_after_finish=not any((ram/'bitmap').iterdir()))
         link=Path(str(pref)+'.pieces')
         if link.is_symlink() and link.readlink()==ram/'pieces':link.unlink()
         temp.cleanup()  # only this gate's fresh volatile directory
