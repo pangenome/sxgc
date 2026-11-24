@@ -1,0 +1,151 @@
+{
+  "archived_front_io": {
+    "read_bytes": 37612232704,
+    "write_bytes": 33635045376
+  },
+  "archived_front_wall_s": 357.75729836616665,
+  "attributed_io_ratio": {
+    "read_bytes": 1.8033970279245457,
+    "write_bytes": 1.8905864706629496
+  },
+  "bank_identity": {
+    "dictionary.packed": [
+      66308,
+      8622678848,
+      11942962780,
+      1795486824470496500,
+      1795486824470496500
+    ],
+    "parse.u32": [
+      66308,
+      8592385746,
+      1272657952,
+      1795486831560496007,
+      1795486831560496007
+    ]
+  },
+  "census": {
+    "D": 11239544612,
+    "alphabet": 243,
+    "descriptors": 9129290112,
+    "dictionary_bytes": 11942962780,
+    "initial_runs": 900,
+    "intermediate_passes": 2,
+    "k": 234472723,
+    "m": 318164488,
+    "max_phrase": 88468,
+    "n": 10000000000,
+    "parse_bytes": 1272657952,
+    "parse_extent": 1725000826,
+    "peak_counted": 15107395863,
+    "starts_above_u32": 181581998
+  },
+  "cgroup": "/sys/fs/cgroup/user.slice/user-1001.slice/user@1001.service/app.slice/run-u298.service",
+  "cgroup_before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 541844\nuser_usec 296007\nsystem_usec 245836\ncore_sched.force_idle_usec 0\nnr_periods 12\nnr_throttled 1\nthrottled_usec 323478\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "23326720",
+    "memory.swap.max": "0"
+  },
+  "cgroup_front_after": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 510967345\nuser_usec 419409522\nsystem_usec 91557822\ncore_sched.force_idle_usec 0\nnr_periods 5304\nnr_throttled 622\nthrottled_usec 19747982\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 317933\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "201326592",
+    "memory.swap.max": "0"
+  },
+  "cgroup_front_before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 10962314\nuser_usec 6741481\nsystem_usec 4220833\ncore_sched.force_idle_usec 0\nnr_periods 160\nnr_throttled 1\nthrottled_usec 323478\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 9362\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "201326592",
+    "memory.swap.max": "0"
+  },
+  "cgroup_front_io_delta": null,
+  "cold_private_path": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/segmented-10g-1e3uQv/in/corpus",
+  "column_compare": {
+    "per_device_io": null,
+    "read_cap": 26498350328,
+    "wall_s": 18.999434859491885,
+    "worker_cpu_s": 13.174286247000001,
+    "worker_io": {
+      "read_bytes": 26258026496,
+      "write_bytes": 0
+    },
+    "write_cap": 268435456
+  },
+  "compare_s": 18.999594588764012,
+  "copy_cold": {
+    "per_device_io": null,
+    "read_cap": 10067108864,
+    "wall_s": 14.741098277270794,
+    "worker_cpu_s": 10.419315717,
+    "worker_io": {
+      "read_bytes": 0,
+      "write_bytes": 10000003072
+    },
+    "write_cap": 10067108864
+  },
+  "deadline": 1795522421,
+  "equal_column_sha256": {
+    "dictionary.packed": "2e68e3f5729b3c2d5c6665e5798af447194cb55514c2c9f2f6cfb71ec774fadd",
+    "parse.u32": "a56741994089e273fe11d27dd51ef09b68c04194f23c1bd70a1845a78e677092"
+  },
+  "expected_raw_sha256": "178f411b196e6741c473b4bbf442086bc64e8c4ae102359fc3c0e3f17a12085d",
+  "footprint_scans": 81,
+  "free_after_front": 4705425686528,
+  "free_before": 4728641445888,
+  "front_io_limit_each": 160000000000,
+  "front_under_3x": true,
+  "front_wall_s": 514.3991058031097,
+  "immutable_source": "/mnt/nvme2n1/erikg/pf-10gb.txt",
+  "logical_headroom": 4892604137,
+  "mincore_checked_pages": 2441407,
+  "mincore_resident_pages": 0,
+  "n": 10000000000,
+  "private_input_bytes": 10000000000,
+  "process": {
+    "RssAnon": 0,
+    "VmHWM": 0,
+    "VmRSS": 0,
+    "cancelled_write_bytes": 256032768,
+    "cpu_s": 488.37,
+    "rchar": 70362533949,
+    "read_bytes": 67829788672,
+    "syscr": 6496744,
+    "syscw": 7605278,
+    "wchar": 63578148219,
+    "write_bytes": 63589961728
+  },
+  "promotion": false,
+  "raw_sha256": "178f411b196e6741c473b4bbf442086bc64e8c4ae102359fc3c0e3f17a12085d",
+  "rc": 0,
+  "reserved_logical": 30000000000,
+  "reviewed_one_dir": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/segmented-1g-ptvas3",
+  "reviewed_one_sha256": "66b27d6282569376a117df24d05403edf7746a7e8aff7d13f65723fc21f6339c",
+  "revision": "e04f0acc0583e118cf70706d73d1e37310fcc22c",
+  "rung": "10g",
+  "sampled_counted_logical": 15211215800,
+  "sampled_min_free": 4699308503040,
+  "sampled_rss": 22417408,
+  "sampled_whole_dir_allocated": 28789657600,
+  "sampled_whole_dir_file_bytes": 25211351782,
+  "source_identity": [
+    66308,
+    31764165843,
+    10000000000,
+    1792357584906949472,
+    1792357584906949472
+  ],
+  "status": "FRONT_COMPARED",
+  "target_under_2x": true,
+  "trusted_columns": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-front-10g-YebiCY/columns",
+  "wall_ratio": 1.4378437788755305
+}

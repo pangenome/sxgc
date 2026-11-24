@@ -1,0 +1,65 @@
+{
+  "bank_identity": {
+    "dictionary.packed": [
+      66308,
+      8622678848,
+      11942962780,
+      1795486824470496500,
+      1795486824470496500
+    ],
+    "parse.u32": [
+      66308,
+      8592385746,
+      1272657952,
+      1795486831560496007,
+      1795486831560496007
+    ]
+  },
+  "cgroup": "/sys/fs/cgroup/user.slice/user-1001.slice/user@1001.service/app.slice/run-u298.service",
+  "cgroup_before": {
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 541844\nuser_usec 296007\nsystem_usec 245836\ncore_sched.force_idle_usec 0\nnr_periods 12\nnr_throttled 1\nthrottled_usec 323478\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "201326592",
+    "memory.peak": "23326720",
+    "memory.swap.max": "0"
+  },
+  "cold_private_path": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/segmented-10g-1e3uQv/in/corpus",
+  "copy_cold": {
+    "per_device_io": null,
+    "read_cap": 10067108864,
+    "wall_s": 14.741098277270794,
+    "worker_cpu_s": 10.419315717,
+    "worker_io": {
+      "read_bytes": 0,
+      "write_bytes": 10000003072
+    },
+    "write_cap": 10067108864
+  },
+  "deadline": 1795522421,
+  "expected_raw_sha256": "178f411b196e6741c473b4bbf442086bc64e8c4ae102359fc3c0e3f17a12085d",
+  "free_before": 4728641445888,
+  "front_io_limit_each": 160000000000,
+  "immutable_source": "/mnt/nvme2n1/erikg/pf-10gb.txt",
+  "mincore_checked_pages": 2441407,
+  "mincore_resident_pages": 0,
+  "n": 10000000000,
+  "private_input_bytes": 10000000000,
+  "promotion": false,
+  "raw_sha256": "178f411b196e6741c473b4bbf442086bc64e8c4ae102359fc3c0e3f17a12085d",
+  "reserved_logical": 30000000000,
+  "reviewed_one_dir": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/segmented-1g-ptvas3",
+  "reviewed_one_sha256": "66b27d6282569376a117df24d05403edf7746a7e8aff7d13f65723fc21f6339c",
+  "revision": "e04f0acc0583e118cf70706d73d1e37310fcc22c",
+  "rung": "10g",
+  "source_identity": [
+    66308,
+    31764165843,
+    10000000000,
+    1792357584906949472,
+    1792357584906949472
+  ],
+  "status": "REFUSED",
+  "trusted_columns": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-front-10g-YebiCY/columns"
+}

@@ -1,0 +1,70 @@
+{
+  "actual_10g_ledger": {
+    "assignment_routing_read_or_write_bytes": 5090631808,
+    "counted_file_payload_peak_upper": 16045299908,
+    "counted_limit": 20000000000,
+    "decoder_note": "Payload only; no decoder grant, RSS, OS/page tables, or time inferred.",
+    "decoder_tape_plus_metadata_measured_or_upper": 13848053655,
+    "initial_run_bounds": [
+      900,
+      1208
+    ],
+    "intermediate_passes": [
+      2,
+      2
+    ],
+    "m": 318164488,
+    "merge_and_final_scratch_upper": 16045299908,
+    "n": 10000000000,
+    "ordinal_restore_scratch_upper": 14528049252,
+    "parse_bytes": 1272657952,
+    "private_segment_cap": 1048576,
+    "record_bytes": 15090631800,
+    "run_read_or_write_bytes_bounds": [
+      45271895400,
+      45271895400
+    ],
+    "runs_routes_and_two_output_columns_logical_write_upper": 63578147940,
+    "tape_measured_or_upper": 11942962780,
+    "two_raw_scans_plus_runs_and_routes_logical_read_bounds": [
+      70362527208,
+      70362527208
+    ]
+  },
+  "front_wall_per_byte_vs_segmented_1g": 0.8979835345382,
+  "hypothetical_same_algorithm_on_measured_100g_shape": {
+    "assignment_routing_read_or_write_bytes": 50901351808,
+    "counted_file_payload_peak_upper": 164024356568,
+    "counted_limit": 200000000000,
+    "decoder_note": "Payload only; no decoder grant, RSS, OS/page tables, or time inferred.",
+    "decoder_tape_plus_metadata_measured_or_upper": 164024356563,
+    "initial_run_bounds": [
+      8995,
+      12137
+    ],
+    "intermediate_passes": [
+      3,
+      3
+    ],
+    "m": 3181334488,
+    "merge_and_final_scratch_upper": 163643466968,
+    "n": 100000000000,
+    "ordinal_restore_scratch_upper": 164024356568,
+    "parse_bytes": 12725337952,
+    "private_segment_cap": 1048576,
+    "record_bytes": 150901351800,
+    "run_read_or_write_bytes_bounds": [
+      603605407200,
+      603605407200
+    ],
+    "runs_routes_and_two_output_columns_logical_write_upper": 805408110808,
+    "tape_measured_or_upper": 138176013848,
+    "two_raw_scans_plus_runs_and_routes_logical_read_bounds": [
+      854506759008,
+      854506759008
+    ]
+  },
+  "rchar_minus_modeled_input_bytes": 6741,
+  "scope": "10 GB component verified. 100 GB model uses measured n,m,max length, k<=m,U<=n; not a measured lexical build, decoder grant or end-to-end admission.",
+  "wchar_minus_modeled_output_bytes": 279
+}

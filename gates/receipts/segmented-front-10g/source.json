@@ -1,0 +1,17 @@
+{
+  "artifacts": {
+    "binaries.log": "5ab2dafaa4f3c16f68b2a4cc45e2c1af0c13bbfdcd0dc9b162144c7e565cdcac",
+    "decode.json": "a131fb6ee219cfda9eecd5718c47e3c747003d016ddf111a327997857fee7943",
+    "decode.log": "1a37f317ad3e52d2ba26c70c4c08fa46356edaddf9966fdd08f59e39c8dcbb75",
+    "front.log": "6b24251104f3eef6739767d26bf116df89c2bdcbbdfb2a2e69eb27328ae767e5",
+    "preflight.json": "31c4c7bced943a29fe8a41cbfb6d056d7abc8bac9b38fd287ec2caf76be3d247",
+    "segmented.json": "57b79bf7fbe8625e0d2ab1eed614e5147a65a3aefd29e5114546da9ce504d774"
+  },
+  "deadline": 1795522421,
+  "launcher_rc": 0,
+  "original_directory": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/segmented-10g-1e3uQv",
+  "pair_sha256": "da231c6cee479c098e2f224de2fafcb9291400506d79e8bce72dd47e1d3436c6",
+  "process": "proc_6314",
+  "revision": "e04f0acc0583e118cf70706d73d1e37310fcc22c",
+  "scope": "fixed 10 GB lexical front, byte compare, and separate cold decode; no sort/product"
+}
