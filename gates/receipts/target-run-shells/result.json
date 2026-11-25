@@ -1,0 +1,95 @@
+{
+  "attributed_R_W_before_result": [
+    0,
+    53248
+  ],
+  "cores": [
+    0
+  ],
+  "cpu_max": "100000 100000",
+  "generated": {
+    "conservative_refusals": 1462,
+    "distinct_descriptors": 1291,
+    "distinct_raw_run_lengths_for_one_descriptor_in_refused_trigger_case": 36,
+    "explicit_policy_refusals": 4,
+    "finite_keys": 1075,
+    "homogeneous_rows": 2091,
+    "independent_w8_texts": 16,
+    "nominal_ranges": 747,
+    "passing_schedules": 8522,
+    "tight_group_upper_checks": 19886
+  },
+  "generated_s": 0.40055176243185997,
+  "io_stat_after": null,
+  "io_stat_before": null,
+  "memory_cap": 201326592,
+  "memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+  "original_text_or_index_bytes_requested": 0,
+  "peak_shared": 45903872,
+  "proof": {
+    "complete_alternative_cover": true,
+    "conservative_wave_histogram_by_active_ranges": {
+      "1": 751,
+      "2": 1
+    },
+    "global_END_rank_separate": 0,
+    "includes_suffix_at_N": false,
+    "largest_indivisible_tie_upper": 191459736,
+    "max_range_upper": 191999920,
+    "n": 100000000000,
+    "post_census_ef_model": {
+      "U_upper": 99129290112,
+      "epoch_count_upper": 4,
+      "k_lower": 234472723,
+      "m": 3181334488,
+      "nonlast_fill_strictly_above": 49663500535,
+      "posting_cap": 50000000000,
+      "total_ef_byte_upper": 154750726473,
+      "virtual_universe_upper": 200697520992,
+      "whole_wave_byte_upper": 336499465
+    },
+    "prefix_packs": 600,
+    "ranges_upper_including_potentially_empty": 753,
+    "rows_in_prefix_packs": 98572914131,
+    "scan_max_phrase": 201614,
+    "scope": "Static alternative partition and model only. No actual D per range, interior shell ranks, active lanes, target columns, posting bytes, physical allocation or runtime measured. Existing sampled splitter unchanged.",
+    "shallow_result_sha256": "1d06033bb060050165bc7dac67bbf8de3e873f8e52a1c2014010c801e7641728",
+    "shells": [
+      {
+        "bands_low_high": [
+          48,
+          77
+        ],
+        "byte": 32,
+        "exits8_high": 98609900,
+        "exits8_low_including_END": 3199408,
+        "first_parent_rank": 1263121068,
+        "largest_shell_band_upper": 191999920,
+        "past_parent_rank": 2432402663,
+        "rows9": 1169281595,
+        "sum_individual_band_uppers_not_mass": 22480795813
+      },
+      {
+        "bands_low_high": [
+          18,
+          10
+        ],
+        "byte": 45,
+        "exits8_high": 142979,
+        "exits8_low_including_END": 8353216,
+        "first_parent_rank": 20648436571,
+        "largest_shell_band_upper": 191999691,
+        "past_parent_rank": 20906240845,
+        "rows9": 257804274,
+        "sum_individual_band_uppers_not_mass": 5124197253
+      }
+    ],
+    "slots": 192000000,
+    "table_jsonl_bytes": 50427,
+    "table_sha256": "9aa129629e051d369c92a6cb3d273a69ffaa90d904dd5b24fff24f9411f299fe",
+    "wave_count_using_only_uppers": 752
+  },
+  "swap_cap": 0,
+  "target_receipt_replay_s": 0.5852358983829618,
+  "utc": "2026-11-25T03:32:35Z"
+}
