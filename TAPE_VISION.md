@@ -20,7 +20,7 @@ A matching index checks **the result**, not **the algorithm**. In qualification,
 | [Overlapping PFP fixture](OVERLAP_PFP_PROBE.md) | Dictionary representative order + parse continuation rank reproduced byte SA/LCP on fixtures. | Not evidence that the dictionary work fits at scale. |
 | [Rolling `build-stream`](docs/build-stream.md) and [receipts](gates/receipts/build-stream/) | Ranks a parse and feeds a direct v10 writer; complete through 10 GB. | Its emitter revisits the full offset set per posting batch. A working writer does not qualify that producer. |
 
-No receipt above establishes the entire target. Preserve these implementations and results; reuse a component on the strength of its own contract, not its name.
+No receipt above establishes the entire target. The [reviewed component inventory](docs/pfp-component-inventory.md) identifies the actual parse, sort, expansion and writer call sites and where the interfaces disagree. Preserve these implementations and results; reuse a component on the strength of its own contract, not its name.
 
 ## The recursion — the parse of the parse
 
