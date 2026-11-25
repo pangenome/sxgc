@@ -19,6 +19,7 @@ mod unit;
 mod scan_order;
 mod overlap;
 mod overlap_row43;
+mod rolling_v10_sink;
 
 use col::die;
 use std::io::Read as _;
@@ -81,7 +82,12 @@ fn main() {
             die("fixed SXLS requires the exact fenced PRC1 profile and 2N scratch gate");
         }
     }
-    if let Some(flag) = piece_pool.as_ref().or(v10_pool.as_ref()) {
+    let ladder = std::env::var("XSA_ROLLING_V10_RUNG").ok();
+    if let Some(r) = &ladder {
+        assert!(piece_pool.is_none() && v10_pool.is_none() && slice_slots.is_none() && !remap_path.is_empty() && threads==2 &&
+          ["XSA_TEST_RESIDENT_TRIPLES","XSA_TEST_EXTERNAL_TRIPLES","XSA_TEST_OVERLAP_STREAM","TRIE_TAP","XSA_FINISH_SPOOL","XSA_PRIVATE_SXLS_RECLAIM"].iter().all(|k|std::env::var_os(k).is_none()), "separate rolling rung only");
+        rolling_v10_sink::setup(r,fs::metadata(&corpus_path).unwrap().len(),&out_prefix,&bands_dir,&corpus_path,scratch_budget_bytes);
+    } else if let Some(flag) = piece_pool.as_ref().or(v10_pool.as_ref()) {
         use std::os::unix::fs::PermissionsExt;
         let merged = Path::new(&merged_dir);
         let root = merged.parent().expect("private arm root");
@@ -162,6 +168,9 @@ fn main() {
 
     // Separate opt-in for the checked 32-bit rung1 *sink*. This does not
     // promote either sandbox constructor (or the external window planner).
+    if let Some(r) = ladder {
+        rolling_v10_sink::run(&r,t,&remap,&out_prefix,&bands_dir,&laws); return;
+    }
     let resident_sink = laws::env_u64("XSA_TEST_RESIDENT_TRIPLES",0)==1;
     let external = laws::env_u64("XSA_TEST_EXTERNAL_TRIPLES",0)==1;
     let fixture = laws::env_u64("XSA_TEST_OVERLAP_STREAM",0)==1;
