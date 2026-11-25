@@ -36,21 +36,30 @@ def lines(name,guard):
 
 def packet(runs):return 44+5*runs+16*ceil(ROWS.bit_length()*runs,64)
 
+class Cuts:
+    """Journal entries record concurrent durability, not consumer release order."""
+    def __init__(self,starts,runs,piece):
+        self.y=starts;self.k=len(starts)-1;self.r=runs;self.p=piece;need(self.k==ceil(runs,piece) and starts[0]==0,'m12 endpoints');self.seen=bytearray(ceil(self.k,8));self.count=0;self.total=0;self.moved=0;self.distance=0
+    def add(self,i,lo,hi,rows,nbytes):
+        need(0<=i<self.k and not (self.seen[i//8]&(1<<(i%8))),'duplicate/out-of-range journal idx');need((lo,hi)==(i*self.p,min(self.r,(i+1)*self.p)) and rows==self.y[i+1]-self.y[i]>=hi-lo and nbytes==packet(hi-lo),f'durable piece {i} disagrees with canonical sample/cut');self.seen[i//8]|=1<<(i%8);self.moved+=int(i!=self.count);self.distance=max(self.distance,abs(i-self.count));self.count+=1;self.total+=rows
+    def finish(self):
+        need(self.count==self.k and self.total==self.y[self.k],'incomplete piece permutation/row extent');return dict(pieces=self.count,ordinal_not_line_order=self.moved,max_ordinal_displacement=self.distance,seen_bitmap_bytes=len(self.seen))
+
 def ledger(guard):
     _,path,size,_,_,pin,member_bytes,_=PROFILES[1];starts=None
     with original(path,size) as f:
         head=f.read(64);f.seek(-400,2);directory=f.read(400);need(hashlib.sha256(head+directory).hexdigest()==pin,'target directory');table={i:(c,o,b,h,crc) for i,c,o,b,h,crc in struct.iter_unpack('<IIQQQQ',directory)};c,o,b,h,_=table[12];need((c,b,h)==(112,member_bytes,ceil(RUNS,BLOCK)) and table[1][3]==RUNS,'m12/m1 target');f.seek(o);need(struct.unpack('<8Q',f.read(64))==(BLOCK,h,RUNS,ROWS,PIECE,PIECES,64,64+8*PIECES),'super samples');blob=f.read(8*PIECES);need(len(blob)==8*PIECES,'short super directory');l2sha=hashlib.sha256(blob).hexdigest();starts=words(blob);del blob;starts.append(ROWS)
-    total=0;j=0;plan=False;spool=False;historic_sha=None
+    cuts=Cuts(starts,RUNS,PIECE);plan=False;spool=False;historic_sha=None
     for line in lines('checkpoint.journal',guard):
         if line.startswith(b'PLAN '):
-            need(not plan and j==0 and all(x in line.split() for x in (b'n=100000000000',b'corpus_sha256=de79fe96057b604a71513770111f246ab0e936d3cf56415bcc5a43bba60bbbfd',b'finish_sha=bb929a7092cfeba7faa7c37ca999b71563e3af782d73fe693d1a35f5ecdbaaa9',b'with_chi=true')),'journal plan');plan=True;continue
+            need(not plan and cuts.count==0 and all(x in line.split() for x in (b'n=100000000000',b'corpus_sha256=de79fe96057b604a71513770111f246ab0e936d3cf56415bcc5a43bba60bbbfd',b'finish_sha=bb929a7092cfeba7faa7c37ca999b71563e3af782d73fe693d1a35f5ecdbaaa9',b'with_chi=true')),'journal plan');plan=True;continue
         if line.startswith(b'SPOOL_INVENTORY '):
-            need(j==PIECES and not spool and all(x in line.split() for x in (b'scheme=1',b'bands=30838',b'pieces=478846',b'work_rows=100000000001',b'work_runs=31381597694')),'historical spool inventory');spool=True;continue
+            need(cuts.count==PIECES and not spool and all(x in line.split() for x in (b'scheme=1',b'bands=30838',b'pieces=478846',b'work_rows=100000000001',b'work_runs=31381597694')),'historical spool inventory');spool=True;continue
         if line.startswith(b'BUILD_DONE '):
             z=re.fullmatch(rb'BUILD_DONE container=([0-9a-f]{64})',line);need(z and spool and historic_sha is None,'historical final record');historic_sha=z[1].decode();continue
         z=re.fullmatch(rb'PIECE_DURABLE idx=(\d+) shard=0 lo_key=([0-9a-f]+) hi_key=([0-9a-f]+) rows=(\d+) bytes=(\d+) sha=[0-9a-f]{64}',line)
-        need(z and plan and j<PIECES,'journal piece');lo,hi=j*PIECE,min(RUNS,(j+1)*PIECE);nr=int(z[4]);nb=int(z[5]);need((int(z[1]),int(z[2],16),int(z[3],16),nr,nb)==(j,lo,hi,starts[j+1]-starts[j],packet(hi-lo)) and starts[j]==total and nr>=hi-lo,'durable piece disagrees with canonical sample/cut');total+=nr;j+=1
-    need(j==PIECES and total==ROWS and historic_sha is not None,'piece coverage');del starts
+        need(z and plan and not spool,'journal piece');cuts.add(int(z[1]),int(z[2],16),int(z[3],16),int(z[4]),int(z[5]))
+    perm=cuts.finish();need(starts[-1]==ROWS and historic_sha is not None,'piece coverage');del starts,cuts
     emit=False
     for line in lines('emit-tape.log',guard):
         if line.startswith(b'TAPE_EMIT_DONE '):need(not emit and line.startswith(b'TAPE_EMIT_DONE rows=100000000001 runs=31381597694 seam_pass=none '),'not seam-free full emitter');emit=True
@@ -66,7 +75,7 @@ def ledger(guard):
         elif line==b'LCP_RUNS member=absent reason=disabled-by-flag':matched.add('no_m14')
         elif line.startswith(b'XSA_FINISH_PFCK ') and b' n=100000000001 tau=22 count=4545454546 bytes=36363636408 ' in line:matched.add('pfck22')
         elif line==b'CONTAINER_FINAL bytes=63163489696 sha256=f39bf4d7e8ffdb47001c9e6c8ecb1e16dc15304dc78044bbc29527f414b35a6a members=8':matched.add('base')
-    need(emit and j==PIECES and commit==table[1][2] and matched=={'no_seams','no_m14','pfck22','base'} and max(batch,high)==64,'incomplete finish');need(summary['live']==1 and summary['loads']==PIECES+1 and summary['staged_bytes']==ROWS+PIECES and summary['slices']==summary['retired']==30838 and summary['empty']==0,'not the same fold convention');return dict(historical=summary,recorded_final_digest_not_recomputed=historic_sha,compared_durable_piece_spans=j,m1_sync_records=syncs,max_pieces_per_m1_release=max(batch,high),m12_super_sha256=l2sha,container_requested_bytes=64+400+64+8*PIECES,prc_total_wire=prc_bytes,m20_bytes=table[20][2],log_pins=LOGS)
+    need(emit and j==PIECES and commit==table[1][2] and matched=={'no_seams','no_m14','pfck22','base'} and max(batch,high)==64,'incomplete finish');need(summary['live']==1 and summary['loads']==PIECES+1 and summary['staged_bytes']==ROWS+PIECES and summary['slices']==summary['retired']==30838 and summary['empty']==0,'not the same fold convention');return dict(historical=summary,recorded_final_digest_not_recomputed=historic_sha,compared_durable_piece_spans=perm['pieces'],journal_permutation=perm,m1_sync_records=syncs,max_pieces_per_m1_release=max(batch,high),m12_super_sha256=l2sha,container_requested_bytes=64+400+64+8*PIECES,prc_total_wire=prc_bytes,m20_bytes=table[20][2],log_pins=LOGS)
 
 def raw_work(rows,esc,maxh):
     need(rows>0 and 0<=esc<=rows and 0<=maxh<rows and (esc>0)==(maxh>=255) and (not esc or esc>=maxh-254),'impossible maxima/escape count')
@@ -86,8 +95,11 @@ def transfer(archive,cred):
     parts=dict(inverse=8*M,posting_cap=N//2,producer_margin=4<<20,pfck=40+8*(ROWS//22+1),chi_bitmap=ceil(ROWS,8),sparse=8*ceil(RUNS,BLOCK),m20=archive['m20_bytes'],piece_payload=(p+64+8)*packet(PIECE),slice_payload=s*MAX_SLICE,ef_spools=ceil(3*ROWS+2,8)+2,bpg1_bytes=36*PIECES)
     return dict(credit_proposal=dict(piece=p,slice=s),widths=dict(run_length_upper=g['largest_piece_rows'],row_bits=ROWS.bit_length(),reported_lcp_bits=old['max_lcp'].bit_length(),u16_sxls_impossible=old['max_lcp']>65535,u32_lcp_array_plus_page=4*SLICE+65536),reader=reader,modeled_live_stream_terms=parts,modeled_stream_subtotal=sum(parts.values()),not_yet_allocated_or_granted=2*N-sum(parts.values()),bpg1_4k_blocks_if_retained=4096*PIECES,marker_and_progress_names_if_retained=PIECES+2*SLICES,logical_total_sxls_wire=ROWS+16*old['escapes']+48*SLICES,logical_raw_verifier_work=raw_work(ROWS,old['escapes'],old['max_lcp']))
 
+def previous():
+    d=S/'v10-target-fold-bHoeCm';need(set(S.glob('v10-target-fold-*'))=={d} and d.resolve()==d and (d/'stop.requested').is_file() and not (d/'result.json').exists() and (d/'exits.log').read_text()=='archive=1\nlauncher=1\n' and hashlib.sha256((d/'measure.log').read_bytes()).hexdigest()=='f721e9bb13096140a515d672ee91fec9f17a6cb25bb221e90ce91e8f97498ed2','expected pinned journal-order refusal')
+
 def main(d,end):
-    need(d.parent==S and d.resolve()==d and re.fullmatch('v10-target-fold-[A-Za-z0-9]{6}',d.name) and d.stat().st_uid==os.getuid() and stat.S_IMODE(d.stat().st_mode)==0o700 and time.time()<end<=time.time()+120,'private fold review');g=Path('/sys/fs/cgroup'+Path('/proc/self/cgroup').read_text().strip().split('::')[1]);cg=lambda name:(g/name).read_text().strip();need((cg('memory.max'),cg('cpu.max'),cg('memory.swap.max'))==(str(128<<20),'100000 100000','0') and len(os.sched_getaffinity(0))==1,'review grant');t=time.monotonic()
+    previous();need(d.parent==S and d.resolve()==d and re.fullmatch('v10-fold-cuts-[A-Za-z0-9]{6}',d.name) and d.stat().st_uid==os.getuid() and stat.S_IMODE(d.stat().st_mode)==0o700 and time.time()<end<=time.time()+120,'private fold review');g=Path('/sys/fs/cgroup'+Path('/proc/self/cgroup').read_text().strip().split('::')[1]);cg=lambda name:(g/name).read_text().strip();need((cg('memory.max'),cg('cpu.max'),cg('memory.swap.max'))==(str(128<<20),'100000 100000','0') and len(os.sched_getaffinity(0))==1,'review grant');t=time.monotonic()
     def guard():need(time.time()<end and not (d/'stop.requested').exists(),'review STOP/deadline')
     raw=(G/'receipts/v10-target-credits/result.json').read_bytes();need(hashlib.sha256(raw).hexdigest()==CREDIT_SHA,'credit receipt');cred=json.loads(raw)['arms']['target100g'];a=ledger(guard);guard();v=transfer(a,cred);ru=resource.getrusage(resource.RUSAGE_SELF);events=cg('memory.events');need(512*ru.ru_inblock<=160<<20 and 512*ru.ru_oublock<=1<<20 and {'oom 0','oom_kill 0'}<=set(events.splitlines()),'review resource refusal')
     z=dict(archive=a,conditional=v,credit_receipt=CREDIT_SHA,utc=time.strftime('%FT%TZ',time.gmtime()),body_s=time.monotonic()-t,attributed_input_bytes=512*ru.ru_inblock,attributed_write_bytes_before_receipt=512*ru.ru_oublock,memory_peak=int(cg('memory.peak')),memory_events=events,scope='Historical piece/finish-log cross-check, conditional same-row re-slicing and byte-work bounds. No raw input, new construction, full index hash, physical fit, RSS or speed promotion.')

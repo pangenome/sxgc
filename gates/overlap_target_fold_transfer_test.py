@@ -1,7 +1,7 @@
 """No historical payload. Exercise resegmentation inequality and adjacent-LCP work floor."""
 from itertools import accumulate,product
 from random import Random
-from overlap_target_fold_transfer import raw_work
+from overlap_target_fold_transfer import Cuts,packet,raw_work
 
 def live(rows,esc,cuts,a,b):
     cover=[(i,j) for i,j in zip(cuts,cuts[1:]) if a<j and i<b];left,right=cover[0][0],cover[-1][1];return b-a+right-left+16*sum(esc[left:right])
@@ -12,6 +12,18 @@ def raw(data):
     H=max(vals);e=sum(x>=255 for x in vals);r=raw_work(len(keys),e,H);assert r['prefix_bytes_lower']<=sum(vals)<=r['prefix_bytes_upper'];return r,sum(vals)
 
 def main():
+    # Concurrent durability can log 2 before 1, but cannot duplicate, omit,
+    # renumber, trade rows, or replace the wire byte count of a piece.
+    fresh=lambda:Cuts([0,31,45,49],9,4);records=[(0,0,4,31,packet(4)),(1,4,8,14,packet(4)),(2,8,9,4,packet(1))];c=fresh()
+    for i in (0,2,1):c.add(*records[i])
+    assert c.finish()['ordinal_not_line_order']==2
+    for trial in ([records[0],records[2]],2*[records[1]],[(3,*records[1][1:])],[(0,1,5,31,packet(4))],[(2,8,9,14,packet(1))],[(2,8,9,4,packet(4))]):
+        c=fresh()
+        try:
+            for rec in trial:c.add(*rec)
+            c.finish()
+        except ValueError:continue
+        raise AssertionError('invalid journal permutation/cut')
     rng=Random(5342);count=0
     for n in range(1,180):
         for _ in range(15):

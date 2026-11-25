@@ -1,0 +1,14 @@
+Traceback (most recent call last):
+  File "/tmp/overlap-study-src-4A8g2A/gates/overlap_target_fold_transfer.py", line 96, in <module>
+    if __name__=='__main__':need(__debug__ and len(sys.argv)==3,'private metadata review only');main(Path(sys.argv[1]),int(sys.argv[2]))
+                                                                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/overlap-study-src-4A8g2A/gates/overlap_target_fold_transfer.py", line 92, in main
+    raw=(G/'receipts/v10-target-credits/result.json').read_bytes();need(hashlib.sha256(raw).hexdigest()==CREDIT_SHA,'credit receipt');cred=json.loads(raw)['arms']['target100g'];a=ledger(guard);guard();v=transfer(a,cred);ru=resource.getrusage(resource.RUSAGE_SELF);events=cg('memory.events');need(512*ru.ru_inblock<=160<<20 and 512*ru.ru_oublock<=1<<20 and {'oom 0','oom_kill 0'}<=set(events.splitlines()),'review resource refusal')
+                                                                                                                                                                                   ^^^^^^^^^^^^^
+  File "/tmp/overlap-study-src-4A8g2A/gates/overlap_target_fold_transfer.py", line 52, in ledger
+    need(z and plan and j<PIECES,'journal piece');lo,hi=j*PIECE,min(RUNS,(j+1)*PIECE);nr=int(z[4]);nb=int(z[5]);need((int(z[1]),int(z[2],16),int(z[3],16),nr,nb)==(j,lo,hi,starts[j+1]-starts[j],packet(hi-lo)) and starts[j]==total and nr>=hi-lo,'durable piece disagrees with canonical sample/cut');total+=nr;j+=1
+                                                                                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/overlap-study-src-4A8g2A/gates/overlap_v10_target_credits.py", line 27, in need
+    if not ok:raise ValueError(msg)
+              ^^^^^^^^^^^^^^^^^^^^^
+ValueError: durable piece disagrees with canonical sample/cut
