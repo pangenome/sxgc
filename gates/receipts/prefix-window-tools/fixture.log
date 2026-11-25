@@ -1,0 +1,2 @@
+FIXTURE_PASS full_oracle_rows=6001 observed_edges=1245 END_NUL=1 length_ties=1 short_cap=1 overlap=1 invalid_rank=1 raw_work=1
+RESOURCE peak=68571136 read=0 write_before_report=0 user_us=46088 sys_us=149285
