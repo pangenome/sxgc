@@ -68,12 +68,20 @@ fn main() {
     let stop_flag = format!("{}/stop.requested", modeb_dir);
     let piece_pool = std::env::var_os("XSA_TEST_V8_100M_PIECE_POOL");
     let slice_slots = std::env::var_os("XSA_TEST_V8_100M_SXLS_SLOTS");
+    // Same verified 100 MB row stream and wire formats, but a different finish
+    // profile. Keep both legacy opt-ins (including their PFCK=128 fence) intact.
+    let v10_pool = std::env::var_os("XSA_TEST_REAL_V10_100M_POOLS");
+    if let Some(flag) = &v10_pool {
+        if flag != "1" || piece_pool.is_some() || slice_slots.is_some() || scratch_budget_bytes != 200_001_006 {
+            die("v10 pools: exclusive exact 100 MB profile and explicit 2N required");
+        }
+    }
     if let Some(flag) = &slice_slots {
         if flag != "1" || piece_pool.as_deref() != Some(std::ffi::OsStr::new("1")) || !matches!(scratch_budget_bytes, 0 | 200_001_006) {
             die("fixed SXLS requires the exact fenced PRC1 profile and 2N scratch gate");
         }
     }
-    if let Some(flag) = &piece_pool {
+    if let Some(flag) = piece_pool.as_ref().or(v10_pool.as_ref()) {
         use std::os::unix::fs::PermissionsExt;
         let merged = Path::new(&merged_dir);
         let root = merged.parent().expect("private arm root");
@@ -81,13 +89,14 @@ fn main() {
         let file_bytes = fs::symlink_metadata(&corpus_path).ok().filter(|m| m.is_file()).map(|m| m.len());
         if flag != "1" || file_bytes != Some(100_000_503) || remap_path.is_empty() || threads != 2 ||
             ![("XSA_TEST_EXTERNAL_TRIPLES","1"), ("CROSS_V2_PIECES","1"), ("CROSS_V2_PIECE_WINDOW","6"),
-              ("SS_LCP_SLICE_WINDOW","5"), ("XSA_BATCH_SXLS_ESCAPES","1"), ("PFCK_SPACING","128")].iter().all(|&(k,v)| is(k,v)) ||
+              ("SS_LCP_SLICE_WINDOW","5"), ("XSA_BATCH_SXLS_ESCAPES","1"), ("PFCK_SPACING",if v10_pool.is_some() {"64"} else {"128"})].iter().all(|&(k,v)| is(k,v)) ||
             ["TRIE_TAP","XSA_FINISH_SPOOL","XSA_GATE_VOLATILE_PIECES","XSA_TEST_RESIDENT_TRIPLES","XSA_TEST_OVERLAP_STREAM",
              "XSA_GATE_PACKED_3G","XSA_GATE_PACKED_10G","XSA_PRIVATE_SXLS_RECLAIM"].iter().any(|k| std::env::var_os(k).is_some()) ||
             !root.is_absolute() || fs::canonicalize(root).ok().as_deref() != Some(root) ||
             fs::metadata(root).expect("private arm root").permissions().mode() & 0o777 != 0o700 ||
             merged != root.join("merged") || Path::new(&out_prefix) != merged.join("frag") ||
             Path::new(&bands_dir) != root.join("bands") || root.join("stop.requested").try_exists().unwrap_or(true) {
+            if v10_pool.is_some() { die("v10 pools: private exact 100 MB narrow product profile required"); }
             die("fenced PRC1 handoff: private exact 100 MB v8 narrow profile required");
         }
         // No restart, no cleanup. In particular, never remove a STOP or anyone's old pieces.
@@ -171,9 +180,10 @@ fn main() {
         let volatile=std::env::var_os("XSA_GATE_VOLATILE_PIECES");
         assert!(volatile.is_none() || resident_sink,"volatile handoff is a fresh resident-product gate only");
         let window=laws::env_u64("CROSS_V2_PIECE_WINDOW",1100);
-        let mut cutter=if piece_pool.is_some() { unit::PieceCutter::fixed_v8_pool(&out_prefix,file_n+1,window) }
+        let mut cutter=if piece_pool.is_some() || v10_pool.is_some() { unit::PieceCutter::fixed_v8_pool(&out_prefix,file_n+1,window) }
                        else { unit::PieceCutter::with_piece_target(&out_prefix,file_n+1,window,volatile.as_deref().map(Path::new)) };
-        if slice_slots.is_some() {
+        if slice_slots.is_some() || v10_pool.is_some() {
+            if v10_pool.is_some() { eprintln!("SS_V10_HANDOFF row_profile=real-100m-narrow pieces=78 slices=5 pfck_spacing=64"); }
             unit::v8_sxls::narrow(Path::new(&bands_dir),file_n,&remap,cutter,&laws).unwrap_or_else(|e| die(&format!("fixed SXLS: {e}")));
             eprintln!("SS_DONE_R overlap_stream rows={} total_s={:.2}",file_n+1,laws::now_s(t_all)); return;
         }

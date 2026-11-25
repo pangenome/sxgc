@@ -1,0 +1,84 @@
+{
+  "attributed_io": {
+    "read_bytes": 323481600,
+    "write_bytes": 200081408
+  },
+  "boundary_query": {
+    "cut": 13425,
+    "pattern_hex": "67616d652c206c6f7665206574203c331e3c3f786d6c2076657273696f6e3d2231",
+    "pos": 13408
+  },
+  "cpu_max": "100000 100000",
+  "docs": 16556,
+  "first_excluded_document_start": 100000503,
+  "internal_separators": 0,
+  "last_start": 99992308,
+  "map_bytes": 68344,
+  "map_sha256": "63bb635e128e00d06037eaef5ce9e83d343cc622509b155d010789e4a20654ac",
+  "memory_max": 268435456,
+  "meta_prefix_sha256": "7c00fbb72b7bad965629c94091bd539380ef126a3c8a6ac7de52a69185ed7882",
+  "n": 100000503,
+  "old_v8_remap_matches": false,
+  "other_150m_v10_boundary_aware": 0,
+  "owned_framing_bytes": 16556,
+  "present_symbols": 208,
+  "private_copy_bytes": 200001006,
+  "private_raw_copies": 2,
+  "raw_prefix_bytes_compared": 100000503,
+  "raw_sha256": "3c965f581b46ba72abfd7fee7a0ce2efac5a61cd4dc5725e9253dcebcccc2383",
+  "rows": 100000504,
+  "scope": "Exact real-data inputs and canonical map only. No product or row clocks.",
+  "shared_peak": 268435456,
+  "slice_remap_sha256": "37b01d647470df1b5770e277427021b37465ea2c6d75e08d17ef4dda517b49d3",
+  "source_files": {
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pile-slice100.bin": [
+      66308,
+      25771846551,
+      100000503,
+      1795211702184614933,
+      1795211702184614933
+    ],
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pilemap100-slice": [
+      66308,
+      25771846552,
+      563894,
+      1795211710994614321,
+      1795211710994614321
+    ],
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/remap-256.bin": [
+      66308,
+      25771847703,
+      256,
+      1795214383701428593,
+      1795214383701428593
+    ],
+    "/mnt/nvme2n1/erikg/pile-head100.txt": [
+      66308,
+      30071944370,
+      100000000000,
+      1794328255140006266,
+      1794328255140006266
+    ],
+    "/mnt/nvme2n1/erikg/pilemap100/meta.bin": [
+      66308,
+      371491947,
+      548073068,
+      1794346377540746928,
+      1794346378032746894
+    ],
+    "/mnt/nvme2n1/erikg/pilemap100/seps.bin": [
+      66308,
+      371491945,
+      66494092,
+      1794346362787747953,
+      1794346378032746894
+    ]
+  },
+  "source_manifest_sha256": "65cce20598b1dacbe4a6301d390c323646391ca7e42c43d91b400364e341761e",
+  "source_xsep_bytes_hashed": 66494092,
+  "source_xsep_sha256": "daab7cf7ab5772b3ef56ca32fe6428a8df5759ec962069aefb8325cda283f4d4",
+  "swap_max": 0,
+  "tail_partial": false,
+  "utc": "2026-11-25T00:28:25Z",
+  "wall_s": 2.164296155795455
+}

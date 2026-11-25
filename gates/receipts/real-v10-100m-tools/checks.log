@@ -1,0 +1,2 @@
+PASS: 7 real profile refusals, legacy isolation, fresh start and refused EOF/no terminal or product
+PASS: reference/rolling wire mismatch refused before first packet

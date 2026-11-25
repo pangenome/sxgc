@@ -50,7 +50,7 @@ static U final_rank(const unsigned char* raw,U n,U last,const Stop& stop,U cap,U
     }return rank;}
 
 int main(int ac,char** av) try {
-    bool exact=true,track_fold=true; U band=65536,slice_rows=262144,fold_limit=3958321;
+    bool exact=true,track_fold=true,tagged=true; U band=65536,slice_rows=262144,fold_limit=3958321;
     Limits limits{RUNS,SLICE,PAYLOAD};const char* want=SHA;
 #ifdef ROW_FENCE_FIXTURE
     exact=false;track_fold=ac==12 && std::string_view(av[1])=="--fixture-fold";
@@ -58,7 +58,9 @@ int main(int ac,char** av) try {
     if(track_fold){band=decimal(av[9]);slice_rows=decimal(av[10]);fold_limit=decimal(av[11]);}
     limits={decimal(av[5]),decimal(av[6]),decimal(av[7])};want=av[8];
 #else
-    need(ac==5 && std::string_view(av[1])=="--v8-100m","--v8-100m PRIVATE_RAW STOP DEADLINE");
+    need(ac==5,"fixed 100 MB profile PRIVATE_RAW STOP DEADLINE");
+    std::string_view mode(av[1]);tagged=mode!="--real-v10-reference-100m";
+    need(!tagged || mode=="--v8-100m" || mode=="--real-v10-rolling-100m","unknown fixed 100 MB profile");
 #endif
     Stop stop{av[3],decimal(av[4])};stop.check();signal(SIGPIPE,SIG_IGN);
     struct stat in{},out{},st{};pipe_fd(0,in);pipe_fd(1,out);need(in.st_ino!=out.st_ino || in.st_dev!=out.st_dev,"pipe loop");
@@ -76,7 +78,7 @@ int main(int ac,char** av) try {
         for(size_t j=0;j<count;++j){if(j%512==0)stop.check();auto& row=buf[j];U p=row.p,h=row.h,b=row.b&511;
             // Before narrowing: BOTH high fields zero, tag present. No covert
             // source-position tie break: strict raw suffix order proves uniqueness.
-            need((row.b & ~511u)==0x80000000 && b<=256,"not narrow row43");
+            need((row.b & ~511u)==(tagged?0x80000000u:0u) && b<=256,"not narrow row43 or wrong input ABI");
             need((fence.rows?p<n:p==n) && h<=n-std::max(p,prev) && h<=prefix_cap-fence.sum_h && (!exact || h<=H),"row extent/work");
             need(b==(p?raw[p-1]:256u) && (!exact || b!=0),"raw predecessor/remap");
             for(U off=0;off<h;off+=65536){if(off)stop.check();need(!std::memcmp(raw+p+off,raw+prev+off,std::min<U>(h-off,65536)),"claimed prefix");}
