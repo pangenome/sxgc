@@ -1,32 +1,26 @@
 # TAPE_VISION.md — the machine we are pursuing (the operator's design, consolidated)
 
-Adopted 2026-11-20. This document supersedes the amendment history in
-TAPE_BINS.md as the statement of intent. The machine:
+Adopted 2026-11-20. This is the **target algorithm for `xsa build`**, not a description of everything that currently runs. [Amendments 6 and 7b](TAPE_BINS.md#amendment-6--the-sort-sorts-the-parse-the-radix-system-completed-2026-11-19) record the operator's distinction: **the parse is the tape**. One public builder; the workspace and thread settings change the schedule, not what gets sorted.
 
-```
-STREAM   one single-threaded pass over the corpus. Local state only
-         (trigger windows, a bounded recent-phrase cache). It computes
-         the parse on the fly — the parse is a property of the stream,
-         never a stored text. It seeds every downstream structure as it
-         goes. The corpus is read here, and its bytes never copied.
+1. **Parse and name.** One sequential parse of the immutable corpus. Keep dictionary phrases by reference. Deduplicate, assign IDs in lexical order, and count occurrences in bounded pieces. The new tape `P` is those integer IDs **in original text order**. Storing an ID tape is intended; storing another copy of the raw text is not.
+2. **Sort suffixes of `P`.** These are suffixes starting at phrase boundaries, not one sort record per byte of the corpus. When another level is warranted, its input is this ID tape; sort at the smaller level and induce back down.
+3. **Expand by prefix-free representative.** Under the PFP convention, each byte suffix has a representative ending at the next trigger including the overlap (handle END explicitly). Distinct eligible representatives are prefix-free, so their dictionary order is their final group order. Within an equal group, use the already-sorted *next* parse suffixes. Establish or reuse representative order **as dictionary work**, not by comparing text suffixes for every occurrence. This is the [PFP ordering guarantee](https://doi.org/10.4230/LIPIcs.WABI.2018.2); a changed trigger or forced boundary needs its own justification, not just the name “PFP”.
+4. **Stream in final order.** Use exact counts, not samples, to size bounded key ranges. They concatenate in order; no global suffix merge. Carry adjacent byte LCP across seams and stream `(original byte position, byte LCP, predecessor)` including virtual END to the boundary-aware v10 writer. Use the authoritative document map. No full byte SA/LCP spool.
 
-SORT     the phrase KEYS, once — the only byte-order sort in the system.
-         Dedupe is its byproduct, and so is the CENSUS: for every distinct
-         key, its occurrence count. No sampling. No intern table in RAM:
-         dedupe and census both live in this sort, in pieces.
+## How to tell whether code implements this design
 
-BIN      the census draws the bins: balanced ranges over the sorted keys,
-         boundaries by counts. Never first-byte. Never sampled. Bins are
-         defended by measurement.
+A matching index checks **the result**, not **the algorithm**. In qualification, identify the actual sort calls and their input units: dictionary keys/representatives, parse positions at each level, or raw text positions. Account separately for dictionary-offset visits and final emitted rows. Change the workspace on the same small input to force more output ranges: more ranges must **not** trigger another full corpus or full dictionary-offset walk per range. Check the emitted order, ties, seam LCPs and END against a small independent oracle. These are development checks, not extra passes inside an ordinary build.
 
-SORT     each bin's chunk, IN PARSE SPACE — integer IDs, the easy sort
-         (ID order is byte order by construction). One bin in RAM at a
-         time; the workspace dial sizes it; any reasonably-sized system
-         runs any corpus.
+### Evidence at 2026-11-25 — not a menu of engines
 
-CONCAT   bin outputs in key order. There is no merge step. The output is
-         the container.
-```
+| Existing work | What it establishes | What it does not establish |
+|---|---|---|
+| [Raw tape rehearsal](RESULTS_REHEARSAL_100GB.md) | `scatter_sort` and the old finish produced a 100 GB v10 result. | Its sort input was raw suffix positions, not `P`. It is a baseline. |
+| [Recursive parse prototype](RESULTS_TAPE_READER.md#10-gb-recursive-rust-full-reference-identity) | Integer levels and induction produced the reference 10 GB **v8** product. | Not an installed v10 path or an all-phase workspace proof. |
+| [Overlapping PFP fixture](OVERLAP_PFP_PROBE.md) | Dictionary representative order + parse continuation rank reproduced byte SA/LCP on fixtures. | Not evidence that the dictionary work fits at scale. |
+| [Rolling `build-stream`](docs/build-stream.md) and [receipts](gates/receipts/build-stream/) | Ranks a parse and feeds a direct v10 writer; complete through 10 GB. | Its emitter revisits the full offset set per posting batch. A working writer does not qualify that producer. |
+
+No receipt above establishes the entire target. Preserve these implementations and results; reuse a component on the strength of its own contract, not its name.
 
 ## The recursion — the parse of the parse
 
@@ -69,7 +63,7 @@ anything; we choose the level of the onion with a census.
   and dial-invariant outputs); SS_DONE or VOID; denominators on every
   number.
 
-## The ladder
+## Original qualification milestones (targets, not completed results or launch instructions)
 
 1. THE 3 GB PROOF under the one-mode law: streaming parse seeds, census
    bins, parse-space sorts, concat emit — fast (minutes per phase),

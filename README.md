@@ -30,12 +30,7 @@ xsa search pile.sxi2 --pattern " function " --corpus
 xsa mem    pile.sxi2 "the quick brown fox"          # maximal exact matches (widths + positions)
 ```
 
-For a raw corpus, the [streaming builder](docs/build-stream.md) writes the same
-boundary-aware v10 format from an ordered row pipe, using ordinary scratch files:
-
-```sh
-xsa build-stream corpus.bin --docs-map documents/ -T /scratch -o corpus.sxi2
-```
+**Builder design:** [The parse is the tape](TAPE_VISION.md). The target for `xsa build` is to sort the integer prefix-free parse and stream the byte-level index from that order. The existing `--tape` sorter and [rolling `build-stream` command](docs/build-stream.md) are working implementations with different algorithms; the design document records which parts have actually been demonstrated.
 
 ### One container format, and nothing else
 
