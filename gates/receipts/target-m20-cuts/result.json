@@ -1,0 +1,144 @@
+{
+  "additional_review_s": 0.20008631609380245,
+  "archive_stat": [
+    66308,
+    32215060707,
+    65533578480,
+    1794478199606586523,
+    1794478199606586523
+  ],
+  "cap_shared": 268435456,
+  "cores": [
+    0
+  ],
+  "cpu_max": "100000 100000",
+  "io_stat_after": null,
+  "io_stat_before": null,
+  "member_bytes": 2333923624,
+  "member_crc32": 475685233,
+  "member_offset": 63163489376,
+  "member_sha256": "d75fe3dcb21ab8c9b02faa0ca243982636ad0bcdae74750c0c45d4cb27e55587",
+  "memory_events": "low 0\nhigh 0\nmax 969\noom 0\noom_kill 0\noom_group_kill 0",
+  "observation_bytes": 483486,
+  "observation_sha256": "08f7fd0abc1f72af312311ac9377553b769652eb0e88793d9ba61faebc9ccfc9",
+  "observer": {
+    "cpu_s": 0.277077,
+    "major_faults": 362,
+    "maxrss_bytes": 193163264,
+    "minor_faults": 23124,
+    "rc": 0,
+    "ru_inblock_bytes": 1486848,
+    "ru_oublock_bytes": 487424
+  },
+  "observer_subprocess_s": 0.37652954924851656,
+  "oracle_sha256": "fe03f3f83cb5b9fafe30c7c5a3ab62712b333c5396701cca281e472e9e30d363",
+  "parent_attributed_R_W_before_result": [
+    391512064,
+    16384
+  ],
+  "parent_index_requested_bytes": 2333924120,
+  "peak_shared": 268435456,
+  "position_or_dictionary_scratch_bytes": 0,
+  "prior_certificate_sha256": "d752071aaed85b4f386ebd3e4da51301dcbd9bc05357c784a989282f5088a82b",
+  "proof": {
+    "all_prefix_leaves_fit": false,
+    "base_uncertified_parents": 115,
+    "certified_contiguous_segments": 3,
+    "complete_range_count_if_certified": null,
+    "examined_nodes": 201,
+    "expanded_at_depth": {
+      "2": 115,
+      "3": 37,
+      "4": 12,
+      "5": 4,
+      "6": 2,
+      "7": 2,
+      "8": 2
+    },
+    "global_END_rank_separate": 0,
+    "greedy_packs_across_only_consecutive_certified_leaves": 600,
+    "leaf_count": 62483,
+    "leaf_depths": {
+      "2": {
+        "leaves": 36475,
+        "rows": 38507883214
+      },
+      "3": {
+        "leaves": 17235,
+        "rows": 46356548060
+      },
+      "4": {
+        "leaves": 5452,
+        "rows": 8972971940
+      },
+      "5": {
+        "leaves": 1834,
+        "rows": 3200047379
+      },
+      "6": {
+        "leaves": 617,
+        "rows": 1176552322
+      },
+      "7": {
+        "leaves": 292,
+        "rows": 131913247
+      },
+      "8": {
+        "leaves": 289,
+        "rows": 116692466
+      },
+      "9": {
+        "leaves": 289,
+        "rows": 1537391372
+      }
+    },
+    "leaf_sha256": "2d72c2d2acb8ba791ac8cf109a87d5ef5aca603f17494a0f4f8aa39da6afe1ee",
+    "n": 100000000000,
+    "parents_now_certified": 113,
+    "parents_with_residual": [
+      8257,
+      11611
+    ],
+    "proved_internal_cuts_after_framing_byte": 16119766,
+    "raw_owned_rows_accounted": 100000000000,
+    "raw_rows_in_certified_leaves": 98572914131,
+    "residual": [
+      {
+        "descriptor_lower": 1,
+        "descriptor_upper": 1169281595,
+        "first_rank": 1263121068,
+        "past_rank": 2432402663,
+        "prefix_hex": "202020202020202020",
+        "raw_rows": 1169281595,
+        "raw_tenth_code_split_would_preserve_ties": true,
+        "split_proved_necessary": false,
+        "trigger_at_one_forces_whole_finite_key": false
+      },
+      {
+        "descriptor_lower": 1,
+        "descriptor_upper": 257804274,
+        "first_rank": 20648436571,
+        "past_rank": 20906240845,
+        "prefix_hex": "2d2d2d2d2d2d2d2d2d",
+        "raw_rows": 257804274,
+        "raw_tenth_code_split_would_preserve_ties": true,
+        "split_proved_necessary": false,
+        "trigger_at_one_forces_whole_finite_key": false
+      }
+    ],
+    "residual_raw_rows": 1427085869,
+    "root_framing_bytes": 16126745,
+    "slots": 192000000,
+    "sum_leaf_lower": 3505760376,
+    "sum_leaf_upper": 99649623519
+  },
+  "raw_text_bytes": 0,
+  "sampled_aux_logical_allocated": [
+    8454969,
+    8466432
+  ],
+  "scope": "Static prospective through-nine-code range bounds from an archived index + certified raw cell totals. No new row stream, full file rehash, measured emitter cuts, posting layout, physical-fit or performance admission.",
+  "setup_auth_s": 2.9938980424776673,
+  "swap": 0,
+  "utc": "2026-11-25T03:12:05Z"
+}

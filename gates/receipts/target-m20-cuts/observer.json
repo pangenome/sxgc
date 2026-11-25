@@ -1,0 +1,9 @@
+{
+  "cpu_s": 0.277077,
+  "major_faults": 362,
+  "maxrss_bytes": 193163264,
+  "minor_faults": 23124,
+  "rc": 0,
+  "ru_inblock_bytes": 1486848,
+  "ru_oublock_bytes": 487424
+}
