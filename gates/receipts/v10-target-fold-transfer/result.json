@@ -1,0 +1,99 @@
+{
+  "archive": {
+    "compared_durable_piece_spans": 478846,
+    "container_requested_bytes": 3831296,
+    "historical": {
+      "empty": 0,
+      "escapes": 6042592294,
+      "live": 1,
+      "loads": 478847,
+      "max_lcp": 4950426,
+      "max_live_lcp_slice_bytes": 1148086761,
+      "max_slice_bytes": 1113626221,
+      "preads": 509684,
+      "retired": 30838,
+      "slices": 30838,
+      "staged_bytes": 100000478847
+    },
+    "journal_permutation": {
+      "max_ordinal_displacement": 76,
+      "ordinal_not_line_order": 87291,
+      "pieces": 478846,
+      "seen_bitmap_bytes": 59856
+    },
+    "log_pins": {
+      "checkpoint.journal": [
+        76695466,
+        "cfc197d9720b6e438e331e05542ec9be0fc68eabdc445e8684cb76db86dbcbb1"
+      ],
+      "emit-tape.log": [
+        2333698,
+        "7eecf3fdd1fa646223af032272127681cec767adb05e2d29cabd5694166ea9b9"
+      ],
+      "finish-v2.log": [
+        49980974,
+        "0ff4d5c6492b29b16f1b48b0d30e36853a3ae43592742f24e1040f85c9691a80"
+      ]
+    },
+    "m12_super_sha256": "46d32dac22443fd597add209d0862c2e16d199d6e587fe61bb2b8954227fb772",
+    "m1_sync_records": 7483,
+    "m20_bytes": 2333923624,
+    "max_pieces_per_m1_release": 64,
+    "prc_total_wire": 447208836366,
+    "recorded_final_digest_not_recomputed": "15419c427b5bdc9fb63548901ca6cf83d54f486da890f66faa55021f0a0dc053"
+  },
+  "attributed_input_bytes": 2576384,
+  "attributed_write_bytes_before_receipt": 0,
+  "body_s": 3.562198725529015,
+  "conditional": {
+    "bpg1_4k_blocks_if_retained": 1961353216,
+    "credit_proposal": {
+      "piece": 6,
+      "slice": 400
+    },
+    "logical_raw_verifier_work": {
+      "escape_count": 6042592294,
+      "max_lcp": 4950426,
+      "prefix_bytes_lower": 13792959974676,
+      "prefix_bytes_upper": 29937271181174822
+    },
+    "logical_total_sxls_wire": 196699787265,
+    "marker_and_progress_names_if_retained": 1241786,
+    "modeled_live_stream_terms": {
+      "bpg1_bytes": 17238456,
+      "chi_bitmap": 12500000001,
+      "ef_spools": 37500000003,
+      "inverse": 25450675904,
+      "m20": 2333923624,
+      "pfck": 36363636408,
+      "piece_payload": 72846696,
+      "posting_cap": 50000000000,
+      "producer_margin": 4194304,
+      "slice_payload": 1782598400,
+      "sparse": 245168736
+    },
+    "modeled_stream_subtotal": 166270282532,
+    "not_yet_allocated_or_granted": 33729717468,
+    "reader": {
+      "conditional_arrays_including_two_rank_arrays": 2768660935,
+      "copy_buffer_bytes": 4194304,
+      "deep_growth_bytes": 1610612736,
+      "deep_records_upper": 63782597,
+      "extra_source_padding_upper": 8912862,
+      "new_logical_upper": 1156999623,
+      "old_reported_bytes": 1148086761
+    },
+    "widths": {
+      "reported_lcp_bits": 23,
+      "row_bits": 37,
+      "run_length_upper": 103768030,
+      "u16_sxls_impossible": true,
+      "u32_lcp_array_plus_page": 1114112
+    }
+  },
+  "credit_receipt": "bc7ece0bfcbd1da70407ab77b4431021813aca94995acefed1ed97eebdc55698",
+  "memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+  "memory_peak": 19435520,
+  "scope": "Historical piece/finish-log cross-check, conditional same-row re-slicing and byte-work bounds. No raw input, new construction, full index hash, physical fit, RSS or speed promotion.",
+  "utc": "2026-11-25T01:56:51Z"
+}
