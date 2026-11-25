@@ -1,0 +1,144 @@
+{
+  "arms": {
+    "real100m": {
+      "block_runs": 1024,
+      "credit_schedule": {
+        "fold_upper_witness": {
+          "intersected_slices_upper": 6,
+          "piece_or_eof": 550,
+          "source_rows_upper": 1572864,
+          "staged_rows_upper": 1127615
+        },
+        "fold_worst_case_bytes_upper": 27866303,
+        "largest_piece_rows": 1126176,
+        "piece_sufficient": 3,
+        "six_piece_five_slice": "sufficient_for_credit_schedule",
+        "slice_necessary": 4,
+        "slice_sufficient": 4,
+        "witness": {
+          "largest_piece_rows": {
+            "first_row": 89578750,
+            "lag_lower": 89577310,
+            "lag_upper": 89578748,
+            "past_row": 90704926,
+            "piece": 550,
+            "slices_before_piece": 346
+          },
+          "piece_sufficient": {
+            "first_row": 6739264,
+            "lag_lower": 6739018,
+            "lag_upper": 6739262,
+            "past_row": 6821103,
+            "piece": 41,
+            "slices_before_piece": 26
+          },
+          "slice_necessary": {
+            "first_row": 89578750,
+            "lag_lower": 89577310,
+            "lag_upper": 89578748,
+            "past_row": 90704926,
+            "piece": 550,
+            "slices_before_piece": 346
+          },
+          "slice_sufficient": {
+            "first_row": 89578750,
+            "lag_lower": 89577310,
+            "lag_upper": 89578748,
+            "past_row": 90704926,
+            "piece": 550,
+            "slices_before_piece": 346
+          }
+        }
+      },
+      "head_dir_sha256": "d0a5f6b02a13774335b009abb7a7a892569d58a62bce49b4952c80153f76025c",
+      "integer_array_bytes": 14184,
+      "member_bytes": 306720,
+      "member_crc32": 3517439850,
+      "member_offset": 49949136,
+      "member_sha256": "9caf232e24a36ea74acffae93e6a2f728e492716eb284f8cb5237dda55e84397",
+      "path": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/index.sxi2",
+      "piece_runs": 65536,
+      "pieces": 590,
+      "rows": 100000504,
+      "runs": 38647521,
+      "slice_rows": 262144,
+      "slices": 382,
+      "total_input_requested_bytes": 307184
+    },
+    "target100g": {
+      "block_runs": 1024,
+      "credit_schedule": {
+        "fold_upper_witness": {
+          "intersected_slices_upper": 397,
+          "piece_or_eof": 475104,
+          "source_rows_upper": 104071168,
+          "staged_rows_upper": 103779729
+        },
+        "fold_worst_case_bytes_upper": 1872989585,
+        "largest_piece_rows": 103768030,
+        "piece_sufficient": 3,
+        "six_piece_five_slice": "insufficient",
+        "slice_necessary": 395,
+        "slice_sufficient": 395,
+        "witness": {
+          "largest_piece_rows": {
+            "first_row": 98661402307,
+            "lag_lower": 98661390607,
+            "lag_upper": 98661402305,
+            "past_row": 98765170337,
+            "piece": 475104,
+            "slices_before_piece": 376759
+          },
+          "piece_sufficient": {
+            "first_row": 150396095,
+            "lag_lower": 150395801,
+            "lag_upper": 150396093,
+            "past_row": 150479872,
+            "piece": 507,
+            "slices_before_piece": 574
+          },
+          "slice_necessary": {
+            "first_row": 98661402307,
+            "lag_lower": 98661390607,
+            "lag_upper": 98661402305,
+            "past_row": 98765170337,
+            "piece": 475104,
+            "slices_before_piece": 376759
+          },
+          "slice_sufficient": {
+            "first_row": 98661402307,
+            "lag_lower": 98661390607,
+            "lag_upper": 98661402305,
+            "past_row": 98765170337,
+            "piece": 475104,
+            "slices_before_piece": 376759
+          }
+        }
+      },
+      "head_dir_sha256": "f6f15d33c46370f12d4e910a30d549685d05137c0d26104a68934e6ded559804",
+      "integer_array_bytes": 11492328,
+      "member_bytes": 248999568,
+      "member_crc32": 683317999,
+      "member_offset": 42177952056,
+      "member_sha256": "6a32fd0dc431c5fcb21fccbb8ccf909b2c02bd8c781922b288582883572ca5b6",
+      "path": "/mnt/nvme2n1/erikg/PILE100-REHEARSAL/pile-head100.sxi2",
+      "piece_runs": 65536,
+      "pieces": 478846,
+      "rows": 100000000001,
+      "runs": 31381597694,
+      "slice_rows": 262144,
+      "slices": 381470,
+      "total_input_requested_bytes": 249000032
+    }
+  },
+  "attributed_read_bytes": 202170368,
+  "attributed_write_bytes_before_receipt": 0,
+  "core": [
+    0
+  ],
+  "memory_events": "low 0\nhigh 0\nmax 352\noom 0\noom_kill 0\noom_group_kill 0",
+  "memory_peak": 134217728,
+  "scope": "Read-only metadata reduction of two archived indexes for a proposed seam-free maximal-run producer. No corpus, row scan, full target hash, measured allocator/IO savings or product admission.",
+  "service_body_s": 5.376820720732212,
+  "utc": "2026-11-25T01:42:47Z"
+}
