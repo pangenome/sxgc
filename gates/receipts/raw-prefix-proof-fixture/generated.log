@@ -1,0 +1,5 @@
+NEGATIVE_PASS directed_raw_claims=61440 mismatching_gap=1 cancelled_partial=1 extent=1 symmetric=1 collision_recompare=1
+PREFIX_CASE name=random raw=131074 rows=131075 max_lcp=3 bytes_claimed=206406 bytes_compared=206406 proved_reuse=0 lookups=0 full_hits=0 evictions=0 table_bytes=397312 oracle_s=0.024194 direct_s=0.002064 proof_s=0.002098 warm_generated=1
+PREFIX_CASE name=twins raw=131074 rows=131075 max_lcp=65536 bytes_claimed=2147606299 bytes_compared=679195 proved_reuse=2146927104 lookups=64513 full_hits=64503 evictions=0 table_bytes=397312 oracle_s=0.105097 direct_s=0.044111 proof_s=0.002070 warm_generated=1
+PREFIX_CASE name=mosaic raw=160825 rows=160826 max_lcp=1955 bytes_claimed=62420588 bytes_compared=32984296 proved_reuse=29436292 lookups=22058 full_hits=21831 evictions=0 table_bytes=397312 oracle_s=0.095030 direct_s=0.003635 proof_s=0.003931 warm_generated=1
+FIXTURE_PASS peak_cgroup=3715072 cpu_s=0.296310 attributed_read=0 attributed_write=0 corpus_bytes=0 no_product=1
