@@ -1,0 +1,420 @@
+COVER window=0 first=4111469 count=65536 key_lo=2190749 key_hi=2191472 base=4110720 extent=82380
+ANCHOR window=0 block=1064 rank=4112874 tail=4112874 pos=97935705 complete=1
+ANCHOR window=0 block=1065 rank=4114467 tail=4114467 pos=10692545 complete=1
+ANCHOR window=0 block=1066 rank=4116284 tail=4116284 pos=36281075 complete=1
+ANCHOR window=0 block=1067 rank=4118228 tail=4118229 pos=52969111 complete=1
+ANCHOR window=0 block=1068 rank=4119913 tail=4119915 pos=25490024 complete=1
+ANCHOR window=0 block=1069 rank=4121827 tail=4121827 pos=34044980 complete=1
+ANCHOR window=0 block=1070 rank=4123529 tail=4123529 pos=87183748 complete=1
+ANCHOR window=0 block=1071 rank=4125442 tail=4125442 pos=28009753 complete=1
+ANCHOR window=0 block=1072 rank=4127329 tail=4127329 pos=53930209 complete=1
+ANCHOR window=0 block=1073 rank=4128621 tail=4128621 pos=11545421 complete=1
+ANCHOR window=0 block=1074 rank=4129829 tail=4129830 pos=88951266 complete=1
+ANCHOR window=0 block=1075 rank=4131195 tail=4131195 pos=13265781 complete=1
+ANCHOR window=0 block=1076 rank=4132375 tail=4132375 pos=88954389 complete=1
+ANCHOR window=0 block=1077 rank=4133497 tail=4133497 pos=74551300 complete=1
+ANCHOR window=0 block=1078 rank=4134615 tail=4134615 pos=93605579 complete=1
+ANCHOR window=0 block=1079 rank=4135891 tail=4135891 pos=44684302 complete=1
+ANCHOR window=0 block=1080 rank=4137109 tail=4137109 pos=12854710 complete=1
+ANCHOR window=0 block=1081 rank=4138224 tail=4138224 pos=91029894 complete=1
+ANCHOR window=0 block=1082 rank=4139478 tail=4139478 pos=36494447 complete=1
+ANCHOR window=0 block=1083 rank=4140613 tail=4140613 pos=45251848 complete=1
+ANCHOR window=0 block=1084 rank=4141799 tail=4141799 pos=48061198 complete=1
+ANCHOR window=0 block=1085 rank=4142972 tail=4142972 pos=86765755 complete=1
+ANCHOR window=0 block=1086 rank=4144147 tail=4144147 pos=58509128 complete=1
+ANCHOR window=0 block=1087 rank=4145302 tail=4145302 pos=86768189 complete=1
+ANCHOR window=0 block=1088 rank=4146661 tail=4146661 pos=12759028 complete=1
+ANCHOR window=0 block=1089 rank=4148229 tail=4148229 pos=93608242 complete=1
+ANCHOR window=0 block=1090 rank=4149636 tail=4149636 pos=25229401 complete=1
+ANCHOR window=0 block=1091 rank=4150943 tail=4150943 pos=27174815 complete=1
+ANCHOR window=0 block=1092 rank=4152345 tail=4152346 pos=47755768 complete=1
+ANCHOR window=0 block=1093 rank=4153692 tail=4153694 pos=85574436 complete=1
+ANCHOR window=0 block=1094 rank=4155495 tail=4155495 pos=12223360 complete=1
+ANCHOR window=0 block=1095 rank=4157640 tail=4157640 pos=21772393 complete=1
+ANCHOR window=0 block=1096 rank=4159507 tail=4159507 pos=896457 complete=1
+ANCHOR window=0 block=1097 rank=4160954 tail=4160954 pos=97511069 complete=1
+ANCHOR window=0 block=1098 rank=4162771 tail=4162771 pos=80789590 complete=1
+ANCHOR window=0 block=1099 rank=4164600 tail=4164600 pos=35744945 complete=1
+ANCHOR window=0 block=1100 rank=4166136 tail=4166137 pos=34477978 complete=1
+ANCHOR window=0 block=1101 rank=4167388 tail=4167388 pos=25861432 complete=1
+ANCHOR window=0 block=1102 rank=4168535 tail=4168535 pos=18905906 complete=1
+ANCHOR window=0 block=1103 rank=4169670 tail=4169670 pos=19241127 complete=1
+ANCHOR window=0 block=1104 rank=4170891 tail=4170891 pos=52909032 complete=1
+ANCHOR window=0 block=1105 rank=4172147 tail=4172147 pos=53265175 complete=1
+ANCHOR window=0 block=1106 rank=4173261 tail=4173261 pos=74546641 complete=1
+ANCHOR window=0 block=1107 rank=4174481 tail=4174481 pos=33399068 complete=1
+ANCHOR window=0 block=1108 rank=4175644 tail=4175644 pos=49563212 complete=1
+ANCHOR window=0 block=1109 rank=4176838 tail=4176838 pos=48054141 complete=1
+PHASE window=0 half=0 edges=32768 prefix=437450 escapes=47 ge1024=2 ge4096=0 eligible_bytes=4776 max_h=3252 far_pairs=21368 start_pages=3750 small_compared=437450 small_skipped=0 small_lookups=2 small_hits=0 small_evicted=0 large_compared=437450 large_skipped=0 large_lookups=2 large_hits=0 large_evicted=0
+PHASE window=0 half=1 edges=32768 prefix=522874 escapes=162 ge1024=20 ge4096=2 eligible_bytes=74154 max_h=22621 far_pairs=23852 start_pages=4440 small_compared=484037 small_skipped=38837 small_lookups=20 small_hits=10 small_evicted=0 large_compared=484037 large_skipped=38837 large_lookups=20 large_hits=10 large_evicted=0
+COVER window=1 first=9432576 count=65536 key_lo=2205686 key_hi=2205686 base=9432550 extent=72864
+ANCHOR window=1 block=4592 rank=9433161 tail=9433161 pos=66275918 complete=1
+ANCHOR window=1 block=4593 rank=9434617 tail=9434617 pos=40200829 complete=1
+ANCHOR window=1 block=4594 rank=9436035 tail=9436035 pos=48500680 complete=1
+ANCHOR window=1 block=4595 rank=9437476 tail=9437476 pos=44301723 complete=1
+ANCHOR window=1 block=4596 rank=9438828 tail=9438828 pos=96701005 complete=1
+ANCHOR window=1 block=4597 rank=9440115 tail=9440115 pos=98342523 complete=1
+ANCHOR window=1 block=4598 rank=9441506 tail=9441506 pos=53477723 complete=1
+ANCHOR window=1 block=4599 rank=9442985 tail=9442985 pos=11106435 complete=1
+ANCHOR window=1 block=4600 rank=9444494 tail=9444494 pos=52999899 complete=1
+ANCHOR window=1 block=4601 rank=9445909 tail=9445909 pos=47205039 complete=1
+ANCHOR window=1 block=4602 rank=9447670 tail=9447670 pos=71056919 complete=1
+ANCHOR window=1 block=4603 rank=9449347 tail=9449347 pos=71041078 complete=1
+ANCHOR window=1 block=4604 rank=9450678 tail=9450678 pos=47741512 complete=1
+ANCHOR window=1 block=4605 rank=9452051 tail=9452051 pos=64030138 complete=1
+ANCHOR window=1 block=4606 rank=9453490 tail=9453490 pos=29894754 complete=1
+ANCHOR window=1 block=4607 rank=9454883 tail=9454883 pos=31488804 complete=1
+ANCHOR window=1 block=4608 rank=9456121 tail=9456121 pos=85714416 complete=1
+ANCHOR window=1 block=4609 rank=9457421 tail=9457421 pos=8797477 complete=1
+ANCHOR window=1 block=4610 rank=9458615 tail=9458615 pos=35251622 complete=1
+ANCHOR window=1 block=4611 rank=9459829 tail=9459829 pos=57814245 complete=1
+ANCHOR window=1 block=4612 rank=9461075 tail=9461075 pos=13857350 complete=1
+ANCHOR window=1 block=4613 rank=9462413 tail=9462413 pos=70758835 complete=1
+ANCHOR window=1 block=4614 rank=9463841 tail=9463841 pos=52974157 complete=1
+ANCHOR window=1 block=4615 rank=9465194 tail=9465194 pos=45518443 complete=1
+ANCHOR window=1 block=4616 rank=9466562 tail=9466562 pos=96824974 complete=1
+ANCHOR window=1 block=4617 rank=9467907 tail=9467907 pos=46326485 complete=1
+ANCHOR window=1 block=4618 rank=9469281 tail=9469281 pos=53860540 complete=1
+ANCHOR window=1 block=4619 rank=9470635 tail=9470635 pos=25610699 complete=1
+ANCHOR window=1 block=4620 rank=9471891 tail=9471891 pos=32335913 complete=1
+ANCHOR window=1 block=4621 rank=9473209 tail=9473209 pos=55630996 complete=1
+ANCHOR window=1 block=4622 rank=9474673 tail=9474673 pos=36814639 complete=1
+ANCHOR window=1 block=4623 rank=9476485 tail=9476486 pos=48192520 complete=1
+ANCHOR window=1 block=4624 rank=9478322 tail=9478322 pos=92945090 complete=1
+ANCHOR window=1 block=4625 rank=9479959 tail=9479959 pos=7458433 complete=1
+ANCHOR window=1 block=4626 rank=9481400 tail=9481400 pos=561507 complete=1
+ANCHOR window=1 block=4627 rank=9482775 tail=9482775 pos=54128954 complete=1
+ANCHOR window=1 block=4628 rank=9484093 tail=9484093 pos=17193046 complete=1
+ANCHOR window=1 block=4629 rank=9485487 tail=9485487 pos=8772350 complete=1
+ANCHOR window=1 block=4630 rank=9487108 tail=9487108 pos=41389647 complete=1
+ANCHOR window=1 block=4631 rank=9488701 tail=9488702 pos=23727263 complete=1
+ANCHOR window=1 block=4632 rank=9490077 tail=9490077 pos=14981727 complete=1
+ANCHOR window=1 block=4633 rank=9491338 tail=9491338 pos=59898030 complete=1
+ANCHOR window=1 block=4634 rank=9492754 tail=9492754 pos=7499885 complete=1
+ANCHOR window=1 block=4635 rank=9494080 tail=9494080 pos=38772626 complete=1
+ANCHOR window=1 block=4636 rank=9495500 tail=9495500 pos=40450326 complete=1
+ANCHOR window=1 block=4637 rank=9496767 tail=9496767 pos=14388817 complete=1
+ANCHOR window=1 block=4638 rank=9498019 tail=9498019 pos=46362671 complete=1
+PHASE window=1 half=0 edges=32768 prefix=1118119 escapes=224 ge1024=81 ge4096=35 eligible_bytes=570323 max_h=33239 far_pairs=28754 start_pages=12851 small_compared=686615 small_skipped=431504 small_lookups=81 small_hits=36 small_evicted=0 large_compared=686615 large_skipped=431504 large_lookups=81 large_hits=36 large_evicted=0
+PHASE window=1 half=1 edges=32768 prefix=821736 escapes=201 ge1024=56 ge4096=17 eligible_bytes=295077 max_h=31995 far_pairs=27843 start_pages=12669 small_compared=581137 small_skipped=240599 small_lookups=56 small_hits=31 small_evicted=0 large_compared=581137 large_skipped=240599 large_lookups=56 large_hits=31 large_evicted=0
+COVER window=2 first=15343958 count=65536 key_lo=2209791 key_hi=2209791 base=15239134 extent=1094729
+ANCHOR window=2 block=8911 rank=15344885 tail=15344885 pos=82251497 complete=1
+ANCHOR window=2 block=8912 rank=15346106 tail=15346106 pos=16269802 complete=1
+ANCHOR window=2 block=8913 rank=15347449 tail=15347449 pos=68951890 complete=1
+ANCHOR window=2 block=8914 rank=15348701 tail=15348701 pos=48371018 complete=1
+ANCHOR window=2 block=8915 rank=15349931 tail=15349931 pos=10933455 complete=1
+ANCHOR window=2 block=8916 rank=15351138 tail=15351138 pos=42541020 complete=1
+ANCHOR window=2 block=8917 rank=15352358 tail=15352359 pos=16898693 complete=1
+ANCHOR window=2 block=8918 rank=15353612 tail=15353612 pos=59414274 complete=1
+ANCHOR window=2 block=8919 rank=15354851 tail=15354851 pos=55879978 complete=1
+ANCHOR window=2 block=8920 rank=15356133 tail=15356133 pos=18128347 complete=1
+ANCHOR window=2 block=8921 rank=15357344 tail=15357344 pos=24416016 complete=1
+ANCHOR window=2 block=8922 rank=15358532 tail=15358532 pos=19385214 complete=1
+ANCHOR window=2 block=8923 rank=15359733 tail=15359734 pos=54700463 complete=1
+ANCHOR window=2 block=8924 rank=15361000 tail=15361000 pos=21480920 complete=1
+ANCHOR window=2 block=8925 rank=15362203 tail=15362204 pos=39184290 complete=1
+ANCHOR window=2 block=8926 rank=15363441 tail=15363442 pos=41858005 complete=1
+ANCHOR window=2 block=8927 rank=15364629 tail=15364629 pos=17805140 complete=1
+ANCHOR window=2 block=8928 rank=15365884 tail=15365884 pos=7639193 complete=1
+ANCHOR window=2 block=8929 rank=15367092 tail=15367092 pos=54965523 complete=1
+ANCHOR window=2 block=8930 rank=15368362 tail=15368362 pos=14300674 complete=1
+ANCHOR window=2 block=8931 rank=15369568 tail=15369568 pos=91687001 complete=1
+ANCHOR window=2 block=8932 rank=15370794 tail=15370794 pos=75472701 complete=1
+ANCHOR window=2 block=8933 rank=15372086 tail=15372086 pos=8285857 complete=1
+ANCHOR window=2 block=8934 rank=15373324 tail=15373324 pos=20310866 complete=1
+ANCHOR window=2 block=8935 rank=15374562 tail=15374562 pos=70447774 complete=1
+ANCHOR window=2 block=8936 rank=15375727 tail=15375727 pos=66459095 complete=1
+ANCHOR window=2 block=8937 rank=15376925 tail=15376925 pos=4482691 complete=1
+ANCHOR window=2 block=8938 rank=15378114 tail=15378114 pos=81616671 complete=1
+ANCHOR window=2 block=8939 rank=15379753 tail=15379753 pos=49409059 complete=1
+ANCHOR window=2 block=8940 rank=15380980 tail=15380980 pos=31104997 complete=1
+ANCHOR window=2 block=8941 rank=15382219 tail=15382220 pos=39163382 complete=1
+ANCHOR window=2 block=8942 rank=15383399 tail=15383399 pos=9495843 complete=1
+ANCHOR window=2 block=8943 rank=15384608 tail=15384608 pos=90033568 complete=1
+ANCHOR window=2 block=8944 rank=15385811 tail=15385811 pos=24293396 complete=1
+ANCHOR window=2 block=8945 rank=15387063 tail=15387063 pos=46570456 complete=1
+ANCHOR window=2 block=8946 rank=15388372 tail=15388372 pos=63166553 complete=1
+ANCHOR window=2 block=8947 rank=15389599 tail=15389599 pos=67365024 complete=1
+ANCHOR window=2 block=8948 rank=15390811 tail=15390811 pos=42206062 complete=1
+ANCHOR window=2 block=8949 rank=15391976 tail=15391976 pos=46387830 complete=1
+ANCHOR window=2 block=8950 rank=15393182 tail=15393182 pos=13566866 complete=1
+ANCHOR window=2 block=8951 rank=15394403 tail=15394403 pos=41785198 complete=1
+ANCHOR window=2 block=8952 rank=15395581 tail=15395581 pos=77204022 complete=1
+ANCHOR window=2 block=8953 rank=15396831 tail=15396831 pos=56085444 complete=1
+ANCHOR window=2 block=8954 rank=15398046 tail=15398046 pos=59697516 complete=1
+ANCHOR window=2 block=8955 rank=15399306 tail=15399306 pos=79758713 complete=1
+ANCHOR window=2 block=8956 rank=15400480 tail=15400480 pos=64324504 complete=1
+ANCHOR window=2 block=8957 rank=15401717 tail=15401717 pos=80932919 complete=1
+ANCHOR window=2 block=8958 rank=15402957 tail=15402957 pos=36334014 complete=1
+ANCHOR window=2 block=8959 rank=15404205 tail=15404205 pos=60812177 complete=1
+ANCHOR window=2 block=8960 rank=15405506 tail=15405506 pos=50582538 complete=1
+ANCHOR window=2 block=8961 rank=15406812 tail=15406812 pos=74953825 complete=1
+ANCHOR window=2 block=8962 rank=15408204 tail=15408204 pos=10894697 complete=1
+PHASE window=2 half=0 edges=32768 prefix=962653 escapes=146 ge1024=57 ge4096=22 eligible_bytes=341726 max_h=28788 far_pairs=29273 start_pages=14315 small_compared=778931 small_skipped=183722 small_lookups=57 small_hits=18 small_evicted=0 large_compared=778931 large_skipped=183722 large_lookups=57 large_hits=18 large_evicted=0
+PHASE window=2 half=1 edges=32768 prefix=1147532 escapes=242 ge1024=108 ge4096=45 eligible_bytes=628026 max_h=33258 far_pairs=27325 start_pages=13968 small_compared=591287 small_skipped=556245 small_lookups=108 small_hits=71 small_evicted=0 large_compared=591287 large_skipped=556245 large_lookups=108 large_hits=71 large_evicted=0
+COVER window=3 first=18776187 count=65536 key_lo=2671805 key_hi=2717042 base=18732274 extent=109528
+ANCHOR window=3 block=11207 rank=18776771 tail=18776772 pos=6305671 complete=1
+ANCHOR window=3 block=11208 rank=18778179 tail=18778179 pos=916183 complete=1
+ANCHOR window=3 block=11209 rank=18779544 tail=18779544 pos=1293818 complete=1
+ANCHOR window=3 block=11210 rank=18781099 tail=18781099 pos=37314286 complete=1
+ANCHOR window=3 block=11211 rank=18782616 tail=18782616 pos=3153429 complete=1
+ANCHOR window=3 block=11212 rank=18783994 tail=18783994 pos=35483434 complete=1
+ANCHOR window=3 block=11213 rank=18785851 tail=18785853 pos=13559917 complete=1
+ANCHOR window=3 block=11214 rank=18787429 tail=18787429 pos=1771638 complete=1
+ANCHOR window=3 block=11215 rank=18789020 tail=18789020 pos=67820996 complete=1
+ANCHOR window=3 block=11216 rank=18791018 tail=18791019 pos=66862350 complete=1
+ANCHOR window=3 block=11217 rank=18792381 tail=18792381 pos=88292126 complete=1
+ANCHOR window=3 block=11218 rank=18820604 tail=18820604 pos=12853092 complete=1
+ANCHOR window=3 block=11219 rank=18822587 tail=18822587 pos=68523717 complete=1
+ANCHOR window=3 block=11220 rank=18824241 tail=18824241 pos=13681239 complete=1
+ANCHOR window=3 block=11221 rank=18825911 tail=18825911 pos=22469669 complete=1
+ANCHOR window=3 block=11222 rank=18828176 tail=18828176 pos=33363623 complete=1
+ANCHOR window=3 block=11223 rank=18830973 tail=18830973 pos=6954608 complete=1
+ANCHOR window=3 block=11224 rank=18835219 tail=18835219 pos=2049604 complete=1
+ANCHOR window=3 block=11225 rank=18838040 tail=18838040 pos=87146560 complete=1
+ANCHOR window=3 block=11226 rank=18840293 tail=18840296 pos=12222508 complete=1
+PHASE window=3 half=0 edges=32768 prefix=666950 escapes=222 ge1024=61 ge4096=10 eligible_bytes=190935 max_h=25024 far_pairs=28539 start_pages=9677 small_compared=595604 small_skipped=71346 small_lookups=61 small_hits=15 small_evicted=0 large_compared=595604 large_skipped=71346 large_lookups=61 large_hits=15 large_evicted=0
+PHASE window=3 half=1 edges=32768 prefix=646946 escapes=214 ge1024=30 ge4096=1 eligible_bytes=54058 max_h=7375 far_pairs=21168 start_pages=8291 small_compared=599717 small_skipped=47229 small_lookups=30 small_hits=20 small_evicted=0 large_compared=599717 large_skipped=47229 large_lookups=30 large_hits=20 large_evicted=0
+COVER window=4 first=26397644 count=65536 key_lo=4520993 key_hi=4576190 base=26396589 extent=66601
+ANCHOR window=4 block=15148 rank=26400626 tail=26400630 pos=61624009 complete=1
+ANCHOR window=4 block=15149 rank=26401970 tail=26401970 pos=43326312 complete=1
+ANCHOR window=4 block=15150 rank=26406317 tail=26406317 pos=6323490 complete=1
+ANCHOR window=4 block=15151 rank=26408820 tail=26408820 pos=72507764 complete=1
+ANCHOR window=4 block=15152 rank=26412603 tail=26412605 pos=7442276 complete=1
+ANCHOR window=4 block=15153 rank=26414357 tail=26414357 pos=32942412 complete=1
+ANCHOR window=4 block=15154 rank=26416627 tail=26416627 pos=91407859 complete=1
+ANCHOR window=4 block=15155 rank=26419665 tail=26419665 pos=11788502 complete=1
+ANCHOR window=4 block=15156 rank=26422092 tail=26422092 pos=44115569 complete=1
+ANCHOR window=4 block=15157 rank=26423611 tail=26423612 pos=88718215 complete=1
+ANCHOR window=4 block=15158 rank=26425130 tail=26425130 pos=84814244 complete=1
+ANCHOR window=4 block=15159 rank=26426838 tail=26426842 pos=87320893 complete=1
+ANCHOR window=4 block=15160 rank=26428613 tail=26428613 pos=49342511 complete=1
+ANCHOR window=4 block=15161 rank=26430392 tail=26430414 pos=63090422 complete=1
+ANCHOR window=4 block=15162 rank=26431881 tail=26431881 pos=86820657 complete=1
+ANCHOR window=4 block=15163 rank=26433616 tail=26433616 pos=17281610 complete=1
+ANCHOR window=4 block=15164 rank=26435672 tail=26435672 pos=86970179 complete=1
+ANCHOR window=4 block=15165 rank=26437455 tail=26437456 pos=5469869 complete=1
+ANCHOR window=4 block=15166 rank=26440334 tail=26440335 pos=77260425 complete=1
+ANCHOR window=4 block=15167 rank=26443486 tail=26443486 pos=53630977 complete=1
+ANCHOR window=4 block=15168 rank=26446000 tail=26446001 pos=68665449 complete=1
+ANCHOR window=4 block=15169 rank=26448956 tail=26449034 pos=68678879 complete=1
+ANCHOR window=4 block=15170 rank=26451585 tail=26451585 pos=98725026 complete=1
+ANCHOR window=4 block=15171 rank=26453874 tail=26453874 pos=45131037 complete=1
+ANCHOR window=4 block=15172 rank=26456784 tail=26456800 pos=95231233 complete=1
+ANCHOR window=4 block=15173 rank=26460156 tail=26460156 pos=32728123 complete=1
+ANCHOR window=4 block=15174 rank=26462575 tail=26462580 pos=59001835 complete=1
+PHASE window=4 half=0 edges=32768 prefix=2815800 escapes=596 ge1024=252 ge4096=161 eligible_bytes=2187007 max_h=27130 far_pairs=19699 start_pages=9908 small_compared=838665 small_skipped=1977135 small_lookups=252 small_hits=180 small_evicted=0 large_compared=838665 large_skipped=1977135 large_lookups=252 large_hits=180 large_evicted=0
+PHASE window=4 half=1 edges=32768 prefix=2116823 escapes=552 ge1024=216 ge4096=127 eligible_bytes=1521377 max_h=25479 far_pairs=17647 start_pages=8695 small_compared=628195 small_skipped=1488628 small_lookups=216 small_hits=182 small_evicted=0 large_compared=628195 large_skipped=1488628 large_lookups=216 large_hits=182 large_evicted=0
+COVER window=5 first=31485269 count=65536 key_lo=6499632 key_hi=6499656 base=31452883 extent=97983
+ANCHOR window=5 block=16841 rank=31485664 tail=31485664 pos=91573396 complete=1
+ANCHOR window=5 block=16842 rank=31487836 tail=31487838 pos=22747681 complete=1
+ANCHOR window=5 block=16843 rank=31490688 tail=31490691 pos=86268575 complete=1
+ANCHOR window=5 block=16844 rank=31492939 tail=31492939 pos=9874422 complete=1
+ANCHOR window=5 block=16845 rank=31495952 tail=31495958 pos=52143655 complete=1
+ANCHOR window=5 block=16846 rank=31501101 tail=31501101 pos=44532671 complete=1
+ANCHOR window=5 block=16847 rank=31504873 tail=31504875 pos=3285335 complete=1
+ANCHOR window=5 block=16848 rank=31506770 tail=31506777 pos=19744953 complete=1
+ANCHOR window=5 block=16849 rank=31508196 tail=31508196 pos=54504690 complete=1
+ANCHOR window=5 block=16850 rank=31509859 tail=31509859 pos=99666500 complete=1
+ANCHOR window=5 block=16851 rank=31511354 tail=31511354 pos=13973486 complete=1
+ANCHOR window=5 block=16852 rank=31512637 tail=31512637 pos=1528801 complete=1
+ANCHOR window=5 block=16853 rank=31516702 tail=31516703 pos=38867197 complete=1
+ANCHOR window=5 block=16854 rank=31520351 tail=31520351 pos=77650105 complete=1
+ANCHOR window=5 block=16855 rank=31523877 tail=31523877 pos=98311414 complete=1
+ANCHOR window=5 block=16856 rank=31525952 tail=31525954 pos=18361557 complete=1
+ANCHOR window=5 block=16857 rank=31534381 tail=31534381 pos=16915901 complete=1
+ANCHOR window=5 block=16858 rank=31537749 tail=31537749 pos=91362744 complete=1
+ANCHOR window=5 block=16859 rank=31541941 tail=31541941 pos=52493436 complete=1
+ANCHOR window=5 block=16860 rank=31547007 tail=31547008 pos=80096887 complete=1
+PHASE window=5 half=0 edges=32768 prefix=1506365 escapes=996 ge1024=114 ge4096=51 eligible_bytes=572315 max_h=32388 far_pairs=24315 start_pages=12456 small_compared=1078621 small_skipped=427744 small_lookups=114 small_hits=66 small_evicted=0 large_compared=1078621 large_skipped=427744 large_lookups=114 large_hits=66 large_evicted=0
+PHASE window=5 half=1 edges=32768 prefix=1667614 escapes=339 ge1024=97 ge4096=55 eligible_bytes=1136892 max_h=34058 far_pairs=25002 start_pages=13019 small_compared=597800 small_skipped=1069814 small_lookups=97 small_hits=60 small_evicted=0 large_compared=597800 large_skipped=1069814 large_lookups=97 large_hits=60 large_evicted=0
+COVER window=6 first=41890252 count=65536 key_lo=6745525 key_hi=6745547 base=41886407 extent=86731
+ANCHOR window=6 block=19882 rank=41891664 tail=41891664 pos=53484553 complete=1
+ANCHOR window=6 block=19883 rank=41893383 tail=41893383 pos=61467299 complete=1
+ANCHOR window=6 block=19884 rank=41895016 tail=41895016 pos=90822412 complete=1
+ANCHOR window=6 block=19885 rank=41896795 tail=41896795 pos=40587396 complete=1
+ANCHOR window=6 block=19886 rank=41898682 tail=41898682 pos=1374949 complete=1
+ANCHOR window=6 block=19887 rank=41901068 tail=41901070 pos=71437046 complete=1
+ANCHOR window=6 block=19888 rank=41903541 tail=41903542 pos=25838850 complete=1
+ANCHOR window=6 block=19889 rank=41905264 tail=41905264 pos=68097069 complete=1
+ANCHOR window=6 block=19890 rank=41907630 tail=41907631 pos=90000432 complete=1
+ANCHOR window=6 block=19891 rank=41909801 tail=41909802 pos=25107630 complete=1
+ANCHOR window=6 block=19892 rank=41911458 tail=41911458 pos=622733 complete=1
+ANCHOR window=6 block=19893 rank=41913344 tail=41913344 pos=91749495 complete=1
+ANCHOR window=6 block=19894 rank=41915285 tail=41915285 pos=91451119 complete=1
+ANCHOR window=6 block=19895 rank=41917075 tail=41917075 pos=907920 complete=1
+ANCHOR window=6 block=19896 rank=41918827 tail=41918827 pos=24026373 complete=1
+ANCHOR window=6 block=19897 rank=41920726 tail=41920728 pos=16185342 complete=1
+ANCHOR window=6 block=19898 rank=41923238 tail=41923238 pos=39130097 complete=1
+ANCHOR window=6 block=19899 rank=41924933 tail=41924934 pos=93387512 complete=1
+ANCHOR window=6 block=19900 rank=41926728 tail=41926730 pos=28610409 complete=1
+ANCHOR window=6 block=19901 rank=41928551 tail=41928551 pos=48705828 complete=1
+ANCHOR window=6 block=19902 rank=41930784 tail=41930784 pos=57181248 complete=1
+ANCHOR window=6 block=19903 rank=41933104 tail=41933106 pos=36184433 complete=1
+ANCHOR window=6 block=19904 rank=41935456 tail=41935457 pos=6965180 complete=1
+ANCHOR window=6 block=19905 rank=41938280 tail=41938280 pos=49226136 complete=1
+ANCHOR window=6 block=19906 rank=41940617 tail=41940618 pos=57773919 complete=1
+ANCHOR window=6 block=19907 rank=41943379 tail=41943383 pos=93166060 complete=1
+ANCHOR window=6 block=19908 rank=41945892 tail=41945894 pos=24479103 complete=1
+ANCHOR window=6 block=19909 rank=41948344 tail=41948344 pos=67103228 complete=1
+ANCHOR window=6 block=19910 rank=41950758 tail=41950758 pos=35492238 complete=1
+ANCHOR window=6 block=19911 rank=41953296 tail=41953296 pos=80371721 complete=1
+PHASE window=6 half=0 edges=32768 prefix=843652 escapes=205 ge1024=66 ge4096=25 eligible_bytes=421487 max_h=27390 far_pairs=25706 start_pages=11764 small_compared=573846 small_skipped=269806 small_lookups=66 small_hits=22 small_evicted=0 large_compared=573846 large_skipped=269806 large_lookups=66 large_hits=22 large_evicted=0
+PHASE window=6 half=1 edges=32768 prefix=1102016 escapes=392 ge1024=135 ge4096=29 eligible_bytes=528258 max_h=32604 far_pairs=21151 start_pages=12540 small_compared=646141 small_skipped=455875 small_lookups=135 small_hits=90 small_evicted=0 large_compared=646141 large_skipped=455875 large_lookups=135 large_hits=90 large_evicted=0
+COVER window=7 first=47290813 count=65536 key_lo=6765642 key_hi=6765642 base=47284496 extent=291068
+ANCHOR window=7 block=22368 rank=47291881 tail=47291881 pos=15410728 complete=1
+ANCHOR window=7 block=22369 rank=47293877 tail=47293877 pos=28104955 complete=1
+ANCHOR window=7 block=22370 rank=47296093 tail=47296093 pos=56352535 complete=1
+ANCHOR window=7 block=22371 rank=47297969 tail=47297972 pos=40342388 complete=1
+ANCHOR window=7 block=22372 rank=47299857 tail=47299857 pos=48801797 complete=1
+ANCHOR window=7 block=22373 rank=47301707 tail=47301707 pos=35301930 complete=1
+ANCHOR window=7 block=22374 rank=47303564 tail=47303564 pos=91433668 complete=1
+ANCHOR window=7 block=22375 rank=47305241 tail=47305242 pos=32607234 complete=1
+ANCHOR window=7 block=22376 rank=47306961 tail=47306964 pos=10208659 complete=1
+ANCHOR window=7 block=22377 rank=47308852 tail=47308857 pos=55318956 complete=1
+ANCHOR window=7 block=22378 rank=47310720 tail=47310726 pos=54190170 complete=1
+ANCHOR window=7 block=22379 rank=47312417 tail=47312419 pos=31308741 complete=1
+ANCHOR window=7 block=22380 rank=47314375 tail=47314375 pos=84238504 complete=1
+ANCHOR window=7 block=22381 rank=47316134 tail=47316134 pos=32349210 complete=1
+ANCHOR window=7 block=22382 rank=47318035 tail=47318035 pos=79189557 complete=1
+ANCHOR window=7 block=22383 rank=47319782 tail=47319782 pos=81921745 complete=1
+ANCHOR window=7 block=22384 rank=47321400 tail=47321401 pos=51064422 complete=1
+ANCHOR window=7 block=22385 rank=47323280 tail=47323280 pos=66735892 complete=1
+ANCHOR window=7 block=22386 rank=47325086 tail=47325086 pos=65652592 complete=1
+ANCHOR window=7 block=22387 rank=47327257 tail=47327257 pos=2189044 complete=1
+ANCHOR window=7 block=22388 rank=47329038 tail=47329038 pos=84381646 complete=1
+ANCHOR window=7 block=22389 rank=47330702 tail=47330702 pos=35515633 complete=1
+ANCHOR window=7 block=22390 rank=47332310 tail=47332311 pos=50002092 complete=1
+ANCHOR window=7 block=22391 rank=47333923 tail=47333923 pos=49234998 complete=1
+ANCHOR window=7 block=22392 rank=47336650 tail=47336650 pos=47240083 complete=1
+ANCHOR window=7 block=22393 rank=47338678 tail=47338678 pos=40949566 complete=1
+ANCHOR window=7 block=22394 rank=47340557 tail=47340557 pos=27585364 complete=1
+ANCHOR window=7 block=22395 rank=47342376 tail=47342376 pos=47640895 complete=1
+ANCHOR window=7 block=22396 rank=47344095 tail=47344095 pos=53778012 complete=1
+ANCHOR window=7 block=22397 rank=47345844 tail=47345844 pos=59777918 complete=1
+ANCHOR window=7 block=22398 rank=47348937 tail=47348937 pos=93478334 complete=1
+ANCHOR window=7 block=22399 rank=47351655 tail=47351655 pos=75705634 complete=1
+ANCHOR window=7 block=22400 rank=47353914 tail=47353914 pos=60967710 complete=1
+ANCHOR window=7 block=22401 rank=47356176 tail=47356182 pos=83341769 complete=1
+PHASE window=7 half=0 edges=32768 prefix=1604654 escapes=289 ge1024=162 ge4096=97 eligible_bytes=1097557 max_h=24370 far_pairs=28031 start_pages=14816 small_compared=725608 small_skipped=879046 small_lookups=162 small_hits=95 small_evicted=0 large_compared=725608 large_skipped=879046 large_lookups=162 large_hits=95 large_evicted=0
+PHASE window=7 half=1 edges=32768 prefix=1304321 escapes=272 ge1024=129 ge4096=60 eligible_bytes=751326 max_h=33142 far_pairs=28356 start_pages=14668 small_compared=621903 small_skipped=682418 small_lookups=129 small_hits=90 small_evicted=0 large_compared=621903 large_skipped=682418 large_lookups=129 large_hits=90 large_evicted=0
+COVER window=8 first=51936755 count=65536 key_lo=6877680 key_hi=6877688 base=51924881 extent=81477
+ANCHOR window=8 block=23694 rank=51937123 tail=51937153 pos=89127182 complete=1
+ANCHOR window=8 block=23695 rank=51948492 tail=51948492 pos=73438427 complete=1
+ANCHOR window=8 block=23696 rank=51965157 tail=51965235 pos=72112573 complete=1
+ANCHOR window=8 block=23697 rank=51975396 tail=51975396 pos=55669104 complete=1
+ANCHOR window=8 block=23698 rank=51988693 tail=51988693 pos=13392642 complete=1
+PHASE window=8 half=0 edges=32768 prefix=1319863 escapes=267 ge1024=101 ge4096=52 eligible_bytes=844899 max_h=33043 far_pairs=29327 start_pages=15240 small_compared=646245 small_skipped=673618 small_lookups=101 small_hits=49 small_evicted=0 large_compared=646245 large_skipped=673618 large_lookups=101 large_hits=49 large_evicted=0
+PHASE window=8 half=1 edges=32768 prefix=1151222 escapes=263 ge1024=106 ge4096=47 eligible_bytes=671700 max_h=31112 far_pairs=28861 start_pages=15203 small_compared=520559 small_skipped=630663 small_lookups=106 small_hits=69 small_evicted=0 large_compared=520559 large_skipped=630663 large_lookups=106 large_hits=69 large_evicted=0
+COVER window=9 first=60617382 count=65536 key_lo=7031368 key_hi=7031368 base=60598224 extent=130836
+ANCHOR window=9 block=25970 rank=60627453 tail=60627456 pos=15154841 complete=1
+ANCHOR window=9 block=25971 rank=60644668 tail=60644668 pos=46497305 complete=1
+ANCHOR window=9 block=25972 rank=60661701 tail=60661708 pos=53973634 complete=1
+ANCHOR window=9 block=25973 rank=60677504 tail=60677504 pos=92440080 complete=1
+PHASE window=9 half=0 edges=32768 prefix=1135392 escapes=230 ge1024=94 ge4096=45 eligible_bytes=621367 max_h=31948 far_pairs=28998 start_pages=15358 small_compared=686919 small_skipped=448473 small_lookups=94 small_hits=35 small_evicted=0 large_compared=686919 large_skipped=448473 large_lookups=94 large_hits=35 large_evicted=0
+PHASE window=9 half=1 edges=32768 prefix=1533400 escapes=341 ge1024=126 ge4096=53 eligible_bytes=944568 max_h=33875 far_pairs=28334 start_pages=15917 small_compared=672759 small_skipped=860641 small_lookups=126 small_hits=85 small_evicted=0 large_compared=672759 large_skipped=860641 large_lookups=126 large_hits=85 large_evicted=0
+COVER window=10 first=64774199 count=65536 key_lo=7273976 key_hi=7273988 base=64772654 extent=93775
+ANCHOR window=10 block=27345 rank=64774221 tail=64774221 pos=40660014 complete=1
+ANCHOR window=10 block=27346 rank=64776950 tail=64776950 pos=39295182 complete=1
+ANCHOR window=10 block=27347 rank=64778971 tail=64778971 pos=40333366 complete=1
+ANCHOR window=10 block=27348 rank=64780363 tail=64780363 pos=24326318 complete=1
+ANCHOR window=10 block=27349 rank=64781841 tail=64781841 pos=46226902 complete=1
+ANCHOR window=10 block=27350 rank=64783346 tail=64783349 pos=11239938 complete=1
+ANCHOR window=10 block=27351 rank=64785126 tail=64785126 pos=57619766 complete=1
+ANCHOR window=10 block=27352 rank=64786570 tail=64786571 pos=65068860 complete=1
+ANCHOR window=10 block=27353 rank=64788125 tail=64788126 pos=30902151 complete=1
+ANCHOR window=10 block=27354 rank=64790378 tail=64790380 pos=28392314 complete=1
+ANCHOR window=10 block=27355 rank=64792424 tail=64792425 pos=43650634 complete=1
+ANCHOR window=10 block=27356 rank=64794211 tail=64794211 pos=55543981 complete=1
+ANCHOR window=10 block=27357 rank=64796306 tail=64796306 pos=43370607 complete=1
+ANCHOR window=10 block=27358 rank=64799186 tail=64799187 pos=41675490 complete=1
+ANCHOR window=10 block=27359 rank=64801168 tail=64801169 pos=74591108 complete=1
+ANCHOR window=10 block=27360 rank=64803768 tail=64803768 pos=15343725 complete=1
+ANCHOR window=10 block=27361 rank=64805458 tail=64805458 pos=4560012 complete=1
+ANCHOR window=10 block=27362 rank=64807011 tail=64807011 pos=30335353 complete=1
+ANCHOR window=10 block=27363 rank=64808622 tail=64808623 pos=9176610 complete=1
+ANCHOR window=10 block=27364 rank=64810236 tail=64810236 pos=643153 complete=1
+ANCHOR window=10 block=27365 rank=64811985 tail=64811986 pos=63672347 complete=1
+ANCHOR window=10 block=27366 rank=64814001 tail=64814001 pos=9612184 complete=1
+ANCHOR window=10 block=27367 rank=64815941 tail=64815942 pos=66992972 complete=1
+ANCHOR window=10 block=27368 rank=64817954 tail=64817954 pos=84766275 complete=1
+ANCHOR window=10 block=27369 rank=64819721 tail=64819724 pos=93425701 complete=1
+ANCHOR window=10 block=27370 rank=64821610 tail=64821610 pos=66133705 complete=1
+ANCHOR window=10 block=27371 rank=64823279 tail=64823280 pos=27148624 complete=1
+ANCHOR window=10 block=27372 rank=64825409 tail=64825409 pos=65083601 complete=1
+ANCHOR window=10 block=27373 rank=64827128 tail=64827128 pos=91079848 complete=1
+ANCHOR window=10 block=27374 rank=64828864 tail=64828864 pos=20684231 complete=1
+ANCHOR window=10 block=27375 rank=64830901 tail=64830901 pos=50838165 complete=1
+ANCHOR window=10 block=27376 rank=64832792 tail=64832792 pos=58778357 complete=1
+ANCHOR window=10 block=27377 rank=64834767 tail=64834767 pos=7102727 complete=1
+ANCHOR window=10 block=27378 rank=64836303 tail=64836303 pos=78659369 complete=1
+PHASE window=10 half=0 edges=32768 prefix=1231369 escapes=376 ge1024=183 ge4096=54 eligible_bytes=722729 max_h=33775 far_pairs=27414 start_pages=14847 small_compared=727980 small_skipped=503389 small_lookups=183 small_hits=102 small_evicted=0 large_compared=727980 large_skipped=503389 large_lookups=183 large_hits=102 large_evicted=0
+PHASE window=10 half=1 edges=32768 prefix=1004522 escapes=241 ge1024=97 ge4096=42 eligible_bytes=532113 max_h=33817 far_pairs=27215 start_pages=15382 small_compared=543985 small_skipped=460537 small_lookups=97 small_hits=63 small_evicted=0 large_compared=543985 large_skipped=460537 large_lookups=97 large_hits=63 large_evicted=0
+COVER window=11 first=72252623 count=65536 key_lo=7423561 key_hi=7423992 base=72250971 extent=454771
+ANCHOR window=11 block=29428 rank=72254086 tail=72254086 pos=93870777 complete=1
+ANCHOR window=11 block=29429 rank=72256097 tail=72256101 pos=80687223 complete=1
+ANCHOR window=11 block=29430 rank=72277322 tail=72277324 pos=62558930 complete=1
+ANCHOR window=11 block=29431 rank=72283304 tail=72283321 pos=83862184 complete=1
+ANCHOR window=11 block=29432 rank=72286168 tail=72286168 pos=92536886 complete=1
+ANCHOR window=11 block=29433 rank=72289277 tail=72289277 pos=64035127 complete=1
+ANCHOR window=11 block=29434 rank=72293159 tail=72293167 pos=38737164 complete=1
+ANCHOR window=11 block=29435 rank=72299275 tail=72299275 pos=98011725 complete=1
+ANCHOR window=11 block=29436 rank=72301486 tail=72301486 pos=48994814 complete=1
+ANCHOR window=11 block=29437 rank=72307126 tail=72307126 pos=92950294 complete=1
+PHASE window=11 half=0 edges=32768 prefix=1214094 escapes=332 ge1024=97 ge4096=37 eligible_bytes=639519 max_h=31865 far_pairs=26923 start_pages=12916 small_compared=758974 small_skipped=455120 small_lookups=97 small_hits=37 small_evicted=0 large_compared=758974 large_skipped=455120 large_lookups=97 large_hits=37 large_evicted=0
+PHASE window=11 half=1 edges=32768 prefix=817602 escapes=166 ge1024=56 ge4096=26 eligible_bytes=369091 max_h=29553 far_pairs=24471 start_pages=13043 small_compared=476858 small_skipped=340744 small_lookups=56 small_hits=35 small_evicted=0 large_compared=476858 large_skipped=340744 large_lookups=56 large_hits=35 large_evicted=0
+COVER window=12 first=77289685 count=65536 key_lo=7491652 key_hi=7491662 base=77272848 extent=93726
+ANCHOR window=12 block=30615 rank=77290461 tail=77290461 pos=85110656 complete=1
+ANCHOR window=12 block=30616 rank=77294464 tail=77294465 pos=24734565 complete=1
+ANCHOR window=12 block=30617 rank=77297791 tail=77297792 pos=11185159 complete=1
+ANCHOR window=12 block=30618 rank=77300641 tail=77300641 pos=53299402 complete=1
+ANCHOR window=12 block=30619 rank=77304852 tail=77304852 pos=47292749 complete=1
+ANCHOR window=12 block=30620 rank=77312495 tail=77312500 pos=6581008 complete=1
+ANCHOR window=12 block=30621 rank=77316566 tail=77316566 pos=1647171 complete=1
+ANCHOR window=12 block=30622 rank=77319654 tail=77319668 pos=54396120 complete=1
+ANCHOR window=12 block=30623 rank=77330758 tail=77330762 pos=12266461 complete=1
+ANCHOR window=12 block=30624 rank=77335108 tail=77335108 pos=21791133 complete=1
+ANCHOR window=12 block=30625 rank=77339059 tail=77339059 pos=58375433 complete=1
+ANCHOR window=12 block=30626 rank=77342473 tail=77342477 pos=21926944 complete=1
+ANCHOR window=12 block=30627 rank=77347341 tail=77347341 pos=70833503 complete=1
+ANCHOR window=12 block=30628 rank=77354983 tail=77354983 pos=72364750 complete=1
+PHASE window=12 half=0 edges=32768 prefix=1688113 escapes=374 ge1024=180 ge4096=66 eligible_bytes=1133977 max_h=32880 far_pairs=27054 start_pages=14188 small_compared=746093 small_skipped=942020 small_lookups=180 small_hits=103 small_evicted=0 large_compared=746093 large_skipped=942020 large_lookups=180 large_hits=103 large_evicted=0
+PHASE window=12 half=1 edges=32768 prefix=817036 escapes=307 ge1024=51 ge4096=17 eligible_bytes=234400 max_h=30833 far_pairs=26839 start_pages=13317 small_compared=627278 small_skipped=189758 small_lookups=51 small_hits=28 small_evicted=0 large_compared=627278 large_skipped=189758 large_lookups=51 large_hits=28 large_evicted=0
+COVER window=13 first=81542464 count=65536 key_lo=7624529 key_hi=7624531 base=81498333 extent=114749
+ANCHOR window=13 block=31790 rank=81546025 tail=81546026 pos=12755243 complete=1
+ANCHOR window=13 block=31791 rank=81559816 tail=81559816 pos=41657278 complete=1
+ANCHOR window=13 block=31792 rank=81565994 tail=81565994 pos=27056312 complete=1
+ANCHOR window=13 block=31793 rank=81573669 tail=81573676 pos=24106104 complete=1
+ANCHOR window=13 block=31794 rank=81576093 tail=81576093 pos=6989096 complete=1
+ANCHOR window=13 block=31795 rank=81578151 tail=81578151 pos=73426077 complete=1
+ANCHOR window=13 block=31796 rank=81581924 tail=81581924 pos=56540457 complete=1
+ANCHOR window=13 block=31797 rank=81586693 tail=81586695 pos=54714991 complete=1
+ANCHOR window=13 block=31798 rank=81595194 tail=81595194 pos=21199039 complete=1
+ANCHOR window=13 block=31799 rank=81601129 tail=81601131 pos=1986071 complete=1
+ANCHOR window=13 block=31800 rank=81604462 tail=81604462 pos=47190837 complete=1
+ANCHOR window=13 block=31801 rank=81607214 tail=81607214 pos=79004969 complete=1
+PHASE window=13 half=0 edges=32768 prefix=899150 escapes=226 ge1024=68 ge4096=22 eligible_bytes=337779 max_h=33575 far_pairs=25351 start_pages=14401 small_compared=723641 small_skipped=175509 small_lookups=68 small_hits=18 small_evicted=0 large_compared=723641 large_skipped=175509 large_lookups=68 large_hits=18 large_evicted=0
+PHASE window=13 half=1 edges=32768 prefix=1476315 escapes=328 ge1024=171 ge4096=75 eligible_bytes=981116 max_h=33820 far_pairs=25806 start_pages=13338 small_compared=599560 small_skipped=876755 small_lookups=171 small_hits=106 small_evicted=0 large_compared=599560 large_skipped=876755 large_lookups=171 large_hits=106 large_evicted=0
+COVER window=14 first=89609282 count=65536 key_lo=7754816 key_hi=7754816 base=89608136 extent=160663
+ANCHOR window=14 block=35214 rank=89613398 tail=89613399 pos=77061262 complete=1
+ANCHOR window=14 block=35215 rank=89631518 tail=89631521 pos=56177326 complete=1
+PHASE window=14 half=0 edges=32768 prefix=653634 escapes=115 ge1024=35 ge4096=16 eligible_bytes=203805 max_h=29482 far_pairs=26918 start_pages=14489 small_compared=550791 small_skipped=102843 small_lookups=35 small_hits=8 small_evicted=0 large_compared=550791 large_skipped=102843 large_lookups=35 large_hits=8 large_evicted=0
+PHASE window=14 half=1 edges=32768 prefix=1249049 escapes=218 ge1024=79 ge4096=49 eligible_bytes=710279 max_h=32062 far_pairs=28429 start_pages=14913 small_compared=607895 small_skipped=641154 small_lookups=79 small_hits=46 small_evicted=0 large_compared=607895 large_skipped=641154 large_lookups=79 large_hits=46 large_evicted=0
+COVER window=15 first=95440959 count=65536 key_lo=7886151 key_hi=7886156 base=95440656 extent=85553
+ANCHOR window=15 block=36525 rank=95443293 tail=95443299 pos=58197474 complete=1
+ANCHOR window=15 block=36526 rank=95447270 tail=95447270 pos=81453852 complete=1
+ANCHOR window=15 block=36527 rank=95450529 tail=95450533 pos=26363073 complete=1
+ANCHOR window=15 block=36528 rank=95465838 tail=95465850 pos=81085802 complete=1
+ANCHOR window=15 block=36529 rank=95477034 tail=95477035 pos=22987230 complete=1
+ANCHOR window=15 block=36530 rank=95480081 tail=95480088 pos=87387029 complete=1
+ANCHOR window=15 block=36531 rank=95482343 tail=95482345 pos=9739561 complete=1
+ANCHOR window=15 block=36532 rank=95486521 tail=95486522 pos=6253663 complete=1
+ANCHOR window=15 block=36533 rank=95489171 tail=95489171 pos=22335628 complete=1
+ANCHOR window=15 block=36534 rank=95492789 tail=95492790 pos=63339212 complete=1
+ANCHOR window=15 block=36535 rank=95495565 tail=95495567 pos=6069933 complete=1
+ANCHOR window=15 block=36536 rank=95498519 tail=95498523 pos=41964495 complete=1
+ANCHOR window=15 block=36537 rank=95503075 tail=95503075 pos=58572414 complete=1
+PHASE window=15 half=0 edges=32768 prefix=1888260 escapes=341 ge1024=211 ge4096=118 eligible_bytes=1395025 max_h=31726 far_pairs=27723 start_pages=13408 small_compared=684590 small_skipped=1203670 small_lookups=211 small_hits=147 small_evicted=0 large_compared=684590 large_skipped=1203670 large_lookups=211 large_hits=147 large_evicted=0
+PHASE window=15 half=1 edges=32768 prefix=1307696 escapes=284 ge1024=144 ge4096=73 eligible_bytes=847225 max_h=33918 far_pairs=28429 start_pages=15109 small_compared=530819 small_skipped=776877 small_lookups=144 small_hits=102 small_evicted=0 large_compared=530819 large_skipped=776877 large_lookups=144 large_hits=102 large_evicted=0
+WINDOWS_PASS sampled_edges=1048576 sorted_cover_positions=3117434 reported_anchor_starts=370 sort_memcmp_request=1923207422 lcp_memcmp_request=92810270 histogram_bytes=67898372 large_table=397312 small_table=24832
+RESOURCE peak=268435456 read=100003840 write_before_report=40960 user_us=1672716 sys_us=82936
