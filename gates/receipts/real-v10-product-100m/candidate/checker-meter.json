@@ -1,0 +1,43 @@
+{
+  "after": {
+    "cores": [
+      4
+    ],
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 9690624\nuser_usec 8340876\nsystem_usec 1349747\ncore_sched.force_idle_usec 0\nnr_periods 1376\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "146800640",
+    "memory.peak": "112693248",
+    "memory.swap.max": "0"
+  },
+  "before": {
+    "cores": [
+      4
+    ],
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 57932\nuser_usec 41950\nsystem_usec 15981\ncore_sched.force_idle_usec 0\nnr_periods 1\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "146800640",
+    "memory.peak": "11190272",
+    "memory.swap.max": "0"
+  },
+  "cmd": [
+    "/tmp/real-v10-tools-Fch4DR/witness",
+    "--real-v10-rolling-100m",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/candidate/in/checker",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/candidate/stop.requested",
+    "1795570981"
+  ],
+  "wall_s": 143.25542840827256,
+  "worker": {
+    "cpu_s": 9.631835,
+    "major_faults": 475,
+    "maxrss_bytes": 105078784,
+    "minor_faults": 1846,
+    "rc": 0,
+    "ru_inblock_bytes": 100003840,
+    "ru_oublock_bytes": 0
+  }
+}

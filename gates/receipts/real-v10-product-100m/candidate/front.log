@@ -1,0 +1,12 @@
+FRONT64_LANE phase=order lane=0 bins=40 rows=759279 active_s=0.343003462
+FRONT64_LANE phase=order lane=1 bins=688 rows=839505 active_s=0.311675901
+FRONT64_LANE phase=order lane=2 bins=628 rows=861536 active_s=0.312570503
+FRONT64_LANE phase=order lane=3 bins=342 rows=710211 active_s=0.312855364
+FRONT64_BINS phase=order wall_s=0.343218191 active_s=1.280105229 sort_s=1.086542300 label_s=0.193562930 longest_bin=518 longest_rows=225129 longest_s=0.126300211
+FRONT64_LANE phase=publish lane=0 bins=495 rows=734047 active_s=0.440039328
+FRONT64_LANE phase=publish lane=1 bins=472 rows=732425 active_s=0.439894442
+FRONT64_LANE phase=publish lane=2 bins=425 rows=792694 active_s=0.439871081
+FRONT64_LANE phase=publish lane=3 bins=306 rows=911365 active_s=0.440061850
+FRONT64_BINS phase=publish wall_s=0.440663360 active_s=1.759866702 sort_s=0.000000000 label_s=0.000000000 longest_bin=518 longest_rows=225129 longest_s=0.088931267
+FRONT64_LAYOUT position_bits=27 projected_prefix_bits=37 start_bytes=12500064 rank_anchor_bytes=1562520 entry_bytes=25364248 head_bytes=405344
+FRONT64 n=100000503 m=3170531 k=2689467 descriptors=95434516 max_phrase=2772 starts_above_u32=0 keys_above_u32=0 dictionary_bytes=138465980 key_bytes=25364248 arrays=152406567 team=4 nonempty_bins=1698 max_bin=225129 scan_s=0.163899 partition_s=0.012539 sort_dedup_s=0.343548 publish_dict_s=0.492872 publish_keys_s=0.120903 raw_s=1.133761

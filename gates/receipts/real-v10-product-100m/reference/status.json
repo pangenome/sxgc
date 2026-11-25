@@ -1,0 +1,991 @@
+{
+  "after": {
+    "cores": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 183863501\nuser_usec 131604343\nsystem_usec 52259158\ncore_sched.force_idle_usec 0\nnr_periods 986\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "2147483648",
+    "memory.peak": "1751048192",
+    "memory.swap.max": "0"
+  },
+  "argv": {
+    "checkfs1": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=176160768:176160768",
+        "--stack=8388608:8388608",
+        "--data=67108864:67108864",
+        "--",
+        "/usr/sbin/e2fsck",
+        "-f",
+        "-n",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/scratch.ext2"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "checkfs2": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=176160768:176160768",
+        "--stack=8388608:8388608",
+        "--data=67108864:67108864",
+        "--",
+        "/usr/sbin/e2fsck",
+        "-f",
+        "-n",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/scratch.ext2"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "ctx": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/tmp/v10-fixture-1001-1206931/tools/target/release/xsa",
+        "ctx-verify",
+        "--sxi",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/work.sxi2",
+        "--text",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/in/raw",
+        "--context",
+        "the",
+        "--context",
+        "and",
+        "--context",
+        "hex:1e"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "docs": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/tmp/v10-fixture-1001-1206931/tools/target/release/xsa",
+        "docstarts",
+        "verify",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/work.sxi2",
+        "--docs-map",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/in/map",
+        "--samples",
+        "1024"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "finish": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--data=201326592:201326592",
+        "--",
+        "/home/erikg/.cache/xsa/13524d6bbedad508fdd8e30e7ab709dbf62ae5db64eb0cd8864dd79efa5b7b4c/xsa_finish",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/in/raw",
+        "--remap",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/in/remap",
+        "--threads",
+        "2",
+        "--prefix",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota/merged/frag",
+        "--lcp-bands",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota/bands",
+        "--output",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/work.sxi2",
+        "--container-stream",
+        "--with-chi",
+        "--no-lcp-runs",
+        "--wit-ram-budget",
+        "134217728",
+        "--poll-timeout",
+        "120"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "LD_PRELOAD": "/tmp/resident-bin-DmG99k/monitor.so",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "PFCK_SPACING": "64",
+        "RAYON_NUM_THREADS": "2",
+        "XSA_GATE_PRIVATE_STOP": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/stop.requested",
+        "XSA_WORK_ROOT": "driver"
+      }
+    },
+    "front": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/tmp/resident-bin-DmG99k/lexparse",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/in/raw",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota/cols",
+        "--packed"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "join": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--data=167772160:167772160",
+        "--",
+        "/tmp/real-v10-tools-86Hok8/xsa",
+        "real-v10-quota-join"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "mkfs": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=176160768:176160768",
+        "--stack=8388608:8388608",
+        "--",
+        "/usr/sbin/mke2fs",
+        "-t",
+        "ext2",
+        "-q",
+        "-F",
+        "-b",
+        "4096",
+        "-N",
+        "4096",
+        "-I",
+        "256",
+        "-m",
+        "2",
+        "-O",
+        "none,filetype,sparse_super,large_file",
+        "-E",
+        "nodiscard,lazy_itable_init=0,root_owner=1001:1001",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/scratch.ext2"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "query0": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/tmp/v10-fixture-1001-1206931/tools/target/release/xsa",
+        "search",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/work.sxi2",
+        "--pattern",
+        "game, love et <3\u001e<?xml version=\"1",
+        "--jsonl",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/in/raw"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "query1": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/tmp/v10-fixture-1001-1206931/tools/target/release/xsa",
+        "search",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/work.sxi2",
+        "--pattern",
+        "game, love et <3\u001e<?xml version=\"1",
+        "--jsonl",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/in/raw",
+        "--cross-doc"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "relay": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=262144:262144",
+        "--stack=8388608:8388608",
+        "--",
+        "/tmp/native-v10-p4oy1a/tools/relay",
+        "narrow",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/in/raw",
+        "100000503",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota/tap-bands",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/stop.requested"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "resident": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/tmp/overlap-radix-Pymxu1/overlap_resident",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota/cols",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/stop.requested",
+        "1503238553"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2",
+        "XSA_RESIDENT_PACKED": "1",
+        "XSA_RESIDENT_RADIX_LANES": "4",
+        "XSA_RESIDENT_RADIX_STEP": "16384",
+        "XSA_RESIDENT_WIDE_DICT": "1"
+      }
+    },
+    "sink": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--data=67108864:67108864",
+        "--",
+        "/tmp/real-v10-tools-Fch4DR/sink",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/in/raw",
+        "--remap",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/in/remap",
+        "--threads",
+        "2",
+        "--out-prefix",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota/merged/frag",
+        "--bands",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota/bands",
+        "--scratch-budget-bytes",
+        "200001006"
+      ],
+      "env": {
+        "CROSS_V2_PIECES": "1",
+        "CROSS_V2_PIECE_WINDOW": "6",
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "PFCK_SPACING": "64",
+        "RAYON_NUM_THREADS": "2",
+        "SS_LCP_SLICE_WINDOW": "5",
+        "XSA_BATCH_SXLS_ESCAPES": "1",
+        "XSA_TEST_EXTERNAL_TRIPLES": "1",
+        "XSA_TEST_REAL_V10_100M_POOLS": "1"
+      }
+    },
+    "tap": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=16777216:16777216",
+        "--stack=8388608:8388608",
+        "--data=167772160:167772160",
+        "--",
+        "/tmp/v10-fixture-1001-1206931/tools/target/release/xsa",
+        "ctx-tap",
+        "--bands",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota/tap-bands",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/in/raw",
+        "--n",
+        "100000504",
+        "--doc-starts",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/in/map",
+        "--depth",
+        "8",
+        "--min-support",
+        "1000",
+        "--docs-min-support",
+        "1000",
+        "--threads",
+        "1",
+        "--out",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota/m20"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "unmount1": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/usr/bin/fusermount3",
+        "-u",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "unmount2": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/usr/bin/fusermount3",
+        "-u",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "volume1": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=176160768:176160768",
+        "--stack=8388608:8388608",
+        "--data=100663296:100663296",
+        "--",
+        "/usr/bin/fuse2fs",
+        "-s",
+        "-f",
+        "-o",
+        "rw,noatime,fsname=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/scratch.ext2",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/scratch.ext2",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "volume2": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=176160768:176160768",
+        "--stack=8388608:8388608",
+        "--data=100663296:100663296",
+        "--",
+        "/usr/bin/fuse2fs",
+        "-s",
+        "-f",
+        "-o",
+        "rw,noatime,fsname=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/scratch.ext2",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/scratch.ext2",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "witness": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/usr/bin/systemd-run",
+        "--user",
+        "--quiet",
+        "--wait",
+        "--pipe",
+        "--collect",
+        "--expand-environment=no",
+        "-p",
+        "MemoryMax=140M",
+        "-p",
+        "MemorySwapMax=0",
+        "-p",
+        "CPUQuota=100%",
+        "-p",
+        "Nice=10",
+        "-p",
+        "IOAccounting=yes",
+        "-p",
+        "LimitCORE=0",
+        "-p",
+        "LimitSTACK=8M",
+        "-p",
+        "LimitFSIZE=2M",
+        "-p",
+        "UMask=0077",
+        "-p",
+        "RuntimeMaxSec=654s",
+        "-p",
+        "TimeoutStopSec=3s",
+        "/usr/bin/taskset",
+        "-c",
+        "4",
+        "/usr/bin/python3",
+        "-BE",
+        "/tmp/overlap-study-src-keraLj/gates/overlap_real_v10_meter.py",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference",
+        "reference",
+        "1795570827",
+        "4"
+      ],
+      "env": {
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1001/bus",
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2",
+        "XDG_RUNTIME_DIR": "/run/user/1001"
+      }
+    }
+  },
+  "before": {
+    "cores": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 200806\nuser_usec 144860\nsystem_usec 55946\ncore_sched.force_idle_usec 0\nnr_periods 2\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "2147483648",
+    "memory.peak": "11300864",
+    "memory.swap.max": "0"
+  },
+  "clocks": {
+    "base_finish_to_join_s": 0.14065208099782467,
+    "cold_backing_and_restart_s": 0.21267955377697945,
+    "input_setup_and_cold_s": 0.2759096650406718,
+    "postcheck_to_publication_s": 3.1402025623247027,
+    "prepared_to_base_finish_s": 88.28468566201627,
+    "prepared_to_join_s": 88.4253377430141,
+    "quota_setup_s": 0.09047769941389561,
+    "raw_to_base_finish_s": 94.60604001488537,
+    "raw_to_certified_publication_s": 97.8868962880224,
+    "raw_to_join_s": 94.74669209588319,
+    "raw_to_prepared_s": 6.321354352869093,
+    "ready_to_start_consumers_s": 7.414552016183734
+  },
+  "log_bytes": 328356,
+  "log_errors": [],
+  "memory_stat_at_sample": {
+    "anon": 1301204992,
+    "file": 438710272,
+    "kernel_stack": 409600,
+    "pagetables": 3665920,
+    "shmem": 0,
+    "slab": 5038376,
+    "sock": 0
+  },
+  "peaks": {
+    "aliases": 258,
+    "guest_allocated": 166780928,
+    "guest_bytes": 165255185,
+    "image_allocated": 176160768,
+    "image_bytes": 176160768,
+    "inputs_allocated": 200081408,
+    "inputs_bytes": 200069606,
+    "open_unlinked_fds": 0,
+    "outer_charged": 185036800,
+    "output_allocated": 134086656,
+    "output_bytes": 87192432,
+    "outside_allocated": 1536000,
+    "outside_bytes": 1512276,
+    "scratch_allocated": 177696768,
+    "scratch_bytes": 165390356,
+    "whole_allocated": 511225856
+  },
+  "pipe_capacity": {
+    "checkfs1": [
+      65536
+    ],
+    "checkfs2": [
+      65536
+    ],
+    "ctx": [
+      65536
+    ],
+    "docs": [
+      65536
+    ],
+    "finish": [
+      65536
+    ],
+    "front": [
+      65536
+    ],
+    "join": [
+      65536
+    ],
+    "mkfs": [
+      65536
+    ],
+    "query0": [
+      65536
+    ],
+    "query1": [
+      65536
+    ],
+    "relay": [
+      65536,
+      65536
+    ],
+    "resident": [
+      65536,
+      65536
+    ],
+    "sink": [
+      65536
+    ],
+    "tap": [
+      65536
+    ],
+    "unmount1": [
+      65536
+    ],
+    "unmount2": [
+      65536
+    ],
+    "volume1": [
+      65536
+    ],
+    "volume2": [
+      65536
+    ],
+    "witness": [
+      65536,
+      65536
+    ]
+  },
+  "sampled_high_phase": {
+    "aliases": "front",
+    "guest_allocated": "front",
+    "guest_bytes": "front",
+    "image_allocated": "front",
+    "image_bytes": "front",
+    "inputs_allocated": "front",
+    "inputs_bytes": "front",
+    "open_unlinked_fds": "front",
+    "outer_charged": "stream",
+    "output_allocated": "stream",
+    "output_bytes": "join",
+    "outside_allocated": "stream",
+    "outside_bytes": "stream",
+    "scratch_allocated": "stream",
+    "scratch_bytes": "front",
+    "whole_allocated": "stream"
+  },
+  "sampled_memory_high": 1750114304,
+  "service_body_s": 98.37810210045427,
+  "stop": false,
+  "supervisor_io_including_prep_and_proof": {
+    "ru_inblock_bytes": 16384,
+    "ru_oublock_bytes": 200609792
+  },
+  "utc": "2026-11-25T01:31:00Z",
+  "worker": {
+    "checkfs1": {
+      "cpu_s": 0.009566,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 289,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "wall_s": 0.041288179345428944
+    },
+    "checkfs2": {
+      "cpu_s": 0.005925,
+      "major_faults": 0,
+      "maxrss_bytes": 25165824,
+      "minor_faults": 246,
+      "rc": 0,
+      "ru_inblock_bytes": 24576,
+      "ru_oublock_bytes": 0,
+      "wall_s": 0.042068871669471264
+    },
+    "ctx": {
+      "cpu_s": 2.016658,
+      "major_faults": 0,
+      "maxrss_bytes": 108843008,
+      "minor_faults": 1809,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "wall_s": 2.050652863457799
+    },
+    "docs": {
+      "cpu_s": 0.004901,
+      "major_faults": 0,
+      "maxrss_bytes": 25165824,
+      "minor_faults": 201,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "wall_s": 0.0422817999497056
+    },
+    "finish": {
+      "cpu_s": 51.496528,
+      "major_faults": 3052,
+      "maxrss_bytes": 113401856,
+      "minor_faults": 63121,
+      "rc": 0,
+      "ru_inblock_bytes": 54996992,
+      "ru_oublock_bytes": 118407168,
+      "wall_s": 80.70356197655201
+    },
+    "front": {
+      "cpu_s": 3.854967,
+      "major_faults": 1,
+      "maxrss_bytes": 107053056,
+      "minor_faults": 3817,
+      "rc": 0,
+      "ru_inblock_bytes": 100003840,
+      "ru_oublock_bytes": 0,
+      "wall_s": 5.9845962803810835
+    },
+    "join": {
+      "cpu_s": 0.029684999999999996,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 1937,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 6856704,
+      "wall_s": 0.04285907093435526
+    },
+    "mkfs": {
+      "cpu_s": 0.006268999999999999,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 194,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 61440,
+      "wall_s": 0.0449072141200304
+    },
+    "query0": {
+      "cpu_s": 0.043411,
+      "major_faults": 0,
+      "maxrss_bytes": 65011712,
+      "minor_faults": 3033,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "wall_s": 0.0824049673974514
+    },
+    "query1": {
+      "cpu_s": 0.038539,
+      "major_faults": 0,
+      "maxrss_bytes": 65024000,
+      "minor_faults": 3031,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "wall_s": 0.042118520475924015
+    },
+    "relay": {
+      "cpu_s": 2.958148,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 360,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "wall_s": 79.08172248769552
+    },
+    "resident": {
+      "cpu_s": 35.078381,
+      "major_faults": 0,
+      "maxrss_bytes": 1207062528,
+      "minor_faults": 627817,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "wall_s": 86.4569941079244
+    },
+    "sink": {
+      "cpu_s": 5.432328999999999,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 128683,
+      "rc": 0,
+      "ru_inblock_bytes": 4096,
+      "ru_oublock_bytes": 0,
+      "wall_s": 79.27501270361245
+    },
+    "tap": {
+      "cpu_s": 62.161480999999995,
+      "major_faults": 180,
+      "maxrss_bytes": 115384320,
+      "minor_faults": 7048,
+      "rc": 0,
+      "ru_inblock_bytes": 45076480,
+      "ru_oublock_bytes": 0,
+      "wall_s": 79.12458477821201
+    },
+    "unmount1": {
+      "cpu_s": 0.021738,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 153,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "wall_s": 0.04148659948259592
+    },
+    "unmount2": {
+      "cpu_s": 0.013078999999999999,
+      "major_faults": 0,
+      "maxrss_bytes": 25165824,
+      "minor_faults": 151,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "wall_s": 0.04138106852769852
+    },
+    "volume1": {
+      "cpu_s": 2.113822,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 459,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 173830144,
+      "wall_s": 6.131603891029954
+    },
+    "volume2": {
+      "cpu_s": 10.292311999999999,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 545,
+      "rc": 0,
+      "ru_inblock_bytes": 153530368,
+      "ru_oublock_bytes": 1280053248,
+      "wall_s": 91.76200171560049
+    },
+    "witness": {
+      "cpu_s": 0.011012999999999998,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 473,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "wall_s": 79.23825205117464
+    }
+  }
+}

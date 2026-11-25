@@ -1,0 +1,12 @@
+{
+  "base_finish_to_join_s": 0.14121266175061464,
+  "cold_backing_and_restart_s": 0.189725692383945,
+  "input_setup_and_cold_s": 0.268398804590106,
+  "prepared_to_base_finish_s": 145.0306489476934,
+  "prepared_to_join_s": 145.17186160944402,
+  "quota_setup_s": 0.054529108107089996,
+  "raw_to_base_finish_s": 146.7297039879486,
+  "raw_to_join_s": 146.8709166496992,
+  "raw_to_prepared_s": 1.699055040255189,
+  "ready_to_start_consumers_s": 1.5599653124809265e-06
+}

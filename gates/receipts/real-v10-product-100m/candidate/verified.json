@@ -1,0 +1,203 @@
+{
+  "all_rows_raw_verified": true,
+  "arm": "candidate",
+  "bytes": 87192432,
+  "chi": 29716347,
+  "clocks": {
+    "base_finish_to_join_s": 0.14121266175061464,
+    "cold_backing_and_restart_s": 0.189725692383945,
+    "input_setup_and_cold_s": 0.268398804590106,
+    "postcheck_to_publication_s": 3.15219683945179,
+    "prepared_to_base_finish_s": 145.0306489476934,
+    "prepared_to_join_s": 145.17186160944402,
+    "quota_setup_s": 0.054529108107089996,
+    "raw_to_base_finish_s": 146.7297039879486,
+    "raw_to_certified_publication_s": 150.02311595901847,
+    "raw_to_join_s": 146.8709166496992,
+    "raw_to_prepared_s": 1.699055040255189,
+    "ready_to_start_consumers_s": 1.5599653124809265e-06
+  },
+  "docs": 16556,
+  "front_files": {
+    "dict_bytes": 138465980,
+    "inverse": 25364248,
+    "inverse_sha256": "afc938c0a1e96a62a2a6159fa119546a919b3042f8820847c207890bc9cafe67",
+    "keys": 25364248
+  },
+  "full_candidate_equals_reference": true,
+  "full_sha256": "eac582ca1e51ead51239b60b1506c44cacf9b6713b675b16003f57fc4f3f98bd",
+  "plan": {
+    "candidate": {
+      "front": 168024580,
+      "rank": 54922848,
+      "stream": 199001906
+    },
+    "candidate_stage_margin": 4194304,
+    "ef_bytes_upper": 37500192,
+    "finish_shared": {
+      "bitmap": 12500063,
+      "control": 4194304,
+      "kernel_pipes": 1048576,
+      "m20": 16777216,
+      "pfck": 12500104,
+      "sparse": 301936
+    },
+    "finish_upper": 119443055,
+    "input_bytes_separate": 200069606,
+    "outer_cap": {
+      "candidate": 199229440,
+      "reference": 187695104
+    },
+    "position_band": 262144,
+    "prc_payload_slots": 60067176,
+    "product_cap_separate": 134217728,
+    "reference": {
+      "front": 167605419,
+      "prepared": 150875996,
+      "stream": 138678779
+    },
+    "resident_row_queue": 6291456,
+    "scratch_limit": 200001006,
+    "stream_inverse": 25364248,
+    "stream_posting": 50000251,
+    "sxls_payload_slots": 12053680
+  },
+  "position_file_bytes_each_way": 0,
+  "rows": 100000504,
+  "runs": 38647521,
+  "same_v8_payloads": [
+    1,
+    4,
+    5,
+    10,
+    11,
+    12,
+    13
+  ],
+  "scope": "One authenticated real Pile prefix, direct Rust trie stream vs older independent resident + band tap; same v10 frozen finalizer. No 100 GB admission.",
+  "table": {
+    "1": {
+      "bytes": 35967704,
+      "codec": 116,
+      "count": 38647521,
+      "crc": 1084187350,
+      "offset": 64,
+      "sha256": "2e97605dd6a00b151091e45f39f092b28c26b59fb72c57373ade12d15ba4eecc"
+    },
+    "4": {
+      "bytes": 12,
+      "codec": 4,
+      "count": 0,
+      "crc": 822617187,
+      "offset": 49646912,
+      "sha256": "0da64314dec135e73e86cba36a52479f4664f4b2b93ae87c9ff1834e9456298e"
+    },
+    "5": {
+      "bytes": 13679143,
+      "codec": 105,
+      "count": 29716347,
+      "crc": 1154975035,
+      "offset": 35967768,
+      "sha256": "48d4156c19ba66969b5b7524192315a72875b361fa7f6214a0dc4f0ee544128c"
+    },
+    "7": {
+      "bytes": 256,
+      "codec": 7,
+      "count": 256,
+      "crc": 820023926,
+      "offset": 49646928,
+      "sha256": "37b01d647470df1b5770e277427021b37465ea2c6d75e08d17ef4dda517b49d3"
+    },
+    "10": {
+      "bytes": 0,
+      "codec": 110,
+      "count": 38647521,
+      "crc": 0,
+      "offset": 49647184,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "11": {
+      "bytes": 301952,
+      "codec": 111,
+      "count": 37742,
+      "crc": 3300646787,
+      "offset": 49647184,
+      "sha256": "9dc8a15e3bffe73e3d0a716ccf673f56146844667d1149d5e1a526ea3bc55333"
+    },
+    "12": {
+      "bytes": 306720,
+      "codec": 112,
+      "count": 37742,
+      "crc": 3517439850,
+      "offset": 49949136,
+      "sha256": "9caf232e24a36ea74acffae93e6a2f728e492716eb284f8cb5237dda55e84397"
+    },
+    "13": {
+      "bytes": 30095856,
+      "codec": 115,
+      "count": 1252110,
+      "crc": 2478058786,
+      "offset": 50255856,
+      "sha256": "7e6c1bf1b8aa3bda6406f3be7df8b89a55c66843a4b0304699dea3a76b65e56c"
+    },
+    "15": {
+      "bytes": 37192,
+      "codec": 15,
+      "count": 16556,
+      "crc": 1286496711,
+      "offset": 87154840,
+      "sha256": "d7103edb59054a004bceb1ecf54e179d6ff84129c0d1a5e535ab207217098667"
+    },
+    "20": {
+      "bytes": 6803128,
+      "codec": 20,
+      "count": 100000503,
+      "crc": 3615951853,
+      "offset": 80351712,
+      "sha256": "c18a0078959d00850eb60689556ddf88f5b44cdd7bad3b0bd159679c1c1a369f"
+    }
+  },
+  "verifier": {
+    "after": {
+      "cores": [
+        4
+      ],
+      "cpu.max": "100000 100000",
+      "cpu.stat": "usage_usec 9690624\nuser_usec 8340876\nsystem_usec 1349747\ncore_sched.force_idle_usec 0\nnr_periods 1376\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+      "io.stat": null,
+      "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "memory.max": "146800640",
+      "memory.peak": "112693248",
+      "memory.swap.max": "0"
+    },
+    "before": {
+      "cores": [
+        4
+      ],
+      "cpu.max": "100000 100000",
+      "cpu.stat": "usage_usec 57932\nuser_usec 41950\nsystem_usec 15981\ncore_sched.force_idle_usec 0\nnr_periods 1\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+      "io.stat": null,
+      "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+      "memory.max": "146800640",
+      "memory.peak": "11190272",
+      "memory.swap.max": "0"
+    },
+    "cmd": [
+      "/tmp/real-v10-tools-Fch4DR/witness",
+      "--real-v10-rolling-100m",
+      "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/candidate/in/checker",
+      "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/candidate/stop.requested",
+      "1795570981"
+    ],
+    "wall_s": 143.25542840827256,
+    "worker": {
+      "cpu_s": 9.631835,
+      "major_faults": 475,
+      "maxrss_bytes": 105078784,
+      "minor_faults": 1846,
+      "rc": 0,
+      "ru_inblock_bytes": 100003840,
+      "ru_oublock_bytes": 0
+    }
+  }
+}

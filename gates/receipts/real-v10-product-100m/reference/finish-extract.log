@@ -1,0 +1,5 @@
+XSA_FINISH_PFCK path=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-block100-y2Zifw/reference/quota/merged/frag.pfck2 n=100000504 tau=64 count=1562508 bytes=12500104 wall=0.209 workers=2 segments=8 worker_bytes=1572864 source=corpus_adapter fixed_grid=1
+LCP_RUNS member=absent reason=disabled-by-flag
+ENDPOINT_STREAM_PASS n=100000504 k=1 r=38647521 sentinel_rows=1 seam_classes=0
+CONTAINER_FINAL bytes=80352032 sha256=6f470eba54ade0c5c1659970c08495b70548722d09134bd6cbd9df26feae7452 members=8
+SXI2_PASS bytes=80352032 lite=1 members=8

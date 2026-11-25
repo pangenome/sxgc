@@ -1,0 +1,13 @@
+HEAD rows=3170531 tiles=128 distinct=2689467 max_group=3367 unresolved=627785 radix_passes=4 keys_above_u32=0 requested=4 team=4
+REFINE depth=2 unresolved=212120 max_group=3309
+REFINE depth=4 unresolved=95729 max_group=3209
+REFINE depth=8 unresolved=58393 max_group=3031
+REFINE depth=16 unresolved=35774 max_group=2745
+REFINE depth=32 unresolved=22810 max_group=2185
+REFINE depth=64 unresolved=15008 max_group=1112
+REFINE depth=128 unresolved=10046 max_group=345
+REFINE depth=256 unresolved=5448 max_group=86
+REFINE depth=512 unresolved=2136 max_group=2
+REFINE depth=1024 unresolved=272 max_group=2
+REFINE depth=2048 unresolved=0 max_group=0
+PARSE64 rows=3170531 key_bits=64 rank_bits=64 array_bound=139404152 rounds=11 initial_s=0.040347 refine_s=0.024449 certify_s=0.010105 write_fsync_s=0.060391 prepared_s=0.146198 cpu_s=0.299747 permutation_recurrence=1

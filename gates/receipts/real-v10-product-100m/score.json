@@ -1,0 +1,217 @@
+{
+  "arms": {
+    "candidate": {
+      "attributed_worker_io": {
+        "checkfs1": [
+          0,
+          0
+        ],
+        "checkfs2": [
+          16384,
+          0
+        ],
+        "ctx": [
+          0,
+          0
+        ],
+        "docs": [
+          0,
+          0
+        ],
+        "emit": [
+          60592128,
+          0
+        ],
+        "finish": [
+          39436288,
+          156418048
+        ],
+        "front": [
+          100003840,
+          0
+        ],
+        "join": [
+          0,
+          6856704
+        ],
+        "mkfs": [
+          0,
+          61440
+        ],
+        "query0": [
+          0,
+          0
+        ],
+        "query1": [
+          0,
+          0
+        ],
+        "rank": [
+          0,
+          0
+        ],
+        "sink": [
+          4096,
+          0
+        ],
+        "tap": [
+          69632,
+          0
+        ],
+        "unmount1": [
+          0,
+          0
+        ],
+        "unmount2": [
+          0,
+          0
+        ],
+        "volume1": [
+          0,
+          189743104
+        ],
+        "volume2": [
+          25436160,
+          1066258432
+        ],
+        "witness": [
+          0,
+          0
+        ]
+      },
+      "bytes": 87192432,
+      "certified_wall_s": 150.02311595901847,
+      "cgroup_io": null,
+      "logical_scratch_reserved": 199001906,
+      "outer_scratch_reserved": 199229440,
+      "position_file_bytes_each_way": 0,
+      "postcheck_s": 3.15219683945179,
+      "prepared_to_join_s": 145.17186160944402,
+      "raw_to_join_s": 146.8709166496992,
+      "sampled_allocation_plus_transport": 196960256,
+      "sampled_high_phase": "front",
+      "sampled_scratch_allocation": 191717376,
+      "scratch_sampled": 164265623,
+      "service_body_s": 150.59506753832102,
+      "sha256": "eac582ca1e51ead51239b60b1506c44cacf9b6713b675b16003f57fc4f3f98bd",
+      "shared_peak": 665382912,
+      "verifier_attributed_io": [
+        100003840,
+        0
+      ],
+      "verifier_peak": 112693248
+    },
+    "reference": {
+      "attributed_worker_io": {
+        "checkfs1": [
+          0,
+          0
+        ],
+        "checkfs2": [
+          24576,
+          0
+        ],
+        "ctx": [
+          0,
+          0
+        ],
+        "docs": [
+          0,
+          0
+        ],
+        "finish": [
+          54996992,
+          118407168
+        ],
+        "front": [
+          100003840,
+          0
+        ],
+        "join": [
+          0,
+          6856704
+        ],
+        "mkfs": [
+          0,
+          61440
+        ],
+        "query0": [
+          0,
+          0
+        ],
+        "query1": [
+          0,
+          0
+        ],
+        "relay": [
+          0,
+          0
+        ],
+        "resident": [
+          0,
+          0
+        ],
+        "sink": [
+          4096,
+          0
+        ],
+        "tap": [
+          45076480,
+          0
+        ],
+        "unmount1": [
+          0,
+          0
+        ],
+        "unmount2": [
+          0,
+          0
+        ],
+        "volume1": [
+          0,
+          173830144
+        ],
+        "volume2": [
+          153530368,
+          1280053248
+        ],
+        "witness": [
+          0,
+          0
+        ]
+      },
+      "bytes": 87192432,
+      "certified_wall_s": 97.8868962880224,
+      "cgroup_io": null,
+      "logical_scratch_reserved": 167605419,
+      "outer_scratch_reserved": 187695104,
+      "position_file_bytes_each_way": 800004032,
+      "postcheck_s": 3.1402025623247027,
+      "prepared_to_join_s": 88.4253377430141,
+      "raw_to_join_s": 94.74669209588319,
+      "sampled_allocation_plus_transport": 185036800,
+      "sampled_high_phase": "front",
+      "sampled_scratch_allocation": 177696768,
+      "scratch_sampled": 165390356,
+      "service_body_s": 98.37810210045427,
+      "sha256": "eac582ca1e51ead51239b60b1506c44cacf9b6713b675b16003f57fc4f3f98bd",
+      "shared_peak": 1751048192,
+      "verifier_attributed_io": [
+        100003840,
+        0
+      ],
+      "verifier_peak": 112709632
+    }
+  },
+  "byte_sha256": "eac582ca1e51ead51239b60b1506c44cacf9b6713b675b16003f57fc4f3f98bd",
+  "docs": 16556,
+  "full_identity": true,
+  "input_bytes": 100000503,
+  "normalized_raw_wall_ratio": 1.5501429485376288,
+  "physical_io_note": "wait4 attributed block counters by native child; cgroup io.stat is null where not delegated. Logical position-band and pipe traffic are not physical IO.",
+  "raw_under_2x": true,
+  "raw_under_3x": true,
+  "rows": 100000504,
+  "scope": "One whole-document real Pile prefix. Product, not speed or grant for any larger input.",
+  "scratch_limit": 200001006
+}

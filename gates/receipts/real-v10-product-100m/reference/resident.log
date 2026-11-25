@@ -1,0 +1,24 @@
+RESIDENT_BEGIN phase=load_ids
+RESIDENT_INPUT packed=true source_bytes=127708112 n=100000503 m=3170531 k=2689467
+RESIDENT_TRANSPORT row43=false text_width=4 lcp_width=4 rank_width=4
+RESIDENT_INDEX wide=true sa_bytes=957117696 owner_bytes=29909936 start_bytes=21515744 native_above_i32=false
+RESIDENT_PLAN n=100000503 m=3170531 k=2689467 dict_symbols=119639712 descriptors=95434516 parse_bound=239135304 aux_bound=416041516 dict_bound=1218942063 emit_bound=1318392879 array_grant=1503238553
+RESIDENT_PHASE phase=load_ids seconds=0.867095 peak_rss=164245504 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=parse_sort
+RESIDENT_PHASE phase=parse_sort seconds=0.251856 peak_rss=239312896 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=check_ranks
+RESIDENT_CHECK recurrence_ranks=3170531 virtual_end=0
+RESIDENT_PHASE phase=check_ranks seconds=0.041442 peak_rss=189628416 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=pack_dictionary
+RESIDENT_PHASE phase=pack_dictionary seconds=0.242238 peak_rss=327438336 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=aligned_and_lists
+RESIDENT_PHASE phase=aligned_and_lists seconds=0.968185 peak_rss=245379072 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=dictionary_sort
+RESIDENT_PHASE phase=dictionary_sort seconds=4.964068 peak_rss=1180655616 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=owner_map
+RESIDENT_PHASE phase=owner_map seconds=0.022539 peak_rss=1210568704 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=emit
+RESIDENT_RADIX_PLAN lanes=4 sa_ranks_per_tile=16384 raw_tiles=7303 ranges=7000 empty=303 adjusted=649 absorbed=0 heap_bound=4402020 block_bytes=786432 row_queue_reserved=6291456 plan_s=0.062362
+RESIDENT_RADIX_JOIN lanes=4 ranges=7000 blocks=7000 max_range_rows=28189 order_wait_s=0.053024 lane_rows=[24995501, 25017693, 24994064, 24993245] serial_row_comparisons=0
+RESIDENT_STREAM rows=100000504 descriptors=95434516 groups=85107405 max_group=6545 sink_write_s=78.524214 audit_write_s=0.000000
+RESIDENT_PHASE phase=emit seconds=78.986521 peak_rss=1211199488 read_bytes=0 write_bytes=0

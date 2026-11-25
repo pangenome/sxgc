@@ -1,0 +1,4 @@
+SS_V10_HANDOFF row_profile=real-100m-narrow pieces=78 slices=5 pfck_spacing=64
+SS_V8_SLICE_POOL_RETIRED slots=5 per_slot=2410736 capacity=12053680 before_terminal=1
+SS_V8_PIECE_POOL_RETIRED slots=78 per_slot=770092 capacity=60067176 before_terminal=1
+SS_DONE_R overlap_stream rows=100000504 total_s=143.41

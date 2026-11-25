@@ -1,0 +1,2 @@
+FOLD_GEOMETRY loads=591 reads=972 staged=100001094 peak=3958321 max_slices=6
+FENCED rows=100000504 final_rank=100000504 runs=38647521 sxls_peak=2410736 sxls_escapes=1129147 m14_blocks=37742 m14_payload=26563024 prefix_bytes=3993670228 final_compare_bytes=100013942 narrow_sha256=82747f11a9925bb4d89cc812410d98e411ce80b1767ee1ff4dc22e94e2cd874e

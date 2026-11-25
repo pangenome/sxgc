@@ -64,7 +64,7 @@ internal gate passes, and every journal binds the tool manifest, per-tool hashes
 and the output SHA, so desync is impossible to miss. `--plan-only` prints the
 surveyed, modelled build plan and exits.
 
-**Construction research (separate from the shipping v10 CLI):** the overlapping-PFP [measured defaults](OVERLAP_DEFAULTS.md) and [10 GB scaling receipts](OVERLAP_10G_STUDY.md) compare raw-to-container builds against frozen v8 rehearsal anchors. `python3 gates/overlap_defaults.py plan 1g` replays the exact cold-build decision without opening a corpus. The [64-bit build-stage handoff](docs/overlap_wide_handoff.md) records a separate real 10 GB parse-order result (33.76 s one worker → 11.65 s four), not a whole-index speedup. These experiments do not make v8 a supported reader format or establish a production 100 GB/Pile fit.
+**Construction research (separate from the shipping v10 CLI):** the overlapping-PFP [measured defaults](OVERLAP_DEFAULTS.md) and [10 GB scaling receipts](OVERLAP_10G_STUDY.md) compare raw-to-container builds against frozen v8 rehearsal anchors. `python3 gates/overlap_defaults.py plan 1g` replays the exact cold-build decision without opening a corpus. The [64-bit build-stage handoff](docs/overlap_wide_handoff.md) records a separate real 10 GB parse-order result (33.76 s one worker → 11.65 s four), not a whole-index speedup. The [real 100 MB rolling-vs-resident v10 pair](gates/receipts/real-v10-product-100m/) matched all 87,192,432 product bytes at **1.55× raw wall and 0.38× shared memory peak** under the same physical scratch limit. These experiments do not make v8 a supported reader format or establish a production 100 GB/Pile fit.
 
 ## Memory operations over the container
 
