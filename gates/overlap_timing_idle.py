@@ -9,7 +9,8 @@ from pathlib import Path
 WORKERS = {'overlap_resident', 'pfp_sort_r', 'xsa_finish_cur', 'overlap_resident_gate.py',
            'overlap_ten_product.sh', 'overlap_radix_product.sh', 'overlap_resident_gate.sh',
            'overlap_radix_stage.sh', 'overlap_three_gate.sh', 'overlap_sxls_pair.sh',
-           'overlap_ten_front.sh', 'cache_pipeline.py'}
+           'overlap_ten_front.sh', 'cache_pipeline.py', 'xsa_finish',
+           'overlap_real_v10_product.sh', 'overlap_real_v10_product.py'}
 
 def frozen(proc):
     try:
