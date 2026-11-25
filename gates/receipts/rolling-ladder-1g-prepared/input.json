@@ -1,0 +1,17 @@
+{
+  "alphabet": 230,
+  "bytes": 1000000665,
+  "docs": 165626,
+  "map_sha256": "98b15b62d092a44044a0ce3b9895d648a1681f392cfff22cbfe348fa6f874f04",
+  "next_original_doc_start": 1000000665,
+  "raw_sha256": "c382daa53d0e66fdc921c32d356961b7e8189ceee0a435bb3b66e06b203ebb61",
+  "remap_sha256": "0f39e4094b8ab4b1fb99dbc8a951293d6f2cfb45a617db5fbfdcc263ae7718ef",
+  "source_stat": [
+    66308,
+    30071944370,
+    100000000000,
+    1794328255140006266,
+    1794328255140006266
+  ],
+  "tail_partial": false
+}

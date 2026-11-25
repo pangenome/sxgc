@@ -30,8 +30,9 @@ class Build:
         self.work={};self.jobs={};self.threads={};self.errors=[];self.mount_id=None;self.open_volume=False;self.peaks={};self.maxlog=0;self.latest=0;self.start=time.monotonic();self.step=phase;self.mhi=0;self.mstat={}
     def guard(self):
         need(time.time()<self.end and not self.stop.exists() and not self.errors,'STOP/deadline: '+str(self.errors));need(shutil.disk_usage(self.d).free>2*self.n,'insufficient volume free space')
-    def launch(self,name,argv,src=None,pipe=False,env=None,kib=256):
+    def launch(self,name,argv,src=None,pipe=False,env=None,kib=256,fsize=None):
         self.guard();need(name not in self.work,'duplicate job');args=list(map(str,argv));t=time.monotonic();e=dict(PATH='/usr/bin:/bin',HOME=str(Path.home()),LC_ALL='C',OMP_THREAD_LIMIT='4',OMP_NUM_THREADS='4',OMP_DYNAMIC='FALSE',OMP_STACKSIZE='2M',OMP_WAIT_POLICY='PASSIVE',GOMP_SPINCOUNT='0',RAYON_NUM_THREADS='2',MALLOC_ARENA_MAX='2')|(env or {})
+        if fsize is not None:args=['/usr/bin/prlimit',f'--fsize={fsize}:{fsize}','--']+args
         log=self.d/(self.phase+'-'+name+'.log');f=log.open('xb',buffering=0);cap=kib<<10;self.maxlog+=cap;need(self.maxlog<=self.reserve//2,'log reservation');os.posix_fallocate(f.fileno(),0,cap)
         p=sp.Popen(args,cwd=self.d,env=e,stdin=src or sp.DEVNULL,stdout=sp.PIPE,stderr=sp.PIPE if pipe else sp.STDOUT,start_new_session=True,bufsize=0);self.work[name]=p;self.jobs[name]=dict(argv=args,start=t)
         if src:src.close()
@@ -106,7 +107,7 @@ class Build:
         if create:
             self.q.mkdir(mode=0o700)
             with self.img.open('xb') as f:os.posix_fallocate(f.fileno(),0,self.image);os.fsync(f.fileno())
-        need(self.img.resolve()==self.img and self.img.stat().st_nlink==1 and self.img.stat().st_size==self.img.stat().st_blocks*512==self.image and not self.mountinfo() and not list(self.q.iterdir()),'backing identity/extent')
+        need(self.img.resolve()==self.img and self.img.stat().st_nlink==1 and self.img.stat().st_size==self.image and self.image<=self.img.stat().st_blocks*512<=self.image+(1<<20) and not self.mountinfo() and not list(self.q.iterdir()),'backing identity/extent')
         if create:
             inodes=4096+4*((self.n+65535)//65536+(self.n+262143)//262144);self.run('mkfs',[MKFS,'-q','-t','ext2','-F','-b',4096,'-I',256,'-N',inodes,'-m',2,'-O','none,filetype,sparse_super,large_file','-E',f'nodiscard,lazy_itable_init=0,root_owner={os.getuid()}:{os.getgid()}',self.img]);
         self.launch('fs',[FUSE,'-s','-f','-o','rw,noatime,fsname='+str(self.img),self.img,self.q]);until=time.monotonic()+10

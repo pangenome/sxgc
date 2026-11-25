@@ -1,0 +1,191 @@
+{
+  "after": {
+    "cores": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 49722805\nuser_usec 38423357\nsystem_usec 11299448\ncore_sched.force_idle_usec 0\nnr_periods 225\nnr_throttled 39\nthrottled_usec 60362\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "8589934592",
+    "memory.peak": "5618798592",
+    "memory.swap.max": "0"
+  },
+  "before": {
+    "cores": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 140866\nuser_usec 118887\nsystem_usec 21979\ncore_sched.force_idle_usec 0\nnr_periods 2\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "8589934592",
+    "memory.peak": "14094336",
+    "memory.swap.max": "0"
+  },
+  "errors": [],
+  "jobs": {
+    "front": {
+      "argv": [
+        "/tmp/real-v10-fs-test-yOKcF3/front",
+        "pos-manifest",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/rolling-build-1g-U4MRhu/in/raw",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/rolling-build-1g-U4MRhu/quota/lex",
+        "4",
+        "3221225472",
+        "1962250240",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/rolling-build-1g-U4MRhu/stop.requested",
+        "1795580701"
+      ],
+      "cpu_s": 35.375684,
+      "major_faults": 7,
+      "maxrss_bytes": 1396719616,
+      "minor_faults": 357257,
+      "rc": 0,
+      "ru_inblock_bytes": 1000001536,
+      "ru_oublock_bytes": 0,
+      "start": 5645976.66683341,
+      "wall_s": 12.916485417634249
+    },
+    "fs": {
+      "argv": [
+        "/usr/bin/fuse2fs",
+        "-s",
+        "-f",
+        "-o",
+        "rw,noatime,fsname=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/rolling-build-1g-U4MRhu/scratch.ext2",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/rolling-build-1g-U4MRhu/scratch.ext2",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/rolling-build-1g-U4MRhu/quota"
+      ],
+      "cpu_s": 3.776484,
+      "major_faults": 0,
+      "maxrss_bytes": 97857536,
+      "minor_faults": 463,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 1855979520,
+      "start": 5645976.635079025,
+      "wall_s": 15.378083107993007
+    },
+    "fsck": {
+      "argv": [
+        "/usr/sbin/e2fsck",
+        "-f",
+        "-n",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/rolling-build-1g-U4MRhu/scratch.ext2"
+      ],
+      "cpu_s": 0.015993,
+      "major_faults": 0,
+      "maxrss_bytes": 97857536,
+      "minor_faults": 195,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "start": 5645992.09467252,
+      "wall_s": 0.08129732590168715
+    },
+    "mkfs": {
+      "argv": [
+        "/usr/sbin/mke2fs",
+        "-q",
+        "-t",
+        "ext2",
+        "-F",
+        "-b",
+        "4096",
+        "-I",
+        "256",
+        "-N",
+        "80392",
+        "-m",
+        "2",
+        "-O",
+        "none,filetype,sparse_super,large_file",
+        "-E",
+        "nodiscard,lazy_itable_init=0,root_owner=1001:1001",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/rolling-build-1g-U4MRhu/scratch.ext2"
+      ],
+      "cpu_s": 0.003912,
+      "major_faults": 0,
+      "maxrss_bytes": 97857536,
+      "minor_faults": 129,
+      "rc": 0,
+      "ru_inblock_bytes": 20480,
+      "ru_oublock_bytes": 200704,
+      "start": 5645976.469160668,
+      "wall_s": 0.08479307126253843
+    },
+    "rank": {
+      "argv": [
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/raw64-p1-10g-TyJqjC/parse64",
+        "rank",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/rolling-build-1g-U4MRhu/quota/lex.partial/keys.u64",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/rolling-build-1g-U4MRhu/quota/inverse.u64",
+        "4",
+        "3221225472",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/rolling-build-1g-U4MRhu/stop.requested",
+        "1795580701"
+      ],
+      "cpu_s": 3.651014,
+      "major_faults": 0,
+      "maxrss_bytes": 1270874112,
+      "minor_faults": 412005,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "start": 5645989.867237954,
+      "wall_s": 1.6360399900004268
+    },
+    "unmount": {
+      "argv": [
+        "/usr/bin/fusermount3",
+        "-u",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/rolling-build-1g-U4MRhu/quota"
+      ],
+      "cpu_s": 0.030885,
+      "major_faults": 0,
+      "maxrss_bytes": 97857536,
+      "minor_faults": 86,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "start": 5645991.931653007,
+      "wall_s": 0.08153871726244688
+    }
+  },
+  "memory_stat_at_sampled_high": {
+    "anon": 676712448,
+    "file": 4680105984,
+    "pagetables": 1572864,
+    "shmem": 0,
+    "slab": 8696304
+  },
+  "peaks": {
+    "aliases": 1,
+    "controls_allocated": 536576,
+    "controls_logical": 526294,
+    "guest_allocated": 1599418368,
+    "guest_logical": 1597838073,
+    "image_allocated": 1966448640,
+    "image_logical": 1966444544,
+    "inputs_allocated": 1000689664,
+    "inputs_logical": 1000684177,
+    "open_unlinked": 0,
+    "output_allocated": 0,
+    "output_logical": 0,
+    "scratch_allocated_with_8MiB_transport_stage": 1975373824,
+    "scratch_logical_with_8MiB_transport_stage": 1606490831
+  },
+  "phase": "prepare",
+  "rung": "1g",
+  "service_s": 22.328132431022823,
+  "step": "fsck",
+  "stop": false,
+  "utc": "2026-11-25T04:13:24Z"
+}
