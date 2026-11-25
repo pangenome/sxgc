@@ -1,0 +1,59 @@
+{
+  "name": "10g",
+  "product": "/mnt/nvme2n1/erikg/TAPEREADER/stream-builds/run-mJrBMU/10g/index.sxi2",
+  "bytes": 7383791080,
+  "input_bytes": 10000000000,
+  "input": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev/in/corpus",
+  "map": "/mnt/nvme2n1/erikg/pilemap100",
+  "sha256": "ecb2e766af6984c5f5b898d8c8f889af7b1cb19b8685365f2a75b5081469e07d",
+  "matched_whole_product_sha": false,
+  "wall_s": 21542.183026555926,
+  "phases": {
+    "keys": 130.728,
+    "rank": 21.366,
+    "stream+finish": 21388.921
+  },
+  "postcheck_s": 5.159569221548736,
+  "memory_peak": 31946592256,
+  "memory_stat_at_sampled_high": {
+    "anon": 8370225152,
+    "file": 23473332224,
+    "shmem": 0,
+    "slab": 42934496
+  },
+  "peaks_sampled_bytes": {
+    "scratch_logical": 11229337614,
+    "scratch_allocated": 11231895552
+  },
+  "scratch_limit": 20000000000,
+  "build_argv": [
+    "/mnt/nvme2n1/erikg/TAPEREADER/stream-builds/run-mJrBMU/xsa",
+    "build-stream",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/packed-10g-l2-b1-t4-r1-GWrxev/in/corpus",
+    "--docs-map",
+    "/mnt/nvme2n1/erikg/pilemap100",
+    "-T",
+    "/mnt/nvme2n1/erikg/TAPEREADER/stream-builds/run-mJrBMU/10g/scratch",
+    "-o",
+    "/mnt/nvme2n1/erikg/TAPEREADER/stream-builds/run-mJrBMU/10g/index.sxi2",
+    "-j",
+    "4",
+    "-m",
+    "22G",
+    "-v"
+  ],
+  "clock": "build wall includes program startup/tool lookup/publication, excludes postcheck; regular-file scratch sampled every 0.1s; input and index excluded",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "cgroup_memory_max": "51539607552",
+  "cgroup_cpu": "400000 100000",
+  "cgroup_swap": "0",
+  "io_before": null,
+  "io_after": null,
+  "utc": "2026-11-25T12:00:48.513388+00:00",
+  "memphis": "2026-11-25T06:00:48.513388-06:00"
+}
