@@ -81,7 +81,8 @@ def main(argv):
     with tempfile.TemporaryDirectory(prefix='.xsa-stream-', dir=parent) as tmp, \
          tempfile.TemporaryDirectory(prefix='.xsa-publish-', dir=a.output.parent) as stage:
         tmp = Path(tmp)
-        keys, hist, inv = (tmp/name for name in ('keys','histogram','inverse'))
+        cols = tmp/'columns'; cols.mkdir()
+        tape, refs, hist, inv = (cols/name for name in ('parse.u64','phrases.ref','histogram','inverse'))
         index = Path(stage)/'index'
         phases = []
         with tempfile.TemporaryFile(dir=tmp) as errors:
@@ -99,14 +100,17 @@ def main(argv):
                 phases.append(elapsed)
                 if a.verbose:
                     print(f'build-stream: {name} {elapsed:.3f}s',file=sys.stderr,flush=True)
-            run('keys',[[tools/'stream_keys','keys',raw,keys,hist,workers,mem,str(budget-reserve)]])
-            run('rank',[[tools/'stream_rank','inverse',keys,inv,workers,mem]])
-            keys.unlink()
-            cap = min(max(8192,3*n//4), budget-reserve-inv.stat().st_size-2048-(n+8)//8)
-            if cap <= 0:
-                raise RuntimeError('no scratch space for rolling postings at this parse density')
+            run('parse',[[tools/'pfp_parse',raw,cols,workers,mem,str(budget-reserve)]])
+            # The bitmap can open before the row producer retires its inputs.
+            bitmap = (n+8)//8
+            if 2*tape.stat().st_size+refs.stat().st_size+2048+bitmap > budget-reserve:
+                raise RuntimeError('PFP columns, inverse and v10 bitmap exceed scratch budget')
+            run('rank',[[tools/'stream_rank','inverse',tape,inv,workers,mem]])
+            # pfp_rows closes AND unlinks tape, inverse and refs before opening
+            # its posting file. Count the histogram and simultaneous chi bitmap.
+            cap = budget-reserve-2048-bitmap
             run('stream+finish',[
-                [tools/'stream_rows','stream',raw,inv,tmp/'postings',workers,mem,str(cap)],
+                [tools/'pfp_rows',raw,cols,workers,mem,str(cap)],
                 [xsa,'stream-context',raw,a.docs_map],
                 [tools/'xsa_finish','--from-rows',hist,tmp/'stream',index],
             ])

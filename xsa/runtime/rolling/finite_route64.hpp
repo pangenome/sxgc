@@ -3,7 +3,7 @@
 namespace route64 {
 struct Load {U d=0,rows=0;};
 struct Band {unsigned lo,hi; Load load;};
-struct Stripe {U lo=0,hi=0,base=0,pages=0,longest=0;}; // rank-1 slices; virtual coordinates concatenated in same order
+struct Stripe {U lo=0,hi=0,base=0,pages=0,longest=0,counted=0,routed=0;}; // rank-1 slices; virtual coordinates concatenated in same order
 struct Route {
  const rawview::View& v;const uint8_t* text;U n,m;int team;rawview::Stop stop;
  std::vector<Stripe> stripe;std::vector<unsigned> band_for;std::vector<Band> bands;std::vector<Layout> slices;Pages pages;
@@ -22,8 +22,11 @@ struct Route {
  static Big encoder_bytes(U team,U active_bands){return Big(active_bands)*team*sizeof(Encoder);}
  static Big build_arrays(U n,U m,U team,U nb,U pg,U active_bands){need(active_bands<=nb,"too many active encoders");return census_arrays(n,m,team)+Pages::bytes(pg)+Big(nb)*team*sizeof(Layout)+encoder_bytes(team,active_bands)+Big(team)*sizeof(InBuf)*2;}
  static Big build_arrays(U n,U m,U team,U nb,U pg){return build_arrays(n,m,team,nb,pg,nb);}
- void build(const char* newfile,U target,U arrays,U other_files){
-  stop.check();need(target && other_files>=8*m && Big(other_files)<=2*Big(n),"route target/other scratch");
+ // For the PFP handoff, partition by exact dictionary-offset counts and
+ // admit only ranges that can be consumed ONCE. No epoch or replay path.
+ struct Disjoint {U posting_cap,slots;};
+ void build(const char* newfile,U target,U arrays,U other_files,const Disjoint* disjoint=nullptr){
+  stop.check();need(target && (disjoint ? disjoint->posting_cap && disjoint->slots : other_files>=8*m && Big(other_files)<=2*Big(n)),"route target/other scratch");
   Big base=census_arrays(n,m,team);
   need(base<=arrays,"routing census array grant");double t=omp_get_wtime();
   std::vector<Load> counts(CELL*team);stripe.resize(team);band_for.resize(CELL);bands.reserve(CELL);
@@ -31,13 +34,15 @@ struct Route {
   {int lane=omp_get_thread_num();need(omp_get_num_threads()==team,"route team");auto& s=stripe[lane];s.lo=rawview::cut(m,lane,team);s.hi=rawview::cut(m,lane+1,team);s.pages=s.hi-s.lo;
    auto c=counts.data()+CELL*lane;
    heads(s,[&](U r,auto w,U owned){U freq=v.after_head(r)-r;s.pages+=(owned-1)/PAGE;s.longest=std::max(s.longest,owned);
-    offsets(w,owned,[&](U,unsigned key){++c[key].d;c[key].rows+=freq;});});}
+    offsets(w,owned,[&](U,unsigned key){++s.counted;++c[key].d;c[key].rows+=freq;});});}
   double tc=omp_get_wtime();U page_count=0;for(auto& s:stripe){s.base=page_count;page_count=narrow(Big(page_count)+s.pages);}
   need(Big(page_count)*PAGE<=UINT64_MAX,"route token extent");
   Band band{0,0,{}};U all=0,mass=0;
   for(unsigned i=0;i<CELL;++i){Load cell;for(int lane=0;lane<team;++lane){auto c=counts[CELL*lane+i];cell.d+=c.d;cell.rows+=c.rows;}
    // Never cut a cell. A single over-target cell is a real oversize band, not proof of fit.
-   if(band.load.rows && cell.rows && (band.load.rows>target || cell.rows>target-band.load.rows)){
+   U load=disjoint?band.load.d:band.load.rows,addition=disjoint?cell.d:cell.rows;
+   if(disjoint && cell.d>disjoint->slots){std::fprintf(stderr,"pfp: exact two-symbol cell needs %llu dictionary slots, have %llu\n",(unsigned long long)cell.d,(unsigned long long)disjoint->slots);rawview::refuse("increase --sort-memory for the indivisible cell");}
+   if(load && addition && (load>target || addition>target-load)){
     band.hi=i;bands.push_back(band);band={i,0,{}};}
    band_for[i]=unsigned(bands.size());band.load.d+=cell.d;band.load.rows+=cell.rows;all+=cell.d;mass+=cell.rows;}
   band.hi=CELL;bands.push_back(band);need(all==v.stats.owned && mass==n && band.load.d,"route census coverage");
@@ -46,17 +51,19 @@ struct Route {
   for(int lane=0;lane<team;++lane){for(unsigned i=0;i<CELL;++i){auto& b=slices[band_for[i]*team+lane];auto c=counts[CELL*lane+i];b.count+=c.d;b.rows+=c.rows;}}
   std::vector<Load>().swap(counts);
   for(U b=0;b<nb;++b){if(!(b%1024))stop.check();for(int lane=0;lane<team;++lane){auto& s=slices[b*team+lane];s.place(wire,stripe[lane].pages*PAGE);wire=s.end();}}
-  need(wire<=INT64_MAX && Big(other_files)+wire<=Big(n)*2,"descriptor posting scratch exceeds 2N");stop.check();
+  need(wire<=INT64_MAX && (disjoint ? wire<=disjoint->posting_cap : Big(other_files)+wire<=Big(n)*2),"descriptor postings exceed scratch grant");stop.check();
   // Named, fresh scratch, NOT a suffix-row spool. Never open an old output for update.
   int writer=open(newfile,O_CLOEXEC|O_EXCL|O_NOFOLLOW|O_RDWR|O_CREAT,0600);need(writer>=0,"create new posting payload");
   need(ftruncate(writer,off_t(wire))==0,"posting file extent");double tp=omp_get_wtime();
 #pragma omp parallel num_threads(team)
-  {int lane=omp_get_thread_num();const auto& s=stripe[lane];std::vector<Encoder> enc(nb);U extra=0;
+  {int lane=omp_get_thread_num();auto& s=stripe[lane];std::vector<Encoder> enc(nb);U extra=0;
    heads(s,[&](U r,auto w,U owned){U page=s.base+(r-1-s.lo)+extra,more=(owned-1)/PAGE;pages.extras(page+1,more,stop);extra+=more;
-    U rel=PAGE*(page-s.base);offsets(w,owned,[&](U off,unsigned key){U b=band_for[key];enc[b].put(writer,slices[b*team+lane],s.pages*PAGE,rel+off,stop);});});
+    U rel=PAGE*(page-s.base);offsets(w,owned,[&](U off,unsigned key){++s.routed;U b=band_for[key];enc[b].put(writer,slices[b*team+lane],s.pages*PAGE,rel+off,stop);});});
    need(s.hi-s.lo+extra==s.pages,"stripe extra-page total");for(U b=0;b<nb;++b)enc[b].finish(writer,slices[b*team+lane]);}
   pages.finish(m,stop);for(const auto& s:slices)transferred+=8*(s.fmt.low+s.used_high);
-  double te=omp_get_wtime();stop.check();need(!fsync(writer),"sync posting payload");
+  double te=omp_get_wtime();stop.check();
+  if(disjoint){fd=writer;census_s=tc-t;plan_s=tp-tc;encode_s=te-tp;return;} // private scratch; no fsync or reopen
+  need(!fsync(writer),"sync posting payload");
   struct stat a{},b{};need(!fstat(writer,&a) && U(a.st_size)==wire && a.st_nlink==1,"posting output shape");fd=open(newfile,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
   need(fd>=0 && !fstat(fd,&b) && a.st_dev==b.st_dev && a.st_ino==b.st_ino && a.st_size==b.st_size && b.st_nlink==1 && !close(writer),"posting handoff");
   stop.check();census_s=tc-t;plan_s=tp-tc;encode_s=te-tp;fsync_s=omp_get_wtime()-te;

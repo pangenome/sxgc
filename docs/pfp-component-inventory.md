@@ -1,6 +1,6 @@
 # PFP → ordered rows: reviewed source inventory
 
-Source snapshot: `9c26dccc`. This is an inventory, not a second design. [The target](../TAPE_VISION.md) is the authority. `N` = input bytes; `m` = phrase occurrences; `D` = dictionary symbols including encoding/overlap; `U` = owned offsets **summed over distinct phrases**. `U` is neither `N` nor the number of distinct representative strings.
+Source snapshot: `9c26dccc` (before the [production PFP handoff](pfp-handoff.md) and [replacement row path](build-stream.md)). This is an inventory, not a second design. [The target](../TAPE_VISION.md) is the authority. `N` = input bytes; `m` = phrase occurrences; `D` = dictionary symbols including encoding/overlap; `U` = owned offsets **summed over distinct phrases**. `U` is neither `N` nor the number of distinct representative strings.
 
 | Phase | Implemented and evidenced | Reuse boundary |
 |---|---|---|

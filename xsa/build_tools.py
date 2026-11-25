@@ -89,10 +89,10 @@ for name, src in [('rpfbwt_endpoints', 'rpfbwt_endpoints.cpp'), ('slim_dump', 'c
 run('bash', repo/'tools/build_slim_dump.sh', bundle/'xsa_finish', 'bit6/xsa_finish.cpp', env=env)
 # Bounded phrase naming: raw -> text-order lexical IDs + dictionary refs/census.
 run('g++', '-O3', '-std=c++20', '-fopenmp', repo/'pfp/parse.cpp', '-o', bundle/'pfp_parse', env=env)
-# Raw corpus -> lexical keys -> inverse parse ranks -> ordered row pipe.
-for tool, src in [('stream_keys', 'front64'), ('stream_rank', 'parse64'), ('stream_rows', 'finite_emit64')]:
-    run('g++', '-O3', '-std=c++20', '-fopenmp', '-pthread', repo/f'rolling/{src}.cpp',
-        '-lcrypto', '-o', bundle/tool, env=env)
+# One ranker over the integer tape; the row producer consumes those columns.
+run('g++', '-O3', '-std=c++20', '-fopenmp', repo/'rolling/parse64.cpp', '-o', bundle/'stream_rank', env=env)
+run('g++', '-O3', '-std=c++20', '-fopenmp', '-pthread', repo/'pfp/rows.cpp',
+    '-lcrypto', '-o', bundle/'pfp_rows', env=env)
 # Pieces gate (check_pieces): C, no deps. Replaces the Python M2 checker
 # (struct.unpack over GB-scale columns, 58s at 100MB, RAM = full columns);
 # streams band-by-band so it stays O(band) at pile scale.

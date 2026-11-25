@@ -133,6 +133,38 @@ class View {
    }}
   Big sum=0;U carry=0;for(auto& s:shards){s.begin_key=U(sum);s.carry_key=carry;sum+=s.bytes;need(sum<=INT64_MAX,"dictionary extent");if(s.group_count)carry=U(sum)-s.last_width;stats.groups+=s.group_count;stats.owned+=s.owned;}
   need(sum==Big(stats.owned)+16*Big(stats.groups)-8,"canonical dictionary coverage");stats.tape=U(sum);double grouped=omp_get_wtime();
+  stats.scan=scanned-start;stats.scatter=scattered-scanned;stats.groups_s=grouped-scattered;
+  finish_aligned(start,grouped);
+ }
+ // PFP path: IDs supply text order and strides; frequencies supply the exact
+ // lexical intervals of equal first tokens in the parse SA. Within each such
+ // interval rank order already IS successor order. Never find triggers again.
+ void from_parse(int ids,int refs,U k,int inverse,U grant){
+  need(k && k<=m && budget(n,m,team)<=grant,"PFP column/view grant");double start=omp_get_wtime();
+  pos.open(m,n);psi.open(m,m);head_mem.open(8*Big(blocks));head=head_mem.words();
+  {
+   Column stride;stride.open(k,n);Reader words{refs,0,3*k,0,0,{}};
+   U slot=0,eof=k;Big bytes=0;
+   for(U id=0;id<k;++id){U p=words.get(),width=words.get(),freq=words.get();
+    need(p<n && width && width<=n-p && freq && freq<=m-slot,"PFP reference extent");bool last=width==n-p;
+    if(last){need(eof==k && freq==1,"nonunique terminal phrase");eof=id;}
+    else need(n-p-width>=W,"truncated overlap");
+    head[slot/B]|=U(1)<<(slot%B);slot+=freq;stride.set(id,width);bytes+=Big(width)*freq;stats.owned+=width;
+   }
+   need(eof<k && slot==m && bytes==n,"PFP dictionary census");stats.groups=k;
+   Reader parse{ids,0,m,0,0,{}},ranks{inverse,0,m,0,0,{}};U r=ranks.get(),p=0;
+   for(int t=0;t<team;++t){auto& s=stripe[t];s.ord=cut(m,t,team);s.count=cut(m,t+1,team)-s.ord;s.first=s.count?r:0;
+    for(U j=s.ord;j<s.ord+s.count;++j){U id=parse.get(),next=j+1==m?0:ranks.get();
+     need(id<k && (id==eof)==(j+1==m) && r && r<=m && next<=m,"PFP text-order token or rank");
+     U width=stride.get(id);need(width<=n-p,"PFP position overflow");pos.set(r-1,p);psi.set(r-1,next);p+=width;r=next;
+    }
+   }
+   need(p==n && !r,"incomplete PFP tape");
+  } // Drop text-order stride lookup before allocating aligned LCP.
+  double grouped=omp_get_wtime();stats.scatter=grouped-start;finish_aligned(start,grouped);
+ }
+ private:
+ void finish_aligned(double start,double grouped){
   aligned.open(m,n);
 #pragma omp parallel for schedule(static,1) num_threads(team)
   for(int t=0;t<team;++t){auto& s=stripe[t];U rank=s.first,h=0;double lane_start=omp_get_wtime();
@@ -149,7 +181,7 @@ class View {
 #pragma omp parallel for schedule(static) num_threads(team)
   for(U b=0;b<blocks;++b){if(!(b%1024))stop.check();U h=UINT64_MAX;for(U j=b*B;j<std::min(m,(b+1)*B);++j)h=std::min(h,aligned.get(j));tree[blocks+b]=h;}
   for(U b=blocks-1;b;--b){if(!(b%65536))stop.check();tree[b]=std::min(tree[2*b],tree[2*b+1]);}stop.check();double end=omp_get_wtime();
-  stats.scan=scanned-start;stats.scatter=scattered-scanned;stats.groups_s=grouped-scattered;stats.plcp=plcp-grouped;stats.minima=end-plcp;stats.build=end-start;
+  stats.plcp=plcp-grouped;stats.minima=end-plcp;stats.build=end-start;
  }
 };
 } // namespace rawview

@@ -30,7 +30,7 @@ xsa search pile.sxi2 --pattern " function " --corpus
 xsa mem    pile.sxi2 "the quick brown fox"          # maximal exact matches (widths + positions)
 ```
 
-**Builder design:** [The parse is the tape](TAPE_VISION.md). The target for `xsa build` is to sort the integer prefix-free parse and stream the byte-level index from that order. The existing `--tape` sorter and [rolling `build-stream` command](docs/build-stream.md) are working implementations with different algorithms; the design document records which parts have actually been demonstrated.
+**Builder design:** [The parse is the tape](TAPE_VISION.md). The target for `xsa build` is to sort the integer prefix-free parse and stream the byte-level index from that order. The existing `--tape` rehearsal sorted raw positions. The [direct `build-stream` command](docs/build-stream.md) now constructs a lexical overlapping PFP tape and induces v10 rows from parse ranks and dictionary representatives. Its current rank/row-view workspace limits and the earlier rolling measurements are separate from qualification of the target `xsa build`.
 
 ### One container format, and nothing else
 

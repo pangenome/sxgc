@@ -18,7 +18,8 @@ A matching index checks **the result**, not **the algorithm**. In qualification,
 | [Raw tape rehearsal](RESULTS_REHEARSAL_100GB.md) | `scatter_sort` and the old finish produced a 100 GB v10 result. | Its sort input was raw suffix positions, not `P`. It is a baseline. |
 | [Recursive parse prototype](RESULTS_TAPE_READER.md#10-gb-recursive-rust-full-reference-identity) | Integer levels and induction produced the reference 10 GB **v8** product. | Not an installed v10 path or an all-phase workspace proof. |
 | [Overlapping PFP fixture](OVERLAP_PFP_PROBE.md) | Dictionary representative order + parse continuation rank reproduced byte SA/LCP on fixtures. | Not evidence that the dictionary work fits at scale. |
-| [Rolling `build-stream`](docs/build-stream.md) and [receipts](gates/receipts/build-stream/) | Ranks a parse and feeds a direct v10 writer; complete through 10 GB. | Its emitter revisits the full offset set per posting batch. A working writer does not qualify that producer. |
+| [Historical rolling `build-stream` receipts](gates/receipts/build-stream/) | Ranked a parse and fed a direct v10 writer; complete through 10 GB. | Its emitter revisited the full offset set per posting batch. Those runs do not measure the replacement producer. |
+| [Current `build-stream` PFP path](docs/build-stream.md) | One trigger scan → dense lexical tape + refs/census → integer suffix ranks → disjoint dictionary ranges → v10. | Direct integer rank kernel, not recursive induction yet. Rank-view memory, cell fit and full compressed-posting space are explicit limits. |
 
 No receipt above establishes the entire target. The [reviewed component inventory](docs/pfp-component-inventory.md) identifies the actual parse, sort, expansion and writer call sites and where the interfaces disagree. Preserve these implementations and results; reuse a component on the strength of its own contract, not its name.
 

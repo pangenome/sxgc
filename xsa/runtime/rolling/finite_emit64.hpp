@@ -4,7 +4,7 @@
 #include "finite_cache_order64.hpp"
 #include <memory>
 namespace finiteemit {
-struct Counts {U rows=0,groups=0,multi=0,bitmaps=0,max_tie=0,max_mass=0;double sort=0,gather=0,produce=0;finitecache::Stats order;};
+struct Counts {U rows=0,groups=0,multi=0,bitmaps=0,max_tie=0,max_mass=0,loaded=0;double sort=0,gather=0,produce=0;finitecache::Stats order;};
 struct Emit {
  const Route& ix;const std::vector<U>* learned;Planner plan;const rawview::View& v;const uint8_t* text;U n,m;int team;rawview::Stop stop;
  unsigned ob=0,payload=0;bool pair=false,cached=false;U value_mask=0,arrays=0,packets=0,waves=0;double sort_wall=0,stream_wall=0,queue_blocked=0,tile_plan_s=0;Counts totals;Sink sink_stats;
@@ -30,15 +30,20 @@ struct Emit {
   need((h==a.len && a.terminal && h<b.len) || (h<len && text[a.p+h]<text[b.p+h]),"unordered/split finite key seam");return h;}
  U skip(U b)const{if(learned)return learned->at(b);const auto& z=ix.bands[b];return z.hi==z.lo+1 && z.lo%257!=0?2:(z.lo/257==(z.hi-1)/257?1:0);}
  void order(const Job& j,U* a,Counts& c)const{if(j.exact)return;double ts=omp_get_wtime();const U d=j.d;U i=0,known=std::max<U>(skip(j.band),j.depth);
-  plan.visit(j,[&](U r,U off,U tok,Span s){need(i<d,"sort arena overrun");a[i++]=pack(r,off,tok,known,s);});need(i==d,"sort arena underflow");
+  plan.visit(j,[&](U r,U off,U tok,Span s){need(i<d,"sort arena overrun");a[i++]=pack(r,off,tok,known,s);++c.loaded;});need(i==d,"sort arena underflow");
   c.gather=omp_get_wtime()-ts;if(cached){finitecache::Sorter sorter(text,payload,value_mask,[&](U x){return span(x);},[&](){stop.check();},c.order);sorter.run(a,d,known);c.sort=omp_get_wtime()-ts;return;}U compares=0;std::sort(a,a+d,[&](U x,U y){if(!(++compares%32768))stop.check();U hx=x&~value_mask,hy=y&~value_mask;return hx!=hy?hx<hy:cmp(span(x),span(y))<0;});c.sort=omp_get_wtime()-ts;}
  template<class Out,class Feed>void union_group(Span key,U h0,Marks& marks,Out& out,Counts& c,Feed feed)const{
-  need(!key.terminal && key.len>8,"shared EOF/short ordinary key");++c.multi;std::array<U,16> small;U num=0,start=c.rows;
-  feed([&](U head){U end=v.after_head(head);for(U r=head;r<end;++r){if(!(num%16384))stop.check();U s=v.successor(r);
-    if(num<small.size())small[num]=s;else{if(num==small.size())for(U t:small)marks.add(t);marks.add(s);}++num;}});
+  need(!key.terminal && key.len>8,"shared EOF/short ordinary key");++c.multi;std::array<U,16> small;std::array<unsigned,16> begin{},end_at{};unsigned streams=0;U num=0,start=c.rows;
+  feed([&](U head){U first=num,end=v.after_head(head);for(U r=head;r<end;++r){if(!(num%16384))stop.check();U s=v.successor(r);
+    if(num<small.size())small[num]=s;else{if(num==small.size())for(U t:small)marks.add(t);marks.add(s);}++num;}
+   if(num<=small.size()){begin[streams]=unsigned(first);end_at[streams++]=unsigned(num);}});
   U left=key.len-8,previous=0;auto emit=[&](U s){if(!(c.rows%16384))stop.check();need(s>previous && s<=m && v.position(s)>=left,"tie successor order");U p=v.position(s)-left,h=h0;
    if(previous){U aligned=s==previous+1?v.previous_lcp(s):v.lce(previous,s);need(aligned>=8,"tie continuations miss trigger");h=left+aligned;}out.put(row(p,h,v.predecessor(p)));previous=s;++c.rows;};
-  if(num<=small.size()){std::sort(small.begin(),small.begin()+num);for(U i=0;i<num;++i)emit(small[i]);}else{++c.bitmaps;marks.drain(emit);}need(c.rows-start==num,"lost tie occurrences");}
+  // Each input list already follows successor rank. Merge its heads, don't
+  // sort the occurrences again. A larger union selects set ranks in order.
+  if(num<=small.size()){for(U i=0;i<num;++i){unsigned best=streams;for(unsigned j=0;j<streams;++j){
+    if(begin[j]<end_at[j] && (best==streams || small[begin[j]]<small[begin[best]]))best=j;
+   }need(best!=streams,"short continuation lists");emit(small[begin[best]++]);}}else{++c.bitmaps;marks.drain(emit);}need(c.rows-start==num,"lost tie occurrences");}
  template<class Out>void expand(const Job& job,const U* a,Span prev,Marks& marks,Out& out,Counts& c,U count)const{double start=omp_get_wtime();U d=count;need(d && d<=job.d && (!job.exact || d==job.d),"invalid expansion subrange");
   if(job.exact){auto key=job.anchor;union_group(key,seam(prev,key),marks,out,c,[&](auto add){plan.visit(job,[&](U r,U,U,Span s){need(!cmp(s,key),"nonuniform bypass class");add(r);});});
    c.groups=1;c.max_tie=d;c.max_mass=c.rows;d=0;}
@@ -55,7 +60,7 @@ struct Emit {
  }
  static Big emit_arrays(U n,U m,U team,U nb,U pg,U slots){Big live=Big(rawview::budget(n,m,team))+Pages::bytes(pg)+Big(team)*nb*sizeof(Layout)+CELL*(sizeof(Band)+sizeof(unsigned))+team*sizeof(Stripe);
   return live+8*Big(slots)+team*(Marks::bytes(m)+sizeof(Pipe)+(256<<10))+2*Big(Planner::LIMIT)*sizeof(Job)+(2<<20);}
- static void add(Counts& dst,const Counts& c){dst.order.add(c.order);dst.rows+=c.rows;dst.groups+=c.groups;dst.multi+=c.multi;dst.bitmaps+=c.bitmaps;dst.sort+=c.sort;dst.gather+=c.gather;dst.produce+=c.produce;dst.max_tie=std::max(dst.max_tie,c.max_tie);dst.max_mass=std::max(dst.max_mass,c.max_mass);}
+ static void add(Counts& dst,const Counts& c){dst.order.add(c.order);dst.rows+=c.rows;dst.loaded+=c.loaded;dst.groups+=c.groups;dst.multi+=c.multi;dst.bitmaps+=c.bitmaps;dst.sort+=c.sort;dst.gather+=c.gather;dst.produce+=c.produce;dst.max_tie=std::max(dst.max_tie,c.max_tie);dst.max_mass=std::max(dst.max_mass,c.max_mass);}
  void tile_wave(int sink,U lo,int lanes,const std::array<U,65>& at,const U* arena,Span& prev,std::vector<Marks>& marks){
   double start=omp_get_wtime();std::vector<Tile> work;U bound=divup(at[lanes],GRAIN)+U(lanes);work.reserve(bound);
   for(int j=0;j<lanes;++j){const auto& job=plan.jobs[lo+j];if(job.exact){work.push_back({lo+j,at[j],job.d,prev,true});prev=job.anchor;continue;}

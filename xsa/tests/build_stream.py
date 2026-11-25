@@ -36,11 +36,15 @@ with tempfile.TemporaryDirectory() as directory:
     run(cmd,False); assert index.read_bytes()==first  # atomic no overwrite
     index.unlink()
     cmd[-1]=str(min(2,len(os.sched_getaffinity(0))))
-    run(cmd); assert index.read_bytes()==first  # deterministic across sort workers
+    second = run([*cmd, '-v'])
+    assert b'PFP_PARSE' in second.stderr and b'trigger_scans=1' in second.stderr and b'PFP_ROWS' in second.stderr
+    assert index.read_bytes()==first  # deterministic across sort workers
     index.unlink(); raw.write_bytes(bytes(range(256)))
     assert b'256' in run(cmd,False).stderr and not index.exists()
+    raw.write_bytes(text)
+    assert b'workspace' in run([*cmd, '-m', '1K'],False).stderr and not index.exists()
     # A downstream map error must cancel the other workers, not publish a short stream.
-    raw.write_bytes(text); (d/'seps.bin').write_bytes(b'bad map')
+    (d/'seps.bin').write_bytes(b'bad map')
     run(cmd,False); assert not index.exists()
     assert not list(scratch.iterdir()) and not list(d.glob('.xsa-publish-*'))
 print('build-stream: query, document boundaries, deterministic bytes and error cleanup passed')

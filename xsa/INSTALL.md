@@ -32,7 +32,9 @@ digest over the exact first-party source bytes the running build compiled,
 recomputed on every build and compared against nothing.
 
 `xsa build-stream RAW --docs-map DIR -T /scratch -o INDEX` builds the raw-corpus
-v10 profile directly from ordered rows. This route needs no FUSE, systemd,
+v10 profile from an overlapping prefix-free parse, its integer suffix ranks,
+and an ordered row stream. The refs, census and ID tape are private scratch;
+no extra parser installation is needed. This route needs no FUSE, systemd,
 reference index, source checkout or prebuilt helper. `-j` sets sort workers;
 `-m` accepts a sort-memory budget such as `3G` (not a total RSS limit).
 
