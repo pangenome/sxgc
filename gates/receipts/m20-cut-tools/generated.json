@@ -1,0 +1,88 @@
+{
+  "boundary_law_schedules": 3279,
+  "checked_materialised_nodes": 12,
+  "docs": 8,
+  "every_leaf_raw_ranks_and_descriptor_bounds": true,
+  "n": 2940,
+  "refusals": 4,
+  "result": {
+    "all_prefix_leaves_fit": false,
+    "base_uncertified_parents": 2,
+    "certified_contiguous_segments": 2,
+    "complete_range_count_if_certified": null,
+    "examined_nodes": 12,
+    "expanded_at_depth": {
+      "2": 2,
+      "3": 1,
+      "4": 1,
+      "5": 1,
+      "6": 1,
+      "7": 1,
+      "8": 1
+    },
+    "global_END_rank_separate": 0,
+    "greedy_packs_across_only_consecutive_certified_leaves": 29,
+    "leaf_count": 805,
+    "leaf_depths": {
+      "2": {
+        "leaves": 765,
+        "rows": 1749
+      },
+      "3": {
+        "leaves": 27,
+        "rows": 294
+      },
+      "4": {
+        "leaves": 2,
+        "rows": 2
+      },
+      "5": {
+        "leaves": 2,
+        "rows": 2
+      },
+      "6": {
+        "leaves": 2,
+        "rows": 2
+      },
+      "7": {
+        "leaves": 2,
+        "rows": 2
+      },
+      "8": {
+        "leaves": 2,
+        "rows": 2
+      },
+      "9": {
+        "leaves": 3,
+        "rows": 887
+      }
+    },
+    "leaf_sha256": "d78783934614961af0e53460095217250696b7841ef8e143aa3f86dbcb00e6bd",
+    "n": 2940,
+    "parents_now_certified": 1,
+    "parents_with_residual": [
+      8257
+    ],
+    "proved_internal_cuts_after_framing_byte": 7,
+    "raw_owned_rows_accounted": 2940,
+    "raw_rows_in_certified_leaves": 2055,
+    "residual": [
+      {
+        "descriptor_lower": 788,
+        "descriptor_upper": 885,
+        "first_rank": 77,
+        "past_rank": 962,
+        "prefix_hex": "202020202020202020",
+        "raw_rows": 885,
+        "raw_tenth_code_split_would_preserve_ties": true,
+        "split_proved_necessary": true,
+        "trigger_at_one_forces_whole_finite_key": false
+      }
+    ],
+    "residual_raw_rows": 885,
+    "root_framing_bytes": 9,
+    "slots": 80,
+    "sum_leaf_lower": 1592,
+    "sum_leaf_upper": 2940
+  }
+}
