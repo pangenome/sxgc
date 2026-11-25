@@ -1,0 +1,1679 @@
+{
+  "attributed_read": 10000007168,
+  "attributed_write_before_result": 4096,
+  "auth": {
+    "prefix_bytes_hashed": 10000000000,
+    "prefix_eof": {
+      "cells": [
+        [
+          8323,
+          1
+        ],
+        [
+          8324,
+          1
+        ],
+        [
+          8325,
+          2
+        ],
+        [
+          8329,
+          1
+        ],
+        [
+          8334,
+          2
+        ],
+        [
+          8336,
+          1
+        ],
+        [
+          8340,
+          2
+        ],
+        [
+          8341,
+          4
+        ],
+        [
+          25045,
+          2
+        ],
+        [
+          25046,
+          1
+        ],
+        [
+          25051,
+          1
+        ],
+        [
+          25288,
+          1
+        ],
+        [
+          25545,
+          1
+        ],
+        [
+          25555,
+          1
+        ],
+        [
+          25733,
+          1
+        ],
+        [
+          25802,
+          1
+        ],
+        [
+          25815,
+          1
+        ],
+        [
+          25990,
+          4
+        ],
+        [
+          26058,
+          1
+        ],
+        [
+          26066,
+          1
+        ],
+        [
+          26068,
+          1
+        ],
+        [
+          26073,
+          1
+        ],
+        [
+          26247,
+          1
+        ],
+        [
+          26573,
+          1
+        ],
+        [
+          26575,
+          1
+        ],
+        [
+          26826,
+          2
+        ],
+        [
+          26830,
+          3
+        ],
+        [
+          27096,
+          1
+        ],
+        [
+          27101,
+          1
+        ],
+        [
+          27102,
+          1
+        ],
+        [
+          27868,
+          1
+        ],
+        [
+          27874,
+          1
+        ],
+        [
+          28111,
+          2
+        ],
+        [
+          28124,
+          1
+        ],
+        [
+          28270,
+          1
+        ],
+        [
+          28303,
+          1
+        ],
+        [
+          28386,
+          1
+        ],
+        [
+          28630,
+          1
+        ],
+        [
+          28636,
+          1
+        ],
+        [
+          28640,
+          1
+        ],
+        [
+          28645,
+          1
+        ],
+        [
+          28647,
+          1
+        ],
+        [
+          28886,
+          1
+        ],
+        [
+          28897,
+          1
+        ],
+        [
+          29398,
+          1
+        ],
+        [
+          29410,
+          1
+        ],
+        [
+          29588,
+          2
+        ],
+        [
+          29661,
+          2
+        ],
+        [
+          29667,
+          1
+        ],
+        [
+          29672,
+          1
+        ],
+        [
+          29673,
+          1
+        ],
+        [
+          29845,
+          2
+        ],
+        [
+          29917,
+          4
+        ],
+        [
+          29934,
+          1
+        ],
+        [
+          30173,
+          1
+        ],
+        [
+          30179,
+          1
+        ],
+        [
+          30184,
+          1
+        ],
+        [
+          30616,
+          1
+        ],
+        [
+          31130,
+          2
+        ]
+      ],
+      "length": 80,
+      "sha256": "c285258597afe01ff6e630966ea9ae264e978ccf9d652cb0ef88e39a20a79feb"
+    },
+    "prefix_sha256": "178f411b196e6741c473b4bbf442086bc64e8c4ae102359fc3c0e3f17a12085d",
+    "target_eof": {
+      "cells": [
+        [
+          8327,
+          1
+        ],
+        [
+          8336,
+          1
+        ],
+        [
+          8339,
+          1
+        ],
+        [
+          25990,
+          1
+        ],
+        [
+          26070,
+          1
+        ],
+        [
+          26320,
+          1
+        ],
+        [
+          27100,
+          1
+        ],
+        [
+          28527,
+          1
+        ],
+        [
+          28642,
+          1
+        ],
+        [
+          28896,
+          1
+        ],
+        [
+          29400,
+          1
+        ],
+        [
+          29414,
+          1
+        ],
+        [
+          29415,
+          1
+        ],
+        [
+          29672,
+          1
+        ],
+        [
+          29845,
+          2
+        ]
+      ],
+      "length": 16,
+      "sha256": "68bd31f1b30a0d15be0bb825ce043eb1002b8ea472288b6e377eedafa6d1c415"
+    },
+    "target_prior_full_sha256_not_recomputed": "de79fe96057b604a71513770111f246ab0e936d3cf56415bcc5a43bba60bbbfd",
+    "target_stat": [
+      66308,
+      30071944370,
+      100000000000,
+      1794328255140006266,
+      1794328255140006266
+    ],
+    "target_tail_bytes_read": 16
+  },
+  "column_scratch_bytes": 0,
+  "cores": [
+    0
+  ],
+  "cpu_max": "100000 100000",
+  "io_stat_after": null,
+  "io_stat_before": null,
+  "logical_allocated_controls_before_result": [
+    3929,
+    12288
+  ],
+  "memory_events": "low 0\nhigh 0\nmax 37543\noom 0\noom_kill 0\noom_group_kill 0",
+  "metadata_pins": {
+    "pos64-front-10g/identity.json": "76fcfa027dfb5289648cb4c50673377196f176b7b854ced784bb45711832f6e8",
+    "scanplan-100g/scan.json": "49370600ae37702965c4a736a2de118566e87c00f70cf487484366051094be69",
+    "scanplan-10g/scan.json": "fea28d298533a0096945441477b2c9778b0dff471bbe260796f45be43922b049",
+    "vocab-10g/census.out": "016f755ff8cc72863dac5daa182a502c70a830af1df5828f3d20bec6691e542d",
+    "vocab-10g/inputs.json": "926f81e2b5f97323500789fa5e4517cb114feeaba85ec0aa8c200706a604927b",
+    "vocab-10g/reference.out": "8899714b2a16c4459f19acfc9f852d7c1ede32228f738851b60133dfab65185f",
+    "vocab-10g/review.json": "9789aaf3eb09a2772320a4567531b099957006a7d0f7849c14e7602a3ab9be68"
+  },
+  "peak_shared": 201326592,
+  "prefix_and_eof_s": 10.18504338990897,
+  "private_raw_copy_bytes": 0,
+  "raw_bytes_requested": 10000000016,
+  "result": {
+    "conditional_epoch_envelope": {
+      "desired_bands": 2582,
+      "epoch_upper_if_every_range_fits": 4,
+      "posting_cap": 50000000000,
+      "total_file_upper": 176899501090,
+      "whole_wave_upper": 336499465
+    },
+    "finite_key_group_lower": 7385616017,
+    "largest_full_finite_tie_lower": 546041,
+    "logical_column_ledger": {
+      "inverse_bytes": 25450675904,
+      "keys_bytes": 25450675904,
+      "margin_plus_manifest": 4194352,
+      "prior_triple_upper": 201802703608,
+      "remaining_vs_2N": 402880168,
+      "tape_lower": 12880858843,
+      "tape_upper": 148691573672,
+      "triple_and_margin_upper": 199597119832,
+      "triple_logical_upper": 199592925480
+    },
+    "lower_cell_sha256": "186558a3a4aa8965ad3cb686125407b84202501657d2bf0951561b171cc36386",
+    "two_code_cells": {
+      "by_class": {
+        "split_necessary": {
+          "cells": 2,
+          "descriptor_lower": 407097764,
+          "descriptor_upper": 4534877076,
+          "occurrence_rows": 4586120214
+        },
+        "unresolved": {
+          "cells": 113,
+          "descriptor_lower": 5216463151,
+          "descriptor_upper": 56436906303,
+          "occurrence_rows": 56905996572
+        },
+        "whole_cell_fits": {
+          "cells": 36475,
+          "descriptor_lower": 3505734368,
+          "descriptor_upper": 38157506733,
+          "occurrence_rows": 38507883214
+        }
+      },
+      "large_or_unresolved": [
+        {
+          "bytes_then_code": [
+            10,
+            11
+          ],
+          "cell": 2581,
+          "classification": "unresolved",
+          "lower": 30095644,
+          "rows": 315905219,
+          "upper": 314081083
+        },
+        {
+          "bytes_then_code": [
+            32,
+            33
+          ],
+          "cell": 8257,
+          "classification": "split_necessary",
+          "lower": 194626305,
+          "rows": 2275921621,
+          "upper": 2243285073
+        },
+        {
+          "bytes_then_code": [
+            32,
+            98
+          ],
+          "cell": 8322,
+          "classification": "unresolved",
+          "lower": 125625968,
+          "rows": 1362388271,
+          "upper": 1351966412
+        },
+        {
+          "bytes_then_code": [
+            32,
+            99
+          ],
+          "cell": 8323,
+          "classification": "unresolved",
+          "lower": 42610910,
+          "rows": 466278019,
+          "upper": 462360995
+        },
+        {
+          "bytes_then_code": [
+            32,
+            100
+          ],
+          "cell": 8324,
+          "classification": "unresolved",
+          "lower": 55308323,
+          "rows": 604724730,
+          "upper": 599574493
+        },
+        {
+          "bytes_then_code": [
+            32,
+            101
+          ],
+          "cell": 8325,
+          "classification": "unresolved",
+          "lower": 38483137,
+          "rows": 414743862,
+          "upper": 411692458
+        },
+        {
+          "bytes_then_code": [
+            32,
+            102
+          ],
+          "cell": 8326,
+          "classification": "unresolved",
+          "lower": 28957472,
+          "rows": 314701790,
+          "upper": 312090127
+        },
+        {
+          "bytes_then_code": [
+            32,
+            103
+          ],
+          "cell": 8327,
+          "classification": "unresolved",
+          "lower": 44008590,
+          "rows": 480247245,
+          "upper": 476294468
+        },
+        {
+          "bytes_then_code": [
+            32,
+            105
+          ],
+          "cell": 8329,
+          "classification": "unresolved",
+          "lower": 38113149,
+          "rows": 406086090,
+          "upper": 403579761
+        },
+        {
+          "bytes_then_code": [
+            32,
+            106
+          ],
+          "cell": 8330,
+          "classification": "unresolved",
+          "lower": 71832493,
+          "rows": 783809357,
+          "upper": 777676089
+        },
+        {
+          "bytes_then_code": [
+            32,
+            109
+          ],
+          "cell": 8333,
+          "classification": "unresolved",
+          "lower": 25284104,
+          "rows": 269576213,
+          "upper": 267805730
+        },
+        {
+          "bytes_then_code": [
+            32,
+            110
+          ],
+          "cell": 8334,
+          "classification": "unresolved",
+          "lower": 38093032,
+          "rows": 412234153,
+          "upper": 409130580
+        },
+        {
+          "bytes_then_code": [
+            32,
+            111
+          ],
+          "cell": 8335,
+          "classification": "unresolved",
+          "lower": 21662987,
+          "rows": 237011099,
+          "upper": 235053906
+        },
+        {
+          "bytes_then_code": [
+            32,
+            112
+          ],
+          "cell": 8336,
+          "classification": "unresolved",
+          "lower": 73434817,
+          "rows": 800745560,
+          "upper": 794166283
+        },
+        {
+          "bytes_then_code": [
+            32,
+            113
+          ],
+          "cell": 8337,
+          "classification": "unresolved",
+          "lower": 45989424,
+          "rows": 497643681,
+          "upper": 493829402
+        },
+        {
+          "bytes_then_code": [
+            32,
+            115
+          ],
+          "cell": 8339,
+          "classification": "unresolved",
+          "lower": 31072997,
+          "rows": 339441439,
+          "upper": 336676324
+        },
+        {
+          "bytes_then_code": [
+            32,
+            116
+          ],
+          "cell": 8340,
+          "classification": "unresolved",
+          "lower": 69938096,
+          "rows": 752919334,
+          "upper": 747557716
+        },
+        {
+          "bytes_then_code": [
+            32,
+            117
+          ],
+          "cell": 8341,
+          "classification": "unresolved",
+          "lower": 158543431,
+          "rows": 1725141449,
+          "upper": 1711469000
+        },
+        {
+          "bytes_then_code": [
+            32,
+            120
+          ],
+          "cell": 8344,
+          "classification": "unresolved",
+          "lower": 56497135,
+          "rows": 610502410,
+          "upper": 606061622
+        },
+        {
+          "bytes_then_code": [
+            44,
+            33
+          ],
+          "cell": 11341,
+          "classification": "unresolved",
+          "lower": 75877661,
+          "rows": 814996631,
+          "upper": 809096308
+        },
+        {
+          "bytes_then_code": [
+            45,
+            46
+          ],
+          "cell": 11611,
+          "classification": "unresolved",
+          "lower": 33352459,
+          "rows": 346548013,
+          "upper": 345096460
+        },
+        {
+          "bytes_then_code": [
+            46,
+            33
+          ],
+          "cell": 11855,
+          "classification": "unresolved",
+          "lower": 46819045,
+          "rows": 493545810,
+          "upper": 490883144
+        },
+        {
+          "bytes_then_code": [
+            97,
+            33
+          ],
+          "cell": 24962,
+          "classification": "unresolved",
+          "lower": 35888648,
+          "rows": 384033251,
+          "upper": 381367106
+        },
+        {
+          "bytes_then_code": [
+            97,
+            100
+          ],
+          "cell": 25029,
+          "classification": "unresolved",
+          "lower": 23287863,
+          "rows": 260979293,
+          "upper": 258178771
+        },
+        {
+          "bytes_then_code": [
+            97,
+            109
+          ],
+          "cell": 25038,
+          "classification": "unresolved",
+          "lower": 54262708,
+          "rows": 595653366,
+          "upper": 590414463
+        },
+        {
+          "bytes_then_code": [
+            97,
+            111
+          ],
+          "cell": 25040,
+          "classification": "unresolved",
+          "lower": 88959102,
+          "rows": 966048292,
+          "upper": 958442357
+        },
+        {
+          "bytes_then_code": [
+            97,
+            115
+          ],
+          "cell": 25044,
+          "classification": "unresolved",
+          "lower": 51786090,
+          "rows": 564615788,
+          "upper": 559971433
+        },
+        {
+          "bytes_then_code": [
+            97,
+            116
+          ],
+          "cell": 25045,
+          "classification": "unresolved",
+          "lower": 41919666,
+          "rows": 454059490,
+          "upper": 450640161
+        },
+        {
+          "bytes_then_code": [
+            97,
+            117
+          ],
+          "cell": 25046,
+          "classification": "unresolved",
+          "lower": 78145113,
+          "rows": 858651105,
+          "upper": 851043809
+        },
+        {
+          "bytes_then_code": [
+            98,
+            102
+          ],
+          "cell": 25288,
+          "classification": "unresolved",
+          "lower": 23764307,
+          "rows": 264687056,
+          "upper": 261983468
+        },
+        {
+          "bytes_then_code": [
+            99,
+            98
+          ],
+          "cell": 25541,
+          "classification": "unresolved",
+          "lower": 26016892,
+          "rows": 287003958,
+          "upper": 284396555
+        },
+        {
+          "bytes_then_code": [
+            99,
+            102
+          ],
+          "cell": 25545,
+          "classification": "unresolved",
+          "lower": 29775104,
+          "rows": 327240038,
+          "upper": 324323516
+        },
+        {
+          "bytes_then_code": [
+            99,
+            105
+          ],
+          "cell": 25548,
+          "classification": "unresolved",
+          "lower": 24283300,
+          "rows": 264338265,
+          "upper": 262247064
+        },
+        {
+          "bytes_then_code": [
+            99,
+            112
+          ],
+          "cell": 25555,
+          "classification": "unresolved",
+          "lower": 36280758,
+          "rows": 405641479,
+          "upper": 401443837
+        },
+        {
+          "bytes_then_code": [
+            99,
+            117
+          ],
+          "cell": 25560,
+          "classification": "unresolved",
+          "lower": 24438779,
+          "rows": 274002965,
+          "upper": 271106621
+        },
+        {
+          "bytes_then_code": [
+            100,
+            33
+          ],
+          "cell": 25733,
+          "classification": "unresolved",
+          "lower": 103973693,
+          "rows": 1123870727,
+          "upper": 1115564160
+        },
+        {
+          "bytes_then_code": [
+            100,
+            102
+          ],
+          "cell": 25802,
+          "classification": "unresolved",
+          "lower": 40415882,
+          "rows": 441214170,
+          "upper": 437340346
+        },
+        {
+          "bytes_then_code": [
+            100,
+            106
+          ],
+          "cell": 25806,
+          "classification": "unresolved",
+          "lower": 24949875,
+          "rows": 275075745,
+          "upper": 272578875
+        },
+        {
+          "bytes_then_code": [
+            101,
+            33
+          ],
+          "cell": 25990,
+          "classification": "split_necessary",
+          "lower": 212471459,
+          "rows": 2310198593,
+          "upper": 2291592003
+        },
+        {
+          "bytes_then_code": [
+            101,
+            98
+          ],
+          "cell": 26055,
+          "classification": "unresolved",
+          "lower": 32665718,
+          "rows": 352577605,
+          "upper": 350025451
+        },
+        {
+          "bytes_then_code": [
+            101,
+            100
+          ],
+          "cell": 26057,
+          "classification": "unresolved",
+          "lower": 24677132,
+          "rows": 277004018,
+          "upper": 274061356
+        },
+        {
+          "bytes_then_code": [
+            101,
+            101
+          ],
+          "cell": 26058,
+          "classification": "unresolved",
+          "lower": 56270118,
+          "rows": 612513769,
+          "upper": 607640333
+        },
+        {
+          "bytes_then_code": [
+            101,
+            109
+          ],
+          "cell": 26066,
+          "classification": "unresolved",
+          "lower": 29269796,
+          "rows": 317297014,
+          "upper": 314836386
+        },
+        {
+          "bytes_then_code": [
+            101,
+            111
+          ],
+          "cell": 26068,
+          "classification": "unresolved",
+          "lower": 70913410,
+          "rows": 775145507,
+          "upper": 768429729
+        },
+        {
+          "bytes_then_code": [
+            101,
+            115
+          ],
+          "cell": 26072,
+          "classification": "unresolved",
+          "lower": 98849355,
+          "rows": 1078212021,
+          "upper": 1069287609
+        },
+        {
+          "bytes_then_code": [
+            101,
+            116
+          ],
+          "cell": 26073,
+          "classification": "unresolved",
+          "lower": 64459304,
+          "rows": 696078806,
+          "upper": 690908081
+        },
+        {
+          "bytes_then_code": [
+            101,
+            117
+          ],
+          "cell": 26074,
+          "classification": "unresolved",
+          "lower": 27367287,
+          "rows": 303519380,
+          "upper": 300597488
+        },
+        {
+          "bytes_then_code": [
+            102,
+            33
+          ],
+          "cell": 26247,
+          "classification": "unresolved",
+          "lower": 43224286,
+          "rows": 471601061,
+          "upper": 467665722
+        },
+        {
+          "bytes_then_code": [
+            102,
+            112
+          ],
+          "cell": 26326,
+          "classification": "unresolved",
+          "lower": 22597086,
+          "rows": 250468169,
+          "upper": 248063715
+        },
+        {
+          "bytes_then_code": [
+            103,
+            33
+          ],
+          "cell": 26504,
+          "classification": "unresolved",
+          "lower": 36084740,
+          "rows": 391680681,
+          "upper": 388714708
+        },
+        {
+          "bytes_then_code": [
+            103,
+            102
+          ],
+          "cell": 26573,
+          "classification": "unresolved",
+          "lower": 20759706,
+          "rows": 229497113,
+          "upper": 227307159
+        },
+        {
+          "bytes_then_code": [
+            104,
+            33
+          ],
+          "cell": 26761,
+          "classification": "unresolved",
+          "lower": 27615862,
+          "rows": 297158301,
+          "upper": 295083425
+        },
+        {
+          "bytes_then_code": [
+            104,
+            98
+          ],
+          "cell": 26826,
+          "classification": "unresolved",
+          "lower": 42710195,
+          "rows": 459569164,
+          "upper": 456423310
+        },
+        {
+          "bytes_then_code": [
+            104,
+            102
+          ],
+          "cell": 26830,
+          "classification": "unresolved",
+          "lower": 120066891,
+          "rows": 1305818475,
+          "upper": 1295367899
+        },
+        {
+          "bytes_then_code": [
+            104,
+            106
+          ],
+          "cell": 26834,
+          "classification": "unresolved",
+          "lower": 30839233,
+          "rows": 335299617,
+          "upper": 332622671
+        },
+        {
+          "bytes_then_code": [
+            104,
+            112
+          ],
+          "cell": 26840,
+          "classification": "unresolved",
+          "lower": 20422294,
+          "rows": 221234255,
+          "upper": 219567976
+        },
+        {
+          "bytes_then_code": [
+            105,
+            100
+          ],
+          "cell": 27085,
+          "classification": "unresolved",
+          "lower": 33659217,
+          "rows": 372274795,
+          "upper": 368821578
+        },
+        {
+          "bytes_then_code": [
+            105,
+            102
+          ],
+          "cell": 27087,
+          "classification": "unresolved",
+          "lower": 18398186,
+          "rows": 198352637,
+          "upper": 196887866
+        },
+        {
+          "bytes_then_code": [
+            105,
+            109
+          ],
+          "cell": 27094,
+          "classification": "unresolved",
+          "lower": 21496094,
+          "rows": 239706620,
+          "upper": 237231549
+        },
+        {
+          "bytes_then_code": [
+            105,
+            111
+          ],
+          "cell": 27096,
+          "classification": "unresolved",
+          "lower": 119270931,
+          "rows": 1302320984,
+          "upper": 1291621965
+        },
+        {
+          "bytes_then_code": [
+            105,
+            112
+          ],
+          "cell": 27097,
+          "classification": "unresolved",
+          "lower": 39412549,
+          "rows": 442730241,
+          "upper": 438012894
+        },
+        {
+          "bytes_then_code": [
+            105,
+            116
+          ],
+          "cell": 27101,
+          "classification": "unresolved",
+          "lower": 50903579,
+          "rows": 554349879,
+          "upper": 549845020
+        },
+        {
+          "bytes_then_code": [
+            105,
+            117
+          ],
+          "cell": 27102,
+          "classification": "unresolved",
+          "lower": 50349381,
+          "rows": 553002100,
+          "upper": 548219753
+        },
+        {
+          "bytes_then_code": [
+            108,
+            33
+          ],
+          "cell": 27789,
+          "classification": "unresolved",
+          "lower": 36403229,
+          "rows": 397654757,
+          "upper": 394273880
+        },
+        {
+          "bytes_then_code": [
+            108,
+            98
+          ],
+          "cell": 27854,
+          "classification": "unresolved",
+          "lower": 27831334,
+          "rows": 305200809,
+          "upper": 302442749
+        },
+        {
+          "bytes_then_code": [
+            108,
+            102
+          ],
+          "cell": 27858,
+          "classification": "unresolved",
+          "lower": 44563611,
+          "rows": 487799514,
+          "upper": 483536969
+        },
+        {
+          "bytes_then_code": [
+            108,
+            106
+          ],
+          "cell": 27862,
+          "classification": "unresolved",
+          "lower": 30923175,
+          "rows": 341562604,
+          "upper": 338403902
+        },
+        {
+          "bytes_then_code": [
+            108,
+            109
+          ],
+          "cell": 27865,
+          "classification": "unresolved",
+          "lower": 30027784,
+          "rows": 329902005,
+          "upper": 326996770
+        },
+        {
+          "bytes_then_code": [
+            108,
+            112
+          ],
+          "cell": 27868,
+          "classification": "unresolved",
+          "lower": 19777387,
+          "rows": 217371218,
+          "upper": 215414174
+        },
+        {
+          "bytes_then_code": [
+            108,
+            122
+          ],
+          "cell": 27878,
+          "classification": "unresolved",
+          "lower": 19623022,
+          "rows": 211818122,
+          "upper": 210313508
+        },
+        {
+          "bytes_then_code": [
+            109,
+            98
+          ],
+          "cell": 28111,
+          "classification": "unresolved",
+          "lower": 27105264,
+          "rows": 301006397,
+          "upper": 298073457
+        },
+        {
+          "bytes_then_code": [
+            109,
+            102
+          ],
+          "cell": 28115,
+          "classification": "unresolved",
+          "lower": 39259354,
+          "rows": 428538387,
+          "upper": 425003670
+        },
+        {
+          "bytes_then_code": [
+            110,
+            33
+          ],
+          "cell": 28303,
+          "classification": "unresolved",
+          "lower": 96266537,
+          "rows": 1042424303,
+          "upper": 1034408142
+        },
+        {
+          "bytes_then_code": [
+            110,
+            100
+          ],
+          "cell": 28370,
+          "classification": "unresolved",
+          "lower": 19455011,
+          "rows": 213607027,
+          "upper": 211733905
+        },
+        {
+          "bytes_then_code": [
+            110,
+            101
+          ],
+          "cell": 28371,
+          "classification": "unresolved",
+          "lower": 60463512,
+          "rows": 657689824,
+          "upper": 652324443
+        },
+        {
+          "bytes_then_code": [
+            110,
+            102
+          ],
+          "cell": 28372,
+          "classification": "unresolved",
+          "lower": 34813536,
+          "rows": 379993942,
+          "upper": 376886252
+        },
+        {
+          "bytes_then_code": [
+            110,
+            104
+          ],
+          "cell": 28374,
+          "classification": "unresolved",
+          "lower": 49725387,
+          "rows": 543137862,
+          "upper": 538691629
+        },
+        {
+          "bytes_then_code": [
+            110,
+            112
+          ],
+          "cell": 28382,
+          "classification": "unresolved",
+          "lower": 19582066,
+          "rows": 212563389,
+          "upper": 210942282
+        },
+        {
+          "bytes_then_code": [
+            110,
+            116
+          ],
+          "cell": 28386,
+          "classification": "unresolved",
+          "lower": 24550197,
+          "rows": 274236856,
+          "upper": 271408426
+        },
+        {
+          "bytes_then_code": [
+            110,
+            117
+          ],
+          "cell": 28387,
+          "classification": "unresolved",
+          "lower": 53459402,
+          "rows": 590740520,
+          "upper": 585175225
+        },
+        {
+          "bytes_then_code": [
+            111,
+            33
+          ],
+          "cell": 28560,
+          "classification": "unresolved",
+          "lower": 48956426,
+          "rows": 529131407,
+          "upper": 525287393
+        },
+        {
+          "bytes_then_code": [
+            111,
+            103
+          ],
+          "cell": 28630,
+          "classification": "unresolved",
+          "lower": 40742886,
+          "rows": 445622017,
+          "upper": 441801976
+        },
+        {
+          "bytes_then_code": [
+            111,
+            109
+          ],
+          "cell": 28636,
+          "classification": "unresolved",
+          "lower": 18454057,
+          "rows": 204575692,
+          "upper": 202596275
+        },
+        {
+          "bytes_then_code": [
+            111,
+            110
+          ],
+          "cell": 28637,
+          "classification": "unresolved",
+          "lower": 27217648,
+          "rows": 297655551,
+          "upper": 295237690
+        },
+        {
+          "bytes_then_code": [
+            111,
+            111
+          ],
+          "cell": 28638,
+          "classification": "unresolved",
+          "lower": 85321820,
+          "rows": 943991978,
+          "upper": 935116578
+        },
+        {
+          "bytes_then_code": [
+            111,
+            115
+          ],
+          "cell": 28642,
+          "classification": "unresolved",
+          "lower": 62392714,
+          "rows": 690268992,
+          "upper": 683819161
+        },
+        {
+          "bytes_then_code": [
+            111,
+            117
+          ],
+          "cell": 28644,
+          "classification": "unresolved",
+          "lower": 21229950,
+          "rows": 231055207,
+          "upper": 229253368
+        },
+        {
+          "bytes_then_code": [
+            111,
+            118
+          ],
+          "cell": 28645,
+          "classification": "unresolved",
+          "lower": 42614700,
+          "rows": 463347646,
+          "upper": 459727091
+        },
+        {
+          "bytes_then_code": [
+            112,
+            102
+          ],
+          "cell": 28886,
+          "classification": "unresolved",
+          "lower": 23520193,
+          "rows": 258292642,
+          "upper": 256022660
+        },
+        {
+          "bytes_then_code": [
+            112,
+            115
+          ],
+          "cell": 28899,
+          "classification": "unresolved",
+          "lower": 21520312,
+          "rows": 236644496,
+          "upper": 234532769
+        },
+        {
+          "bytes_then_code": [
+            114,
+            33
+          ],
+          "cell": 29331,
+          "classification": "unresolved",
+          "lower": 62939679,
+          "rows": 684827582,
+          "upper": 679342799
+        },
+        {
+          "bytes_then_code": [
+            114,
+            98
+          ],
+          "cell": 29396,
+          "classification": "unresolved",
+          "lower": 35475068,
+          "rows": 386034011,
+          "upper": 382878638
+        },
+        {
+          "bytes_then_code": [
+            114,
+            102
+          ],
+          "cell": 29400,
+          "classification": "unresolved",
+          "lower": 90936965,
+          "rows": 996838543,
+          "upper": 988241335
+        },
+        {
+          "bytes_then_code": [
+            114,
+            106
+          ],
+          "cell": 29404,
+          "classification": "unresolved",
+          "lower": 35500602,
+          "rows": 390880362,
+          "upper": 387335696
+        },
+        {
+          "bytes_then_code": [
+            114,
+            112
+          ],
+          "cell": 29410,
+          "classification": "unresolved",
+          "lower": 37330128,
+          "rows": 409920833,
+          "upper": 406271620
+        },
+        {
+          "bytes_then_code": [
+            114,
+            116
+          ],
+          "cell": 29414,
+          "classification": "unresolved",
+          "lower": 18138900,
+          "rows": 198880364,
+          "upper": 197092061
+        },
+        {
+          "bytes_then_code": [
+            114,
+            117
+          ],
+          "cell": 29415,
+          "classification": "unresolved",
+          "lower": 18258114,
+          "rows": 201566174,
+          "upper": 199713661
+        },
+        {
+          "bytes_then_code": [
+            115,
+            33
+          ],
+          "cell": 29588,
+          "classification": "unresolved",
+          "lower": 131260807,
+          "rows": 1413745653,
+          "upper": 1403598006
+        },
+        {
+          "bytes_then_code": [
+            115,
+            102
+          ],
+          "cell": 29657,
+          "classification": "unresolved",
+          "lower": 46287732,
+          "rows": 507810742,
+          "upper": 503396821
+        },
+        {
+          "bytes_then_code": [
+            115,
+            106
+          ],
+          "cell": 29661,
+          "classification": "unresolved",
+          "lower": 28702341,
+          "rows": 316166050,
+          "upper": 313295217
+        },
+        {
+          "bytes_then_code": [
+            115,
+            116
+          ],
+          "cell": 29671,
+          "classification": "unresolved",
+          "lower": 19442654,
+          "rows": 213815465,
+          "upper": 211867666
+        },
+        {
+          "bytes_then_code": [
+            115,
+            117
+          ],
+          "cell": 29672,
+          "classification": "unresolved",
+          "lower": 51147087,
+          "rows": 563616011,
+          "upper": 558468182
+        },
+        {
+          "bytes_then_code": [
+            116,
+            33
+          ],
+          "cell": 29845,
+          "classification": "unresolved",
+          "lower": 101086564,
+          "rows": 1093183973,
+          "upper": 1085201646
+        },
+        {
+          "bytes_then_code": [
+            116,
+            98
+          ],
+          "cell": 29910,
+          "classification": "unresolved",
+          "lower": 29886558,
+          "rows": 332669158,
+          "upper": 329317720
+        },
+        {
+          "bytes_then_code": [
+            116,
+            102
+          ],
+          "cell": 29914,
+          "classification": "unresolved",
+          "lower": 63647008,
+          "rows": 699696310,
+          "upper": 693418739
+        },
+        {
+          "bytes_then_code": [
+            116,
+            105
+          ],
+          "cell": 29917,
+          "classification": "unresolved",
+          "lower": 135798731,
+          "rows": 1482174060,
+          "upper": 1469982483
+        },
+        {
+          "bytes_then_code": [
+            116,
+            106
+          ],
+          "cell": 29918,
+          "classification": "unresolved",
+          "lower": 66350127,
+          "rows": 738975877,
+          "upper": 731597363
+        },
+        {
+          "bytes_then_code": [
+            116,
+            112
+          ],
+          "cell": 29924,
+          "classification": "unresolved",
+          "lower": 50105389,
+          "rows": 546657869,
+          "upper": 542230487
+        },
+        {
+          "bytes_then_code": [
+            116,
+            115
+          ],
+          "cell": 29927,
+          "classification": "unresolved",
+          "lower": 22898276,
+          "rows": 255756626,
+          "upper": 253076216
+        },
+        {
+          "bytes_then_code": [
+            117,
+            111
+          ],
+          "cell": 30180,
+          "classification": "unresolved",
+          "lower": 18626918,
+          "rows": 204769384,
+          "upper": 203015751
+        },
+        {
+          "bytes_then_code": [
+            117,
+            115
+          ],
+          "cell": 30184,
+          "classification": "unresolved",
+          "lower": 26765044,
+          "rows": 293091914,
+          "upper": 290550189
+        },
+        {
+          "bytes_then_code": [
+            117,
+            116
+          ],
+          "cell": 30185,
+          "classification": "unresolved",
+          "lower": 21821939,
+          "rows": 242587338,
+          "upper": 240243243
+        },
+        {
+          "bytes_then_code": [
+            117,
+            117
+          ],
+          "cell": 30186,
+          "classification": "unresolved",
+          "lower": 20214003,
+          "rows": 221907173,
+          "upper": 219975294
+        },
+        {
+          "bytes_then_code": [
+            118,
+            102
+          ],
+          "cell": 30428,
+          "classification": "unresolved",
+          "lower": 39840856,
+          "rows": 432710654,
+          "upper": 429301911
+        },
+        {
+          "bytes_then_code": [
+            121,
+            33
+          ],
+          "cell": 31130,
+          "classification": "unresolved",
+          "lower": 56170143,
+          "rows": 608163707,
+          "upper": 603640669
+        }
+      ],
+      "slots": 192000000
+    },
+    "upper_cell_sha256": "1653038923911199c9f79e9fcd7d27bb65bd75ddbeb128f8a540a966213aac31",
+    "vocabulary_interval": {
+      "U_lower": 9129295283,
+      "U_upper": 99129290112,
+      "duplicate_occurrences_lower": 83691765,
+      "duplicate_owned_offsets_lower": 870709888,
+      "k_lower": 234472723,
+      "k_upper": 3097642723,
+      "ordinary_inherited_distinct_offsets": 9129290032,
+      "ordinary_inherited_keys": 234472722
+    }
+  },
+  "scope": "Direct prefix authentication plus inherited bounds; not an exact target vocabulary, large sort, physical fit, rate or launch permission.",
+  "service_body_s": 10.380438419990242,
+  "shared_limit": 201326592,
+  "swap_limit": 0,
+  "utc": "2026-11-25T02:47:10Z"
+}
