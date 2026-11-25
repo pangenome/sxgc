@@ -3,7 +3,10 @@ import os
 from pathlib import Path
 import subprocess as sp
 import tempfile
-from overlap_real_v10_meter import collect,files
+import time
+from types import SimpleNamespace
+from unittest.mock import patch
+from overlap_real_v10_meter import Group,collect,files
 from overlap_real_v10_plan import model,N,PRODUCT
 
 def main():
@@ -15,5 +18,14 @@ def main():
             try:
                 z,u,a=files(r,{'c':child},lambda *_:None);assert (z['scratch'][0],z['output'][0],z['inputs'][0])==(18,6,3) and u==1 and a>=1
             finally:child.terminate();v=collect(child,True);assert v['rc']==-15 and v['maxrss_bytes']>0
-    print('PASS: joint bounds, output/input exclusions, nested alias+unlinked accounting and nonduplicated wait4')
+        # EROFS in a guest STOP write must not leave a live child behind or
+        # mask the host STOP. Use a finite child, no service/privileges here.
+        guest=d/'quota';guest.mkdir();h=Group.__new__(Group);h.root=r;h.d=d;h.stop=d/'stop.requested';h.daemons=set();h.drains=[];h.errors=[];h.results={};h.starts={'probe':time.monotonic()};h.work={'probe':sp.Popen(['/bin/true'])};h.volume=SimpleNamespace(d=guest,mountinfo=lambda:True,owned=lambda:True)
+        touch=Path.touch
+        def fail_guest(self,*args,**kwargs):
+            if guest in self.parents:raise OSError(30,'read-only guest')
+            return touch(self,*args,**kwargs)
+        with patch.object(Path,'touch',fail_guest):h.abort()
+        assert h.stop.is_file() and (r/'stop.requested').is_file() and not (guest/'stop.requested').exists() and 'read-only guest' in h.errors[0] and h.results['probe']['rc']==0
+    print('PASS: read-only guest STOP still reaps, joint bounds, output/input exclusions, nested alias+unlinked accounting and nonduplicated wait4')
 if __name__=='__main__':main()

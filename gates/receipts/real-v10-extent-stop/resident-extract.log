@@ -1,0 +1,22 @@
+RESIDENT_BEGIN phase=load_ids
+RESIDENT_INPUT packed=true source_bytes=127708112 n=100000503 m=3170531 k=2689467
+RESIDENT_TRANSPORT row43=false text_width=4 lcp_width=4 rank_width=4
+RESIDENT_INDEX wide=true sa_bytes=957117696 owner_bytes=29909936 start_bytes=21515744 native_above_i32=false
+RESIDENT_PLAN n=100000503 m=3170531 k=2689467 dict_symbols=119639712 descriptors=95434516 parse_bound=239135304 aux_bound=416041516 dict_bound=1218942063 emit_bound=1318392879 array_grant=1503238553
+RESIDENT_PHASE phase=load_ids seconds=0.512133 peak_rss=164147200 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=parse_sort
+RESIDENT_PHASE phase=parse_sort seconds=0.219843 peak_rss=239316992 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=check_ranks
+RESIDENT_CHECK recurrence_ranks=3170531 virtual_end=0
+RESIDENT_PHASE phase=check_ranks seconds=0.036701 peak_rss=189595648 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=pack_dictionary
+RESIDENT_PHASE phase=pack_dictionary seconds=0.204461 peak_rss=329019392 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=aligned_and_lists
+RESIDENT_PHASE phase=aligned_and_lists seconds=0.900015 peak_rss=246960128 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=dictionary_sort
+RESIDENT_PHASE phase=dictionary_sort seconds=4.580668 peak_rss=1180622848 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=owner_map
+RESIDENT_PHASE phase=owner_map seconds=0.019362 peak_rss=1210535936 read_bytes=0 write_bytes=0
+RESIDENT_BEGIN phase=emit
+RESIDENT_STOP exit=75
+RESIDENT_STOP exit=75

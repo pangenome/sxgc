@@ -41,7 +41,7 @@ def files(root,children,inspect):
         k='scratch'
         if len(parts)>=2 and parts[0] in ('reference','candidate'):
             if parts[1]=='quota':k='guest'
-            if parts[1:]==('scratch.ext4',):k='image';need(st.st_size==image_bytes(parts[0]),'backing image extent drift')
+            if parts[1:]==('scratch.ext2',):k='image';need(st.st_size==image_bytes(parts[0]),'backing image extent drift')
             if parts[1:] in (('in','raw'),('in','checker'),('in','remap'),('in','map','seps.bin')):k='inputs'
             if parts[1:] in (('work.sxi2.partial',),('work.sxi2',),('index.sxi2',)):k='output';need(st.st_size<=PRODUCT,'product limit')
         key=st.st_dev,st.st_ino;old=seen.get(key)
@@ -151,8 +151,17 @@ class Group:
     def run(self,name,args,**kw):self.launch(name,args,**kw);self.wait()
     def abort(self):
         self.stop.touch(exist_ok=True);(self.root/'stop.requested').touch(exist_ok=True)
-        for q in (self.d/'quota/stop.requested',self.d/'quota/merged/modeb/stop.requested',self.d/'quota/bands/producer.interrupted',self.d/'quota/tap-bands/producer.interrupted'):
-            if q.parent.is_dir():q.touch(exist_ok=True)
+        # The guest itself can have gone read-only. Preserve the primary error
+        # and still stop/reap every worker using the authoritative host STOP.
+        mounted=False
+        try:mounted=bool(self.volume and self.volume.mountinfo() and self.volume.owned())
+        except (OSError,ValueError) as ex:self.errors.append('skip guest STOP (ownership unavailable): '+str(ex))
+        if mounted:
+            for rel in ('stop.requested','merged/modeb/stop.requested','bands/producer.interrupted','tap-bands/producer.interrupted'):
+                q=self.volume.d/rel
+                try:
+                    if q.parent.is_dir():q.touch(exist_ok=True)
+                except OSError as ex:self.errors.append('guest STOP '+rel+': '+str(ex))
         for sig in (None,signal.SIGTERM,signal.SIGKILL):
             until=clock()+(3 if sig is None else 1)
             for k,p in self.work.items():
@@ -162,7 +171,10 @@ class Group:
                     except ProcessLookupError:pass
             while clock()<until:
                 for k,p in self.work.items():self.inspect(k,p)
-                if all(p.returncode is not None for k,p in self.work.items() if k not in self.daemons):return
+                if all(p.returncode is not None for k,p in self.work.items() if k not in self.daemons):
+                    for name,th in self.drains:
+                        if name not in self.daemons:th.join(1)
+                    return
                 time.sleep(.03)
     def report(self):
         try:after=grant(MEM,4)

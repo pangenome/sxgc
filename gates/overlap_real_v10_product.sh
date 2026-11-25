@@ -5,8 +5,8 @@ cd "$(dirname "$0")/..";now=$(date +%s);[[ $# == 1 && $1 =~ ^[1-9][0-9]{9}$ ]] &
 end=$1;source gates/overlap_pin.sh;overlap_pin_series gates/overlap_real_v10_product.sh "$end"
 exec 9>"${XDG_RUNTIME_DIR:?}/overlap-ten-timing.lock";flock -n 9 || exit 75
 python3 -BE gates/overlap_timing_idle.py;s=/mnt/nvme2n1/erikg/TAPEREADER/sandbox
-for q in "$s"/real-v10-quota100-*;do [[ ! -e $q ]] || { echo "HOLD: inspect prior real product attempt first: $q";exit 75; };done
-umask 077;d=$(mktemp -d "$s/real-v10-quota100-XXXXXX");echo "REAL_V10_PAIR=$d";trap 'rc=$?;echo launcher=$rc >>"$d/exits.log";if ((rc));then touch "$d/stop.requested";fi' EXIT
+for q in "$s"/real-v10-block100-*;do [[ ! -e $q ]] || { echo "HOLD: inspect prior real product attempt first: $q";exit 75; };done
+umask 077;d=$(mktemp -d "$s/real-v10-block100-XXXXXX");echo "REAL_V10_PAIR=$d";trap 'rc=$?;echo launcher=$rc >>"$d/exits.log";if ((rc));then touch "$d/stop.requested";fi' EXIT
 read -r cores checker < <(python3 -BE gates/overlap_real_v10_score.py admit "$d" "$end")
 phase(){ local tag=$1 rc=0;shift; "$@" >"$d/$tag.log" 2>&1 || rc=$?;echo "$tag=$rc" >>"$d/exits.log";return "$rc"; }
 u=(systemd-run --user --quiet --pipe --wait --collect --expand-environment=no -p CPUQuota=400% -p MemoryMax=2G -p MemorySwapMax=0 -p Nice=10 -p IOAccounting=yes -p LimitCORE=0 -p LimitSTACK=8M -p LimitFSIZE=192M -p UMask=0077 -p TimeoutStopSec=5s)

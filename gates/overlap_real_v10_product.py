@@ -52,6 +52,12 @@ def no_owner(path,proc):
             except FileNotFoundError:pass
     path.unlink();fsyncdir(path.parent)
 
+def retire_column(h,path,proc=None):
+    h.volume.owned();size=path.stat().st_size
+    def free():
+        s=os.statvfs(path.parent);return s.f_frsize*s.f_bavail
+    before=free();no_owner(path,proc);after=free();need(after-before>=size,'closed column unlink did not release its guest blocks');save(h.d/('released-'+path.name+'.json'),dict(bytes=size,free_before=before,free_after=after))
+
 def reference(root):
     r=root/'reference';out=r/'index.sxi2';proof=load(r/'verified.json');status=load(r/'status.json');need(not (r/'stop.requested').exists() and not status['stop'] and all(x['rc']==0 for x in status['worker'].values()) and proof['all_rows_raw_verified'] and proof['full_sha256']==sha(out) and 'arm-reference=0' in (root/'exits.log').read_text().splitlines(),'unchecked real reference');return out,proof
 
@@ -63,14 +69,14 @@ def arm(h,vcpu):
     if ref:
         h.run('front',[LEX,raw,cols,'--packed']);need(ids.stat().st_size==4*M and tape.stat().st_size==U+12*K-8 and 'peak_counted='+str(N+20*M-8) in log('front'),'reference front');front_files.update(packed=tape.stat().st_size,ids=4*M);need(sha(ids)=='603e39e31da8fb51ad8838a114ee432dc03bb483e3e9f95f523b072d82e7f418','independent lexical ID SHA');need(set(cols.iterdir())=={ids,tape},'unexpected reference column')
     else:
-        h.run('front',[FRONT,'pos-manifest',raw,ready,4,ARRAY,2*N-CONTROL,stop,end],fsize=U+16*K-8);need(ready.samefile(cols/'manifest') and ready.stat().st_nlink==2 and struct.unpack('<6Q',ready.read_bytes())==(0x3143465058,N,M,K,U,U+16*K-8) and key.stat().st_size==8*M and tape.stat().st_size==U+16*K-8 and set(cols.iterdir())=={key,tape,cols/'manifest'},'candidate manifest/columns');front_files.update(dict_bytes=tape.stat().st_size,keys=8*M);no_owner(tape,None);h.bound=plan['rank'];h.phase='rank';h.run('rank',[RANK,'rank',key,inv,4,ARRAY,stop,end]);need(inv.stat().st_size==8*M and sha(inv)==INV_SHA and 'permutation_recurrence=1' in log('rank'),'inverse proof or SHA');no_owner(key,None);front_files.update(inverse=8*M,inverse_sha256=INV_SHA)
+        h.run('front',[FRONT,'pos-manifest',raw,ready,4,ARRAY,2*N-CONTROL,stop,end],fsize=U+16*K-8);need(ready.samefile(cols/'manifest') and ready.stat().st_nlink==2 and struct.unpack('<6Q',ready.read_bytes())==(0x3143465058,N,M,K,U,U+16*K-8) and key.stat().st_size==8*M and tape.stat().st_size==U+16*K-8 and set(cols.iterdir())=={key,tape,cols/'manifest'},'candidate manifest/columns');front_files.update(dict_bytes=tape.stat().st_size,keys=8*M);retire_column(h,tape);h.bound=plan['rank'];h.phase='rank';h.run('rank',[RANK,'rank',key,inv,4,ARRAY,stop,end]);need(inv.stat().st_size==8*M and sha(inv)==INV_SHA and 'permutation_recurrence=1' in log('rank'),'inverse proof or SHA');retire_column(h,key);front_files.update(inverse=8*M,inverse_sha256=INV_SHA)
     # Include private prepared-state cold barriers in the raw clock, not in
     # the first prepared timestamp. The two constructors have different columns.
     vol.reopen_cold()
     for f in (raw,d/'in/remap',mapdir/'seps.bin',d/'in/checker',*((tape,ids) if ref else (inv,))):cold(f)
     prepared=clock();h.timing['raw_to_prepared_s']=prepared-start;h.phase='prepared';h.bound=plan['prepared' if ref else 'stream'];p=None
     if ref:
-        p=h.launch('resident',[REF,cols,stop,RES_ARRAY],env={'XSA_RESIDENT_RADIX_LANES':'4','XSA_RESIDENT_RADIX_STEP':'16384','XSA_RESIDENT_PACKED':'1','XSA_RESIDENT_WIDE_DICT':'1'},stream=True);h.until(lambda:(d/'resident.log').is_file() and 'RESIDENT_BEGIN phase=emit' in log('resident'));no_owner(tape,h.work['resident'])
+        p=h.launch('resident',[REF,cols,stop,RES_ARRAY],env={'XSA_RESIDENT_RADIX_LANES':'4','XSA_RESIDENT_RADIX_STEP':'16384','XSA_RESIDENT_PACKED':'1','XSA_RESIDENT_WIDE_DICT':'1'},stream=True);h.until(lambda:(d/'resident.log').is_file() and 'RESIDENT_BEGIN phase=emit' in log('resident'));retire_column(h,tape,h.work['resident'])
     h.phase='stream';h.bound=plan['stream'];h.timing['ready_to_start_consumers_s']=clock()-prepared
     if ref:
         h.launch('tap',[JOIN,'ctx-tap','--bands',q/'tap-bands',*ctx],data=160<<20,fsize=m20cap)
@@ -101,11 +107,14 @@ def arm(h,vcpu):
     vol.retire();h.wait();need(not h.daemons-set(h.results),'filesystem worker was not reaped');h.sample();save(d/'verified.json',dict(arm=h.name,all_rows_raw_verified=True,rows=ROWS,runs=RUNS,chi=tbl[5]['count'],docs=DOCS,bytes=out.stat().st_size,full_sha256=full,full_candidate_equals_reference=not ref,table=tbl,same_v8_payloads=SAME,clocks=h.timing,front_files=front_files,position_file_bytes_each_way=8*ROWS if ref else 0,verifier=ver,plan=model(),scope='One authenticated real Pile prefix, direct Rust trie stream vs older independent resident + band tap; same v10 frozen finalizer. No 100 GB admission.'));print(f'{h.name}: byte-verified {ROWS} rows -> {out.stat().st_size} B complete v10, raw→join {tj-start:.3f} s, SHA {full}',flush=True)
 
 def main(role,root,end,vcpu):
-    private(root);need(role in ('reference','candidate') and root.parent==S and re.fullmatch(r'real-v10-quota100-[A-Za-z0-9]{6}',root.name),'fixed role and root');a=load(root/'admit.json');need(a['start']<=time.time()<end<=a['end'] and a['end']-a['start']<=1500 and a['end']-a['start']>900 and a['cores'][-1]==vcpu and not (root/'stop.requested').exists(),'time/CPU lease');need(a['pins']==pins() and a['files']==model(),'admission changed');d=root/role;d.mkdir(mode=0o700);h=Group(root,role,end);need(h.before['cores']==a['cores'][:4],'build affinity');signal.signal(signal.SIGTERM,lambda *_:h.stop.touch());signal.signal(signal.SIGINT,lambda *_:h.stop.touch())
+    private(root);need(role in ('reference','candidate') and root.parent==S and re.fullmatch(r'real-v10-block100-[A-Za-z0-9]{6}',root.name),'fixed role and root');a=load(root/'admit.json');need(a['start']<=time.time()<end<=a['end'] and a['end']-a['start']<=1500 and a['end']-a['start']>900 and a['cores'][-1]==vcpu and not (root/'stop.requested').exists(),'time/CPU lease');need(a['pins']==pins() and a['files']==model(),'admission changed');d=root/role;d.mkdir(mode=0o700);h=Group(root,role,end);need(h.before['cores']==a['cores'][:4],'build affinity');signal.signal(signal.SIGTERM,lambda *_:h.stop.touch());signal.signal(signal.SIGINT,lambda *_:h.stop.touch())
     try:arm(h,vcpu)
     except BaseException:
-        h.abort()
-        if h.volume is not None:h.volume.preserve()
+        try:h.abort()
+        except Exception as e:h.errors.append('outer STOP cleanup: '+str(e))
+        try:
+            if h.volume is not None:h.volume.preserve()
+        except Exception as e:h.errors.append('private mount cleanup: '+str(e))
         raise
     finally:save(d/'status.json',h.report())
 

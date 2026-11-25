@@ -1,0 +1,29 @@
+Traceback (most recent call last):
+  File "/tmp/overlap-study-src-NuK8bc/gates/overlap_real_v10_product.py", line 105, in main
+    try:arm(h,vcpu)
+        ^^^^^^^^^^^
+  File "/tmp/overlap-study-src-NuK8bc/gates/overlap_real_v10_product.py", line 73, in arm
+    p=h.launch('resident',[REF,cols,stop,RES_ARRAY],env={'XSA_RESIDENT_RADIX_LANES':'4','XSA_RESIDENT_RADIX_STEP':'16384','XSA_RESIDENT_PACKED':'1','XSA_RESIDENT_WIDE_DICT':'1'},stream=True);h.until(lambda:(d/'resident.log').is_file() and 'RESIDENT_BEGIN phase=emit' in log('resident'));no_owner(tape,h.work['resident'])
+                                                                                                                                                                                                                                                                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/overlap-study-src-NuK8bc/gates/overlap_real_v10_product.py", line 53, in no_owner
+    path.unlink();fsyncdir(path.parent)
+    ^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 1344, in unlink
+    os.unlink(self)
+OSError: [Errno 5] Input/output error: '/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/quota/cols/dictionary.packed'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/tmp/overlap-study-src-NuK8bc/gates/overlap_real_v10_product.py", line 112, in <module>
+    if __name__=='__main__':main(sys.argv[1],Path(sys.argv[2]),int(sys.argv[3]),int(sys.argv[4]))
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/overlap-study-src-NuK8bc/gates/overlap_real_v10_product.py", line 107, in main
+    h.abort()
+  File "/tmp/overlap-study-src-NuK8bc/gates/overlap_real_v10_meter.py", line 155, in abort
+    if q.parent.is_dir():q.touch(exist_ok=True)
+                         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 1305, in touch
+    fd = os.open(self, flags, mode)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno 30] Read-only file system: '/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/quota/stop.requested'

@@ -9,8 +9,8 @@ from overlap_v10_product_compare import FIN,RANK,EMIT,TAP,OLD,JOIN,PINS as GENER
 from overlap_real_v10_map import N,DOCS,S,RAW
 G=Path(__file__).resolve().parent;SRC=S/'real-v10-map100-S4bZm0';T=Path('/tmp/real-v10-tools-Fch4DR')
 REF=Path('/tmp/overlap-radix-Pymxu1/overlap_resident');LEX=Path('/tmp/resident-bin-DmG99k/lexparse');MON=LEX.parent/'monitor.so';RELAY=OLD/'relay';SINK=T/'sink';CHECK=T/'witness';FRONT=Path('/tmp/real-v10-fs-test-yOKcF3/front')
-APPEND=Path('/tmp/real-v10-tools-86Hok8/xsa');FUSE=Path('/usr/bin/fuse2fs');MKFS=Path('/usr/sbin/mke2fs');UMOUNT=Path('/usr/bin/fusermount3');FIRST=S/'real-v10-pair100-kSIsZ8'
-PINS={p:GENERATED_TOOLS[p] for p in (FIN,RANK,EMIT,TAP,JOIN,RELAY)}|{FRONT:'cfc4cd34a1fe548df44c6c8a1b0985fc4762683cc627525210aa32b47f4e0e5c',SINK:'a17594d5a5b621271200b5a961c05f5652a98d3f0ef3a8a9df44f3d841489acd',APPEND:'f6678591f4227185e9da48db8ae2a2cba06acfebfd88c64411206fc51a108922',FUSE:'bbf0aa57d97be717d4137fef2500f7f43a18186a93aced12a01a6ea64b9a8d7c',MKFS:'07cd24ce58a410cc9cee93c55ae5ac95986df016c5907dc7a49b55389bd41ed2',UMOUNT:'d278775c1528dd32efc85c2cb322423ee93aa8dcf76aaa595f7022d427910704',CHECK:'9b5918dc0326c910fae37eedaf0a9bfae13910e9bdcd7c59e0a070b0e6c1ff5f',REF:'088e99eb5e5a583b912adf4c6906a6db9feaeda651c23d319f5ae805a114bab7',LEX:'b3e06429708567a17f6ede3e0e6dac1891d252a3a495eb2177da025101f62544',MON:'fe5173c7d32215bdc7d41e59fd70edf059621ce83b38fb87b2e4d73ebbcb960a'}
+APPEND=Path('/tmp/real-v10-tools-86Hok8/xsa');FUSE=Path('/usr/bin/fuse2fs');MKFS=Path('/usr/sbin/mke2fs');UMOUNT=Path('/usr/bin/fusermount3');FIRST=S/'real-v10-pair100-kSIsZ8';EXTENT_STOP=S/'real-v10-quota100-eovaZ2';FSCK=Path('/usr/sbin/e2fsck')
+PINS={p:GENERATED_TOOLS[p] for p in (FIN,RANK,EMIT,TAP,JOIN,RELAY)}|{FSCK:'c69c6315f602d389821b3a1dab1308618616259400f2cf5d997243c4a83c284c',FRONT:'cfc4cd34a1fe548df44c6c8a1b0985fc4762683cc627525210aa32b47f4e0e5c',SINK:'a17594d5a5b621271200b5a961c05f5652a98d3f0ef3a8a9df44f3d841489acd',APPEND:'f6678591f4227185e9da48db8ae2a2cba06acfebfd88c64411206fc51a108922',FUSE:'bbf0aa57d97be717d4137fef2500f7f43a18186a93aced12a01a6ea64b9a8d7c',MKFS:'07cd24ce58a410cc9cee93c55ae5ac95986df016c5907dc7a49b55389bd41ed2',UMOUNT:'d278775c1528dd32efc85c2cb322423ee93aa8dcf76aaa595f7022d427910704',CHECK:'9b5918dc0326c910fae37eedaf0a9bfae13910e9bdcd7c59e0a070b0e6c1ff5f',REF:'088e99eb5e5a583b912adf4c6906a6db9feaeda651c23d319f5ae805a114bab7',LEX:'b3e06429708567a17f6ede3e0e6dac1891d252a3a495eb2177da025101f62544',MON:'fe5173c7d32215bdc7d41e59fd70edf059621ce83b38fb87b2e4d73ebbcb960a'}
 IN={'raw':(N,RAW),'checker':(N,RAW),'remap':(256,'37b01d647470df1b5770e277427021b37465ea2c6d75e08d17ef4dda517b49d3'),'map/seps.bin':(68344,'63bb635e128e00d06037eaef5ce9e83d343cc622509b155d010789e4a20654ac')}
 OLD_INDEX=S/'ext-product-QhQZxU/product.sxi2';OLD_SHA='6325c843c0d9aa9be00d69260aafdd794936e2e79f16174efb00c43db831f341';ROW_SHA='82747f11a9925bb4d89cc812410d98e411ce80b1767ee1ff4dc22e94e2cd874e';INV_SHA='afc938c0a1e96a62a2a6159fa119546a919b3042f8820847c207890bc9cafe67'
 M,K,U=3_170_531,2_689_467,95_434_516;ROWS=N+1;RUNS=38_647_521;SLOTS=192_001;POST=N//2;M20=16<<20;PRODUCT=128<<20;CONTROL=4<<20;TRANSPORT=1<<20;STAGE=4<<20
@@ -32,8 +32,13 @@ def guest_need(role,m20):
     # All 590 progress records may cost a block; all empty markers cost an
     # inode, not another data block. Require formatted free inodes separately.
     fixed=78*block(770092)+5*block(2410736)+sum(map(block,[12500104,12500063,301936,m20]))+(590+16)*4096+(512<<10)
-    if role=='reference':return max(N+20*M-8+272*4096+(512<<10),fixed+block(4*M)+262144)
-    return max(block(U+16*K-8)+block(8*M)+(512<<10),fixed+block(8*M)+block(POST))
+    # ext2 indirect blocks: <4 GiB/file so no triple indirect. At most two
+    # base pointer blocks per non-tiny file plus ceil(sum(bytes)/4 MiB) leaves.
+    # Counts cover concurrent growing buckets, slots, columns and band files;
+    # tiny progress/marker files below the 12 direct blocks need none.
+    ptr=lambda count:(2*count+ceil(2*N,4<<20))*4096
+    if role=='reference':return max(N+20*M-8+272*4096+(512<<10)+ptr(272),fixed+block(4*M)+262144+ptr(100))
+    return max(block(U+16*K-8)+block(8*M)+4096+(512<<10)+ptr(4),fixed+block(8*M)+block(POST)+4096+ptr(100))
 
 def model():
     rows=ROWS;prc=78*(44+5*65536+16*ceil(rows.bit_length()*65536,64));slices=5*2_410_736
@@ -52,6 +57,7 @@ def pins():
     need(sha(SRC/'source.json')==sha(G/'receipts/real-v10-map100/source.json')=='038ea10a124fc46821ce37f8395f2453a017ca9db6c04186c36728c7e2ce6f1b' and (SRC/'exits.log').read_text()=='source=0\nlauncher=0\n' and not (SRC/'stop.requested').exists(),'input receipt')
     need((T/'exits.log').read_text()=='compile=0\nlauncher=0\n' and sha(T/'tools.sha')==sha(G/'receipts/real-v10-100m-tools/tools.sha'),'tool receipt')
     need(sha(FIRST/'reference/status.json')=='ba1d38ddb9d2d030ecce28b52832a730423daa835b8f71df6a43808cbcc651f5' and (FIRST/'stop.requested').exists() and not (FIRST/'reference/work.sxi2').exists() and not (FIRST/'candidate').exists(),'prior STOP changed')
+    need(set(S.glob('real-v10-pair100-*'))=={FIRST} and set(S.glob('real-v10-quota100-*'))=={EXTENT_STOP},'unreviewed earlier real pair');need(sha(EXTENT_STOP/'reference/status.json')=='9a44411b4201850d853dcfb75175b0b6b8911fd9025fd83ad12c6fa06e495f15' and sha(EXTENT_STOP/'arm-reference.log')=='cf59c037d32e8f693058af353a9ab4fa8f785c910a26d28a15dbaa61259c3a43' and (EXTENT_STOP/'stop.requested').exists() and not (EXTENT_STOP/'candidate').exists() and not (EXTENT_STOP/'reference/work.sxi2').exists() and not (EXTENT_STOP/'reference/witness.log').exists(),'extent-backed run was not the pre-stream STOP')
     for p,h in PINS.items():need(p==p.resolve() and p.is_file() and sha(p)==h,'tool pin: '+str(p))
     return {str(p):h for p,h in PINS.items()}
 

@@ -1,0 +1,339 @@
+{
+  "after": {
+    "cores": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 16983709\nuser_usec 14023406\nsystem_usec 2960302\ncore_sched.force_idle_usec 0\nnr_periods 167\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "2147483648",
+    "memory.peak": "1688903680",
+    "memory.swap.max": "0"
+  },
+  "argv": {
+    "front": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/tmp/resident-bin-DmG99k/lexparse",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/in/raw",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/quota/cols",
+        "--packed"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "mkfs": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=176160768:176160768",
+        "--stack=8388608:8388608",
+        "--",
+        "/usr/sbin/mke2fs",
+        "-t",
+        "ext4",
+        "-q",
+        "-F",
+        "-b",
+        "4096",
+        "-N",
+        "4096",
+        "-I",
+        "256",
+        "-m",
+        "2",
+        "-O",
+        "^has_journal,^resize_inode",
+        "-E",
+        "nodiscard,lazy_itable_init=0,root_owner=1001:1001",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/scratch.ext4"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "resident": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/tmp/overlap-radix-Pymxu1/overlap_resident",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/quota/cols",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/stop.requested",
+        "1503238553"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2",
+        "XSA_RESIDENT_PACKED": "1",
+        "XSA_RESIDENT_RADIX_LANES": "4",
+        "XSA_RESIDENT_RADIX_STEP": "16384",
+        "XSA_RESIDENT_WIDE_DICT": "1"
+      }
+    },
+    "unmount1": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/usr/bin/fusermount3",
+        "-u",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/quota"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "volume1": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=176160768:176160768",
+        "--stack=8388608:8388608",
+        "--data=100663296:100663296",
+        "--",
+        "/usr/bin/fuse2fs",
+        "-s",
+        "-f",
+        "-o",
+        "rw,noatime,fsname=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/scratch.ext4",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/scratch.ext4",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/quota"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "volume2": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=176160768:176160768",
+        "--stack=8388608:8388608",
+        "--data=100663296:100663296",
+        "--",
+        "/usr/bin/fuse2fs",
+        "-s",
+        "-f",
+        "-o",
+        "rw,noatime,fsname=/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/scratch.ext4",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/scratch.ext4",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-quota100-eovaZ2/reference/quota"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    }
+  },
+  "before": {
+    "cores": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 191924\nuser_usec 142943\nsystem_usec 48980\ncore_sched.force_idle_usec 0\nnr_periods 2\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "2147483648",
+    "memory.peak": "11014144",
+    "memory.swap.max": "0"
+  },
+  "clocks": {
+    "cold_backing_and_restart_s": 0.15969272889196873,
+    "input_setup_and_cold_s": 0.2846985273063183,
+    "quota_setup_s": 0.08748818561434746,
+    "raw_to_prepared_s": 9.68914037104696
+  },
+  "log_bytes": 1912,
+  "log_errors": [],
+  "memory_stat_at_sample": {
+    "anon": 997879808,
+    "file": 465035264,
+    "kernel_stack": 65536,
+    "pagetables": 2162688,
+    "shmem": 0,
+    "slab": 840160,
+    "sock": 0
+  },
+  "peaks": {
+    "aliases": 258,
+    "guest_allocated": 165851136,
+    "guest_bytes": 164308414,
+    "image_allocated": 176160768,
+    "image_bytes": 176160768,
+    "inputs_allocated": 200081408,
+    "inputs_bytes": 200069606,
+    "open_unlinked_fds": 0,
+    "outer_charged": 183648256,
+    "output_allocated": 0,
+    "output_bytes": 0,
+    "outside_allocated": 147456,
+    "outside_bytes": 135481,
+    "scratch_allocated": 176308224,
+    "scratch_bytes": 164443493,
+    "whole_allocated": 376389632
+  },
+  "pipe_capacity": {
+    "front": [
+      65536
+    ],
+    "mkfs": [
+      65536
+    ],
+    "resident": [
+      65536,
+      65536
+    ],
+    "unmount1": [
+      65536
+    ],
+    "volume1": [
+      65536
+    ],
+    "volume2": [
+      65536
+    ]
+  },
+  "sampled_high_phase": {
+    "aliases": "front",
+    "guest_allocated": "front",
+    "guest_bytes": "front",
+    "image_allocated": "front",
+    "image_bytes": "front",
+    "inputs_allocated": "front",
+    "inputs_bytes": "front",
+    "open_unlinked_fds": "front",
+    "outer_charged": "prepared",
+    "output_allocated": "front",
+    "output_bytes": "front",
+    "outside_allocated": "prepared",
+    "outside_bytes": "prepared",
+    "scratch_allocated": "prepared",
+    "scratch_bytes": "front",
+    "whole_allocated": "prepared"
+  },
+  "sampled_memory_high": 1466605568,
+  "service_body_s": 16.487203454598784,
+  "stop": true,
+  "supervisor_io_including_prep_and_proof": {
+    "ru_inblock_bytes": 149745664,
+    "ru_oublock_bytes": 200118272
+  },
+  "utc": "2026-11-25T01:15:35Z",
+  "worker": {
+    "front": {
+      "cpu_s": 3.532886,
+      "major_faults": 1,
+      "maxrss_bytes": 107032576,
+      "minor_faults": 3787,
+      "rc": 0,
+      "ru_inblock_bytes": 100003840,
+      "ru_oublock_bytes": 0,
+      "wall_s": 9.413326416164637
+    },
+    "mkfs": {
+      "cpu_s": 0.004013,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 194,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 57344,
+      "wall_s": 0.04345304239541292
+    },
+    "unmount1": {
+      "cpu_s": 0.01838,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 152,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "wall_s": 0.041325518861413
+    },
+    "volume1": {
+      "cpu_s": 5.893774,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 429,
+      "rc": 0,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 175173632,
+      "wall_s": 9.554227286949754
+    }
+  }
+}

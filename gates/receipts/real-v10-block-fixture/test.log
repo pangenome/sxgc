@@ -1,0 +1,2 @@
+PASS reference: fresh 127708112 B interleaved column, hash after checked cold remount, unlink returned 127840256 B; mapped reusable hard link; both read-only fscks and all workers 0
+PASS candidate: fresh 138465980 B interleaved column, hash after checked cold remount, unlink returned 138612736 B; mapped reusable hard link; both read-only fscks and all workers 0
