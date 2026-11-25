@@ -1,0 +1,22 @@
+{
+  "outcome": "operator stop, not a product or performance result",
+  "builder_commit": "5c4c54ec",
+  "process": "proc_2397",
+  "run_dir": "/mnt/nvme2n1/erikg/TAPEREADER/stream-builds/run-mJrBMU/100g",
+  "input_bytes": 100000000000,
+  "sort_workers": 4,
+  "cpu_set": "0-3",
+  "sort_grant_GiB": 156,
+  "cgroup_memory_max_GiB": 220,
+  "cgroup_memory_peak_bytes": 236223201280,
+  "swap_max_bytes": 0,
+  "keys_s": 1997.958,
+  "rank_s": 151.460,
+  "stop_phase": "stream+finish",
+  "utc_service_started": "2026-11-25T12:01:25Z",
+  "utc_service_exited": "2026-11-25T14:37:25Z",
+  "memphis_service_exited": "2026-11-25T08:37:25-06:00",
+  "exit": 1,
+  "shutdown": "External monitor saw the stop file, sent TERM and timed out waiting 10 seconds. Service is inactive, with no remaining run cgroup. No index or completion receipt was published. Private scratch postings and chi bitmap remained after shutdown.",
+  "sha_postcheck": "not run"
+}
