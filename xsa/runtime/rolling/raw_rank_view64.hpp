@@ -26,7 +26,7 @@ inline U extent(Big n){need(n>0 && n<=PTRDIFF_MAX,"address extent");return U(n);
 inline U budget(U n,U m,U team){need(n && m && m<=n && team && team<=64 && Big(m)*8<=INT64_MAX,"invalid geometry");
  Big p=width(n),r=width(m),blocks=divup(m,B);
  return extent(n+(p+r)*m+8*blocks+std::max(8*Big(divup(n,64)),p*m+16*blocks)+(4<<20)+team*(2<<20));}
-struct Stop {const char* path;U end;void check()const{if(std::time(nullptr)>=time_t(end)||access(path,F_OK)==0||errno!=ENOENT)refuse("deadline/stop");}};
+struct Stop {const char* path;U end;void check()const{if(!path)return;if(std::time(nullptr)>=time_t(end)||access(path,F_OK)==0||errno!=ENOENT)refuse("deadline/stop");}};
 struct Mem {
  void* ptr=MAP_FAILED;U size=0;
  Mem()=default;Mem(const Mem&)=delete;~Mem(){drop();}

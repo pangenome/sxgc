@@ -560,7 +560,7 @@ pub fn encode(starts: &mut dyn Iterator<Item = u64>, text_len: u64, stride: u64,
         if docs % stride == 0 {
             samples.push(s);
             if docs > 0 {
-                block_offs.push(gaps.len() as u32);
+                block_offs.push(u32::try_from(gaps.len()).unwrap_or_else(|_| die("m15 gap offset exceeds u32")));
             }
         }
         let gap = s - prev.unwrap_or(0);
@@ -817,6 +817,9 @@ impl Iterator for StartsIter {
                     ));
                 }
                 *start += delta;
+                if (at == 0 && *start != 0) || *start >= u64_at(map, 24) {
+                    die("DOCSTARTS: XSEP start outside its declared corpus");
+                }
                 *i += 1;
                 if at % *stride == 0 && *start != u64_at(map, *anchors_off + 8 * (at / *stride) as usize) {
                     die(&format!(

@@ -6,7 +6,27 @@
 #include <string_view>
 using namespace finiteemit;
 static U decimal(const char* x){U v=0;std::string_view s(x);auto [p,e]=std::from_chars(s.data(),s.data()+s.size(),v);need(p==s.data()+s.size() && e==std::errc{},"unsigned decimal");return v;}
-int main(int ac,char** av){bool cached=ac>1 && std::string_view(av[1])=="cached";bool staged=ac>1 && std::string_view(av[1])=="staged-epochs";bool epochs=staged || (ac>1 && std::string_view(av[1])=="epochs");bool tiled=epochs || cached || (ac>1 && std::string_view(av[1])=="tiled");bool sampled=tiled || (ac>1 && std::string_view(av[1])=="sampled");if(sampled){--ac;++av;}if(ac==(epochs?10:9) && std::string_view(av[1])=="plan"){U n=decimal(av[2]),m=decimal(av[3]),k=decimal(av[4]),u=decimal(av[5]),nb=decimal(av[6]),slots=decimal(av[7]),t=decimal(av[8]);
+// Private production CLI: only the constructor, no deadline, benchmark or readback.
+static int stream(char** av){
+ rawview::Input raw(av[2]),inverse(av[3]);U n=raw.size,m=inverse.size/8,t=decimal(av[5]),memory=decimal(av[6]),cap=decimal(av[7]);
+ need(n<(U(1)<<43) && inverse.size%8==0 && t>=1 && t<=64 && t<=U(omp_get_num_procs()),"stream extent or thread count");
+ need(rawview::budget(n,m,t)<=memory && cap>0,"raw rank view exceeds sort memory or no posting space");
+ signal(SIGPIPE,SIG_DFL);omp_set_dynamic(0);rawview::Stop stop{nullptr,0};
+ rawview::Mem text;text.open(n,raw.fd);rawview::View view(text.bytes(),n,m,t,stop);view.build(inverse.fd,memory);
+ Route ix(view,text.bytes(),n,m,t,stop);routedirect::Direct router(ix);
+ // Plan from THIS parse, not an archive. Leave room for the packed rank view;
+ // the census determines the largest indivisible range before the first row.
+ U d=view.stats.owned,pg=narrow(Big(m)+(d-view.stats.groups)/PAGE);
+ Big fixed=Emit::emit_arrays(n,m,t,1,pg,0)+finiteepoch::emit_extra(1);
+ need(fixed<memory,"insufficient sort memory for row emission; increase --sort-memory");
+ U slots=std::min({d,std::max<U>(65536,n/100),U((memory-fixed)/16)});
+ need(slots,"no descriptor space; increase --sort-memory");
+ router.prepare(std::max<U>(1,slots/(2*t)),memory,inverse.size,routedirect::RoutingMemory::staged_epochs,finiteepoch::route_extra(),inverse.size+cap);
+ slots=std::max(slots,router.max_desc);
+ Emit emit(ix,&router.skip);finiteepoch::emit(STDOUT_FILENO,av[4],emit,router,slots,memory,inverse.size,cap);
+ return 0;
+}
+int main(int ac,char** av){if(ac==8 && std::string_view(av[1])=="stream")return stream(av);bool cached=ac>1 && std::string_view(av[1])=="cached";bool staged=ac>1 && std::string_view(av[1])=="staged-epochs";bool epochs=staged || (ac>1 && std::string_view(av[1])=="epochs");bool tiled=epochs || cached || (ac>1 && std::string_view(av[1])=="tiled");bool sampled=tiled || (ac>1 && std::string_view(av[1])=="sampled");if(sampled){--ac;++av;}if(ac==(epochs?10:9) && std::string_view(av[1])=="plan"){U n=decimal(av[2]),m=decimal(av[3]),k=decimal(av[4]),u=decimal(av[5]),nb=decimal(av[6]),slots=decimal(av[7]),t=decimal(av[8]);
  need(n<(U(1)<<43) && k && k<=m && k<=u && u<=n && slots && slots<=u && nb && (sampled || nb<=CELL),"plan geometry");U pg=narrow(Big(m)+(u-k)/PAGE);
  if(sampled){U vmax=narrow(Big(pg)*PAGE),desired=std::min(routedirect::MAX_BANDS,divup(u,nb)),other=epochs?decimal(av[9]):narrow(8*Big(m)+(4<<20));need(other>=8*m && Big(other)<2*Big(n),"direct other files");U limit=epochs?desired:routedirect::allowed(vmax,u,nb,t,narrow(2*Big(n)-other));
   U route=narrow(routedirect::Direct::work_arrays(n,m,t,desired,pg,std::min(u,desired*routedirect::OVER))+(epochs?finiteepoch::route_extra():0)),emit=narrow(Emit::emit_arrays(n,m,t,desired,pg,slots)+8*Big(desired)+(tiled?Emit::tile_bytes(slots,t):0)+(cached?t*finitecache::PER_LANE:0)+(epochs?finiteepoch::emit_extra(desired):0));

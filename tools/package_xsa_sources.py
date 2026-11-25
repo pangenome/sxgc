@@ -16,7 +16,9 @@ PATTERNS = ('bit6/*.hpp', 'bit6/binbwt_slice.h', 'bit6/durable_piece.h', 'bit6/p
             'bit6/pfp_ds_vendor/**/*.hpp',
             'bit6/chi_rspace_dump.cpp', 'bit6/rpfbwt_endpoints.cpp',
             'bit6/chunk_frontend.cpp', 'bit6/cross_lcp_merge.cpp',
-            'bit6/xsa_finish.cpp', 'bit6/check_pieces.c',
+            # The maintained finisher (including the stream input) lives in
+            # xsa/runtime/bit6, not the older standalone bit6/xsa_finish.cpp.
+            'bit6/check_pieces.c',
             'bit6/third_party/libsais/*',
             'bit6/sxi_write.cpp', 'bit6/sxi_text_audit.cpp', 'bit6/phi_inverse_heads.cpp',
             'tools/binbwt/stream_vs_bwt.cpp', 'tools/binbwt/sa_check.cpp',

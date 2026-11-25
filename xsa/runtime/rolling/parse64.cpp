@@ -27,7 +27,7 @@ static_assert(sizeof(size_t)==8 && sizeof(off_t)==8 && std::endian::native==std:
 static void need(bool ok,const char* why){if(!ok)throw std::runtime_error(why);}
 static U number(const char*s){need(*s,"empty integer");U v=0;for(;*s;++s){need(*s>='0' && *s<='9',"decimal integer");unsigned d=*s-'0';need(v<=(UINT64_MAX-d)/10,"integer overflow");v=v*10+d;}return v;}
 static const char* flag;static U deadline;
-static void guard(){if(time(nullptr)>=time_t(deadline) || faccessat(AT_FDCWD,flag,F_OK,0)==0 || errno!=ENOENT){std::fprintf(stderr,"STOP parse64 deadline/flag\n");std::_Exit(75);}}
+static void guard(){if(!flag)return;if(time(nullptr)>=time_t(deadline) || faccessat(AT_FDCWD,flag,F_OK,0)==0 || errno!=ENOENT){std::fprintf(stderr,"STOP parse64 deadline/flag\n");std::_Exit(75);}}
 static double cpu(){timespec t{};need(!clock_gettime(CLOCK_PROCESS_CPUTIME_ID,&t),"process clock");return t.tv_sec+t.tv_nsec*1e-9;}
 struct Map{void*p=MAP_FAILED;size_t bytes=0;int fd=-1;Map()=default;Map(const Map&)=delete;~Map(){release();}void release(){if(p!=MAP_FAILED){munmap(p,bytes);p=MAP_FAILED;}if(fd>=0){close(fd);fd=-1;}}
  void file(const char*path){fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK);struct stat s{};need(fd>=0 && !fstat(fd,&s) && S_ISREG(s.st_mode) && s.st_size>0,"expected nonempty regular file");bytes=s.st_size;p=mmap(nullptr,bytes,PROT_READ,MAP_PRIVATE,fd,0);need(p!=MAP_FAILED,"file mapping");}
@@ -49,7 +49,7 @@ static int team(U q){need(q>=1 && q<=64 && q<=U(omp_get_num_procs()),"invalid wo
 struct Out{std::string tmp,dest;int fd;Out(const char*path):tmp(std::string(path)+".partial"),dest(path){need(!fs::exists(dest),"output exists");fd=open(tmp.c_str(),O_CREAT|O_EXCL|O_NOFOLLOW|O_WRONLY|O_CLOEXEC,0600);need(fd>=0,"create exclusive partial output");}
  ~Out(){if(fd>=0)close(fd);}void put(const void*p,size_t n){auto b=(const char*)p;while(n){guard();ssize_t r=write(fd,b,std::min(n,size_t(4<<20)));if(r<0 && errno==EINTR)continue;need(r>0,"output write");b+=r;n-=r;}}
  void finish(){guard();need(!fsync(fd),"fsync output");need(!close(fd),"close output");fd=-1;guard();need(!link(tmp.c_str(),dest.c_str()),"exclusive final output");need(!unlink(tmp.c_str()),"retire partial name");}};
-static void ranks(const char*input,const char*output,U workers,U grant){int nt=team(workers);Map src;src.file(input);need(!(src.bytes%8),"partial 64-bit key");U n=src.bytes/8,peak=bytes_for(n,workers);need(peak<=grant,"rank array grant exceeded");guard();auto keys=(const U*)src.p;
+static void ranks(const char*input,const char*output,U workers,U grant,bool certify=true){int nt=team(workers);Map src;src.file(input);need(!(src.bytes%8),"partial 64-bit key");U n=src.bytes/8,peak=bytes_for(n,workers);need(peak<=grant,"rank array grant exceeded");guard();auto keys=(const U*)src.p;
  double start=omp_get_wtime(),c0=cpu();Map a,b;a.alloc(16*Big(n));b.alloc(16*Big(n));auto v=(Entry*)a.p,w=(Entry*)b.p;U high=0,varied=0;U first=keys[0];
 #pragma omp parallel for schedule(static) reduction(+:high) reduction(|:varied)
  for(U i=0;i<n;++i){U key=keys[i];v[i]={key,i};high+=key>UINT32_MAX;varied|=key^first;}
@@ -85,6 +85,11 @@ static void ranks(const char*input,const char*output,U workers,U grant){int nt=t
   active=left;depth*=2;++rounds;std::printf("REFINE depth=%llu unresolved=%llu max_group=%llu\n",(unsigned long long)depth,(unsigned long long)active,(unsigned long long)maxgroup);std::fflush(stdout);
  }
  double refine=omp_get_wtime()-t0;links.release();guard();double tc=omp_get_wtime();int bad=0;
+ if(!certify){ // Temporary column: the next stage runs after successful close.
+  a.release();b.release();src.release();int f=open(output,O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC,0600);need(f>=0,"create inverse ranks");
+  for(U at=0;at<8*n;){auto len=std::min<U>(8*n-at,4<<20);ssize_t z=write(f,(const char*)r+at,len);if(z<0 && errno==EINTR)continue;need(z>0,"write inverse ranks");at+=z;}
+  need(!close(f),"close inverse ranks");return;
+ }
 #pragma omp parallel for schedule(static) reduction(|:bad)
  for(U j=0;j<n;++j){U p=v[j].pos;if(p>=n || r[p]!=j+1){bad=1;continue;}if(j){U q=v[j-1].pos;if(q>=n){bad=1;continue;}U x=keys[q],y=keys[p];if(x>y || (x==y && (q+1<n?r[q+1]:0)>=(p+1<n?r[p+1]:0)))bad=1;}}
  need(!bad,"rank permutation or suffix recurrence");double cert=omp_get_wtime()-tc;a.release();b.release();src.release();guard();double tw=omp_get_wtime();Out out(output);out.put(r,8*n);out.finish();std::printf("PARSE64 rows=%llu key_bits=64 rank_bits=64 array_bound=%llu rounds=%llu initial_s=%.6f refine_s=%.6f certify_s=%.6f write_fsync_s=%.6f prepared_s=%.6f cpu_s=%.6f permutation_recurrence=1\n",(unsigned long long)n,(unsigned long long)peak,(unsigned long long)rounds,initial,refine,cert,omp_get_wtime()-tw,omp_get_wtime()-start,cpu()-c0);}
@@ -96,5 +101,5 @@ static void lift(const char*tape,const char*parse,const char*out,U k,U workers,U
 #pragma omp parallel for schedule(static) reduction(|:bad) reduction(+:high) reduction(max:maximum)
   for(U j=0;j<take;++j){U x=id[i+j];if(x>=k || ((x==eof)!=(i+j+1==n))){bad=1;continue;}U p=starts[x];buf[j]=p;high+=p>UINT32_MAX;maximum=std::max(maximum,p);}need(!bad,"invalid legacy occurrence");dest.put(buf.data(),8*take);i+=take;}
  dest.finish();std::printf("KEYS64 rows=%llu k=%llu max_key=%llu keys_above_u32=%llu packed_bytes=%zu\n",(unsigned long long)n,(unsigned long long)k,(unsigned long long)maximum,(unsigned long long)high,dict.bytes);}
-int main(int ac,char**av)try{std::string mode=ac>1?av[1]:"";if(ac==4 && mode=="plan"){std::printf("parse64_array_bound=%llu\n",(unsigned long long)bytes_for(number(av[2]),number(av[3])));return 0;}
+int main(int ac,char**av)try{std::string mode=ac>1?av[1]:"";if(ac==6 && mode=="inverse"){ranks(av[2],av[3],number(av[4]),number(av[5]),false);return 0;}if(ac==4 && mode=="plan"){std::printf("parse64_array_bound=%llu\n",(unsigned long long)bytes_for(number(av[2]),number(av[3])));return 0;}
  need((ac==8 && mode=="rank")||(ac==10 && mode=="lift"),"rank KEYS.u64 NEW_INVERSE.u64 THREADS ARRAY_BYTES STOP DEADLINE | lift DICT.packed PARSE.u32 NEW_KEYS.u64 K THREADS ARRAY_BYTES STOP DEADLINE | plan M THREADS");flag=av[ac-2];deadline=number(av[ac-1]);need(deadline<=INT64_MAX,"deadline extent");guard();if(mode=="rank")ranks(av[2],av[3],number(av[4]),number(av[5]));else lift(av[2],av[3],av[4],number(av[5]),number(av[6]),number(av[7]));return 0;}catch(const std::exception&e){std::fprintf(stderr,"parse64 refused: %s\n",e.what());return 75;}

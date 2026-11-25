@@ -30,6 +30,13 @@ xsa search pile.sxi2 --pattern " function " --corpus
 xsa mem    pile.sxi2 "the quick brown fox"          # maximal exact matches (widths + positions)
 ```
 
+For a raw corpus, the [streaming builder](docs/build-stream.md) writes the same
+boundary-aware v10 format from an ordered row pipe, using ordinary scratch files:
+
+```sh
+xsa build-stream corpus.bin --docs-map documents/ -T /scratch -o corpus.sxi2
+```
+
 ### One container format, and nothing else
 
 FORWARD-ONLY. We are the only consumer of this container family, so exactly ONE

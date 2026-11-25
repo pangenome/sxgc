@@ -1,0 +1,59 @@
+{
+  "name": "generated",
+  "product": "/mnt/nvme2n1/erikg/TAPEREADER/stream-builds/run-mJrBMU/generated/index.sxi2",
+  "bytes": 378392,
+  "input_bytes": 6311445,
+  "input": "/tmp/rolling-v10-product-4kNx5u/reference/raw",
+  "map": "/tmp/rolling-v10-product-4kNx5u/reference/map",
+  "sha256": "921f4e473e19fefcf8a7916d431c28694941323b6262ff109ae3c7c7820f19ab",
+  "matched_whole_product_sha": true,
+  "wall_s": 1.109328635968268,
+  "phases": {
+    "keys": 0.07,
+    "rank": 0.035,
+    "stream+finish": 0.838
+  },
+  "postcheck_s": 0.002990604378283024,
+  "memory_peak": 25600000,
+  "memory_stat_at_sampled_high": {
+    "anon": 21819392,
+    "file": 1814528,
+    "shmem": 0,
+    "slab": 249824
+  },
+  "peaks_sampled_bytes": {
+    "scratch_logical": 1795548,
+    "scratch_allocated": 1802240
+  },
+  "scratch_limit": 12622890,
+  "build_argv": [
+    "/mnt/nvme2n1/erikg/TAPEREADER/stream-builds/run-mJrBMU/xsa",
+    "build-stream",
+    "/tmp/rolling-v10-product-4kNx5u/reference/raw",
+    "--docs-map",
+    "/tmp/rolling-v10-product-4kNx5u/reference/map",
+    "-T",
+    "/mnt/nvme2n1/erikg/TAPEREADER/stream-builds/run-mJrBMU/generated/scratch",
+    "-o",
+    "/mnt/nvme2n1/erikg/TAPEREADER/stream-builds/run-mJrBMU/generated/index.sxi2",
+    "-j",
+    "4",
+    "-m",
+    "320M",
+    "-v"
+  ],
+  "clock": "build wall includes program startup/tool lookup/publication, excludes postcheck; regular-file scratch sampled every 0.1s; input and index excluded",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "cgroup_memory_max": "805306368",
+  "cgroup_cpu": "400000 100000",
+  "cgroup_swap": "0",
+  "io_before": null,
+  "io_after": null,
+  "utc": "2026-11-25T05:39:39.378959+00:00",
+  "memphis": "2026-11-24T23:39:39.378959-06:00"
+}

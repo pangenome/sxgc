@@ -87,6 +87,10 @@ for name, src in [('rpfbwt_endpoints', 'rpfbwt_endpoints.cpp'), ('slim_dump', 'c
 # (sdsl + divsufsort via the isolated rpfbwt deps); the v2 front door
 # (xsa build --v2-pipeline) runs it concurrent with the v2-emission merge.
 run('bash', repo/'tools/build_slim_dump.sh', bundle/'xsa_finish', 'bit6/xsa_finish.cpp', env=env)
+# Raw corpus -> lexical keys -> inverse parse ranks -> ordered row pipe.
+for tool, src in [('stream_keys', 'front64'), ('stream_rank', 'parse64'), ('stream_rows', 'finite_emit64')]:
+    run('g++', '-O3', '-std=c++20', '-fopenmp', '-pthread', repo/f'rolling/{src}.cpp',
+        '-lcrypto', '-o', bundle/tool, env=env)
 # Pieces gate (check_pieces): C, no deps. Replaces the Python M2 checker
 # (struct.unpack over GB-scale columns, 58s at 100MB, RAM = full columns);
 # streams band-by-band so it stays O(band) at pile scale.

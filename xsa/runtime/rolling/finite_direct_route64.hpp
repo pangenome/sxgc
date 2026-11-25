@@ -58,7 +58,7 @@ struct Direct {
  static Big work_arrays(U n,U m,U w,U nb,U pg,U sample,U active_bands){return Route::build_arrays(n,m,w,nb,pg,active_bands)+Big(nb)*(sizeof(Key)+8)+Big(sample)*(sizeof(Key)+8)+Big(CELL)*sizeof(Bounds)+Big(nb)*w*sizeof(Load)+(1<<20);}
  static Big work_arrays(U n,U m,U w,U nb,U pg,U sample){return work_arrays(n,m,w,nb,pg,sample,nb);}
  Big retained()const{return Big(pivots.capacity())*sizeof(Key)+Big(cells.capacity())*sizeof(Bounds);}
- void prepare(U target,U arrays,U other,RoutingMemory mode=RoutingMemory::whole_file,Big extra=0){double t=omp_get_wtime();stop.check();bool epochs=mode!=RoutingMemory::whole_file;need(!target_bands && target && other>=8*m && Big(other)<Big(2)*n && d>=view.stats.groups,"direct scratch inputs");
+ void prepare(U target,U arrays,U other,RoutingMemory mode=RoutingMemory::whole_file,Big extra=0,U scratch=0){double t=omp_get_wtime();stop.check();bool epochs=mode!=RoutingMemory::whole_file;need(!target_bands && target && other>=8*m && Big(other)<(scratch?Big(scratch):Big(2)*n) && d>=view.stats.groups,"direct scratch inputs");
   U pg=narrow(Big(m)+(d-view.stats.groups)/PAGE),vmax=narrow(Big(pg)*PAGE);target_bands=epochs?std::min(MAX_BANDS,divup(d,target)):allowed(vmax,d,target,team,narrow(2*Big(n)-other));file_upper=narrow(upper(vmax,d,target_bands,team));
   charged_encoder_bands=mode==RoutingMemory::staged_epochs?0:target_bands;
   ix.array_bound=narrow(work_arrays(n,m,team,target_bands,pg,std::min(d,OVER*target_bands),charged_encoder_bands)+extra);need(ix.array_bound<=arrays,"direct splitter/EF array grant");learn();double ts=omp_get_wtime();sample_s=ts-t;U nb=pivots.size()+1;

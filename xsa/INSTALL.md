@@ -31,7 +31,12 @@ The installed `MANIFEST.sha256` additionally records one `source_sha256`: a
 digest over the exact first-party source bytes the running build compiled,
 recomputed on every build and compared against nothing.
 
-Supported build host: native Linux x86_64, Python >= 3.12, GCC/G++ >= 10, CMake, Make,
+`xsa build-stream RAW --docs-map DIR -T /scratch -o INDEX` builds the raw-corpus
+v10 profile directly from ordered rows. This route needs no FUSE, systemd,
+reference index, source checkout or prebuilt helper. `-j` sets sort workers;
+`-m` accepts a sort-memory budget such as `3G` (not a total RSS limit).
+
+Supported build host: native Linux x86_64, Python >= 3.12, a C++20 GCC/G++ with OpenMP, CMake, Make,
 patch, and the zlib/OpenSSL development libraries used by PFP/htslib. Runtime:
 Python >= 3.12, GNU `/usr/bin/time`, and the standard native runtime libraries
 reported by `ldd` (libstdc++, libgomp, zlib, OpenSSL on the tested host). AGC ghost

@@ -3750,6 +3750,7 @@ struct ContainerOut {
     // it instead of trusting a length.
     durable_piece::Sha256 memberSha;
     bool resume = false;
+    bool hashDiagnostics = true; // unnecessary for the fresh ordered-row path
     std::string m1ShaHex() const { durable_piece::Sha256 t = memberSha; return t.finish(); }
     uint64_t headerBytes() const { return streaming ? 64 : 64 + 40 * uint64_t(count); }
     // RESUME: reopen the retained .partial for append instead of creating it.
@@ -3827,7 +3828,7 @@ struct ContainerOut {
         auto& m = ms.at(size_t(streamIdx));
         pf_pwrite_full_or_seek(fd, (const unsigned char*)p, z, m.offset + m.bytes);
         m.bytes += z; m.checksum = crc(m.checksum, (const unsigned char*)p, z);
-        if (streaming && int64_t(ms.size()) > streamIdx) memberSha.update(p, z);
+        if (hashDiagnostics && streaming && int64_t(ms.size()) > streamIdx) memberSha.update(p, z);
         extent = std::max(extent, m.offset + m.bytes);
         unsynced += z;
     }
@@ -3912,7 +3913,7 @@ struct ContainerOut {
             pf_pwrite_full_or_seek(fd, h.data(), h.size(), 0);
         }
         pf_check(fsync(fd) == 0, "fsync container");
-        if (streaming) {
+        if (streaming && hashDiagnostics) {
             // CONTAINER_FINAL: the published object's size and digest, measured
             // on the bytes that are now durable. Sequential read-back; this is
             // the only pass over the finished object.
@@ -5355,8 +5356,13 @@ static void fp_self_check(SlimFingerprint<CorpusText>& fh, const CorpusText& tex
     fprintf(stderr, "SLIM_PF_SELF_CHECK checks=%llu passed=1 source=corpus_adapter\n", (unsigned long long)checks);
 }
 
+#include "stream_run_index.hpp"
+#include "stream_finish.hpp"
+
 int main(int argc, char** argv) {
     try {
+        if (argc == 5 && std::string(argv[1]) == "--from-rows")
+            return finish_row_stream(argv[2], argv[3], argv[4]);
         if (argc == 2 && std::string(argv[1]) == "--benchmark-repair-chunks") return benchmark_repair_chunks();
         if (argc == 2 && std::string(argv[1]) == "--selftest-packed-bits") return selftest_packed_bits();
         if (argc == 2 && std::string(argv[1]) == "--selftest-lcp-runs") return selftest_lcp_runs();
@@ -5914,16 +5920,8 @@ int main(int argc, char** argv) {
         //   m1BlkHead/m1BlkLen  bitPos of each block boundary, nblocks+1 entries
         //   m1RunStart          row of run j*PF_RUNSTART_STRIDE
         //   m1DirRun/m1DirCum   per-symbol sampled (run index, count before it)
-        struct M1DirState {
+        struct M1DirState : StreamRunIndex {
             std::vector<uint64_t> blkHead, blkLen;
-            std::vector<uint64_t> runStart;
-            std::vector<uint64_t> dirRun[256], dirCum[256];
-            std::vector<uint16_t> dirStride[256];
-            uint64_t row = 0;                 // rows emitted so far (= run-start of the next run)
-            uint64_t occ[256] = {0};          // runs of c emitted so far
-            uint64_t cum[256] = {0};          // rows of c emitted so far
-            uint64_t lastSample[256] = {0};   // run index of the last sample of c
-            uint64_t lastSampleOcc[256] = {0};// occurrence index of the last sample of c
             void begin() { blkHead.clear(); blkLen.clear(); blkHead.push_back(0); blkLen.push_back(0); }
         };
         M1DirState m1dir;
@@ -6142,21 +6140,7 @@ int main(int argc, char** argv) {
                 if(spoolMode && !containerStream){spoolRuns.push_back(v.c);spoolRuns.push_back(v.len);}
                 m1Head->msb(m1Code.codes[v.c], unsigned(m1Code.lens[v.c]));
                 m1Len->gamma(v.len);
-                if (k % PF_RUNSTART_STRIDE == 0) m1dir.runStart.push_back(m1dir.row);
-                const unsigned ch = unsigned(v.c);
-                if (m1dir.occ[ch] % PF_RUNDIR_OCC == 0 || k - m1dir.lastSample[ch] >= PF_RUNDIR_GAP) {
-                    // close the previous sample's occurrence stride
-                    if (!m1dir.dirStride[ch].empty())
-                        m1dir.dirStride[ch].back() = uint16_t(m1dir.occ[ch] - m1dir.lastSampleOcc[ch]);
-                    m1dir.dirRun[ch].push_back(k);
-                    m1dir.dirCum[ch].push_back(m1dir.cum[ch]);
-                    m1dir.dirStride[ch].push_back(0);
-                    m1dir.lastSample[ch] = k;
-                    m1dir.lastSampleOcc[ch] = m1dir.occ[ch];
-                }
-                m1dir.row += v.len;
-                m1dir.cum[ch] += v.len;
-                ++m1dir.occ[ch];
+                m1dir.observe(k, v.c, v.len);
                 ++m1SweepRuns;
             }
             // XSA_FINISH_DUMP_STREAM (dev only): the emitted run stream, one
@@ -7817,108 +7801,8 @@ int main(int argc, char** argv) {
             // m12/m13 are stream-order directories either way: they are written
             // from the in-RAM sample state after m1 closes, never appended early.
             if (!m1Replay) {
-                // ---- m12: run-start samples. Entry j is the row of run
-                // j*PF_RUNSTART_STRIDE (the run's first row), plus a level-2 index
-                // every PF_RUNSTART_L2 runs so a lookup is a 16-entry bisect in a
-                // cache-resident array followed by a ~16-entry bisect in one window.
-                {
-                    const uint64_t cnt = m1dir.runStart.size();
-                    const uint64_t l2stride = PF_RUNSTART_L2;
-                    const uint64_t l2cnt = (rNorm + l2stride - 1) / l2stride;
-                    const uint64_t l2off = 64, l1off = l2off + 8 * l2cnt;
-                    container.begin(12, 112, cnt);
-                    container.num(PF_RUNSTART_STRIDE);
-                    container.num(cnt);
-                    container.num(rNorm);
-                    container.num(n);
-                    container.num(l2stride);
-                    container.num(l2cnt);
-                    container.num(l2off);
-                    container.num(l1off);
-                    NumBuf b12;
-                    for (uint64_t j = 0; j < l2cnt; ++j) {
-                        const uint64_t k = j * l2stride;
-                        pf_check(k % PF_RUNSTART_STRIDE == 0 && k / PF_RUNSTART_STRIDE < cnt,
-                                 "run-start level-2 index is not on a level-1 sample");
-                        b12.put(container, m1dir.runStart[k / PF_RUNSTART_STRIDE]);
-                    }
-                    for (uint64_t v : m1dir.runStart) b12.put(container, v);
-                    b12.flush(container);
-                    fprintf(stderr, "XSA_FINISH_M12_RUNSTARTS stride=%llu samples=%llu l2_stride=%llu "
-                            "l2_entries=%llu bytes=%llu\n",
-                            (unsigned long long)PF_RUNSTART_STRIDE, (unsigned long long)cnt,
-                            (unsigned long long)l2stride, (unsigned long long)l2cnt,
-                            (unsigned long long)(l1off + 8 * cnt));
-                }
-
-                // ---- m13: per-symbol sampled run directory. For each symbol c,
-                // entries (run k, rows of c before k) at every PF_RUNDIR_OCC-th
-                // occurrence of c and at any occurrence PF_RUNDIR_GAP runs past the
-                // previous sample, so the run-space scan from a sample to the query
-                // run is bounded by PF_RUNDIR_GAP runs. `stride` is the occurrence
-                // distance to the next sample: stride 1 means the next sample IS the
-                // next run of c, which lets a rank inside that span skip the scan
-                // entirely - the fast path that keeps a rare symbol O(log m).
-                {
-                    uint64_t total = 0, l2total = 0;
-                    for (unsigned c = 0; c < 256; ++c) {
-                        pf_check(m1dir.dirRun[c].size() == m1dir.dirCum[c].size() &&
-                                 m1dir.dirRun[c].size() == m1dir.dirStride[c].size(),
-                                 "run directory shape");
-                        if (!m1dir.dirRun[c].empty()) m1dir.dirStride[c].back() =
-                            uint16_t(m1dir.occ[c] - m1dir.lastSampleOcc[c]);
-                        total += m1dir.dirRun[c].size();
-                        l2total += (m1dir.dirRun[c].size() + PF_RUNDIR_L2 - 1) / PF_RUNDIR_L2;
-                    }
-                    const uint64_t countsOff = 72, offsOff = countsOff + 8 * 256;
-                    const uint64_t l2off = offsOff + 8 * 257, entoff = l2off + 16 * l2total;
-                    container.begin(13, 115, total);
-                    container.num(PF_RUNDIR_OCC);
-                    container.num(PF_RUNDIR_GAP);
-                    container.num(256);
-                    container.num(PF_RUNDIR_L2);
-                    container.num(total);
-                    container.num(n);
-                    container.num(rNorm);
-                    container.num(entoff);
-                    container.num(l2off);
-                    NumBuf b13;
-                    for (unsigned c = 0; c < 256; ++c) b13.put(container, m1dir.dirRun[c].size());
-                    uint64_t off = 0;
-                    for (unsigned c = 0; c < 256; ++c) { b13.put(container, off); off += m1dir.dirRun[c].size(); }
-                    pf_check(off == total, "run directory offsets");
-                    b13.put(container, total);
-                    b13.flush(container);
-                    // level-2 index: every PF_RUNDIR_L2-th entry of each symbol
-                    for (unsigned c = 0; c < 256; ++c) {
-                        const size_t m = m1dir.dirRun[c].size();
-                        for (size_t j = 0; j < m; j += PF_RUNDIR_L2) {
-                            b13.put(container, m1dir.dirCum[c][j]);
-                            b13.put(container, m1dir.dirRun[c][j]);       // full-width run index
-                        }
-                    }
-                    b13.flush(container);
-                    // codec 115 entries: {cum u64, run u64, stride u64}
-                    for (unsigned c = 0; c < 256; ++c) {
-                        const size_t m = m1dir.dirRun[c].size();
-                        // a symbol absent from the text has no entries (and needs
-                        // none: its C block is empty, so every rank of it is 0).
-                        pf_check(m > 0 || rs.totals[c] == 0,
-                                 "a symbol present in the BWT has no run-directory sample");
-                        for (size_t j = 0; j < m; ++j) {
-                            b13.put(container, m1dir.dirCum[c][j]);
-                            b13.put(container, m1dir.dirRun[c][j]);
-                            b13.put(container, m1dir.dirStride[c][j]);
-                        }
-                    }
-                    b13.flush(container);
-                    pf_check(container.ms.back().bytes == entoff + 24 * total, "m13 member size");
-                    fprintf(stderr, "XSA_FINISH_M13_RUNDIR occ_stride=%llu gap=%llu entries=%llu "
-                            "l2_stride=%llu l2_entries=%llu bytes=%llu\n",
-                            (unsigned long long)PF_RUNDIR_OCC, (unsigned long long)PF_RUNDIR_GAP,
-                            (unsigned long long)total, (unsigned long long)PF_RUNDIR_L2,
-                            (unsigned long long)l2total, (unsigned long long)(entoff + 24 * total));
-                }
+                pf_check(m1dir.row == n, "run directory row count");
+                m1dir.write(container, rNorm);
             }
             rM1.close(); rM1.report(rNorm, "runs");
         }

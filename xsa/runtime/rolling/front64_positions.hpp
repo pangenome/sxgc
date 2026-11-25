@@ -51,7 +51,7 @@ struct Project {
  }
  U pos(U entry) const{return entry&mask;}
 };
-static void run(const char* input,const fs::path& out,U threads,U grant,U scratch,bool link_manifest=false){
+static void run(const char* input,const fs::path& out,U threads,U grant,U scratch,bool link_manifest=false,const char* histogram=nullptr){
  ck(threads>=1 && threads<=64 && threads<=U(omp_get_num_procs()),"worker extent");
  omp_set_dynamic(0);omp_set_num_threads(int(threads));int actual=0;
 #pragma omp parallel
@@ -67,6 +67,7 @@ static void run(const char* input,const fs::path& out,U threads,U grant,U scratc
  double t0=omp_get_wtime();Bits starts(n);Project project(n);
  auto prefix=[&](U p){U bytes=0;std::memcpy(&bytes,raw+p,std::min<U>(8,n-p));return __builtin_bswap64(bytes);};
  std::vector<std::array<U,BINS>> hist(threads);std::vector<U> count(threads),base(threads);
+ std::vector<std::array<U,256>> alphabet(histogram ? threads : 0);
  // Disjoint bitmap words, one pass over possible FNV starts. Use the same lane cuts when scattering.
 #pragma omp parallel
  {
@@ -76,7 +77,7 @@ static void run(const char* input,const fs::path& out,U threads,U grant,U scratc
    starts.before[b]=local;
    for(U w=b*PER;w<std::min(starts.words,(b+1)*PER);++w){
     U bits=0,hi=std::min(n,WORD*(w+1));
-    for(U p=WORD*w;p<hi;++p){if(p==0 || (n-p>=W && trigger(raw+p))){
+    for(U p=WORD*w;p<hi;++p){if(histogram)++alphabet[t][raw[p]];if(p==0 || (n-p>=W && trigger(raw+p))){
       bits|=U(1)<<(p%WORD);++h[prefix(p)>>52];++local;
     }}starts.bits[w]=bits;
    }
@@ -84,7 +85,13 @@ static void run(const char* input,const fs::path& out,U threads,U grant,U scratc
   count[t]=local;
  }
  U m=0;for(U t=0;t<threads;++t){base[t]=m;m+=count[t];}starts.before[starts.blocks]=m;
- U arrays=scheduled(n,m,threads);ck(arrays<=grant && 8*Big(m)<=std::min<Big>(scratch,2*Big(n)),"front arrays or key column exceed grant");
+ U arrays=scheduled(n,m,threads);ck(arrays<=grant,"key sort exceeds sort memory");
+ if(histogram){ // Only the virtual lexical addresses are needed to sort the parse.
+  ck(16*Big(m)+2048<=scratch,"keys and inverse exceed scratch budget");
+  std::array<U,256> a{};for(const auto& lane:alphabet)for(unsigned c=0;c<256;++c)a[c]+=lane[c];
+  ck(std::count(a.begin(),a.end(),0)>0,"all 256 byte values are present: v10 needs a spare END code");
+  int f=file(histogram,sizeof(a));writeat(f,(const uint8_t*)a.data(),sizeof(a),0);ck(!close(f),"close alphabet histogram");
+ }else ck(8*Big(m)<=std::min<Big>(scratch,2*Big(n)),"key column exceeds grant");
  std::array<U,BINS+1> bins{},heads_at{},col{};U present=0,maxbin=0;
  for(U b=0;b<BINS;++b){U s=bins[b];for(auto& h:hist){U c=h[b];h[b]=s;s+=c;}bins[b+1]=s;
   U span=s-bins[b];present+=span!=0;maxbin=std::max(maxbin,span);heads_at[b+1]=heads_at[b]+ceildiv(span,WORD);
@@ -123,15 +130,20 @@ static void run(const char* input,const fs::path& out,U threads,U grant,U scratc
   }}col[b+1]=bytes;meters[b].order_lane=omp_get_thread_num();meters[b].sort=sorted-begin;meters[b].label=omp_get_wtime()-sorted;
  }
  double ordered=omp_get_wtime();Big total=0;for(U b=1;b<=BINS;++b){total+=col[b];ck(total<=INT64_MAX,"dictionary extent");col[b]=U(total);}
- ck(term==1 && total==Big(owned)+16*Big(k)-8 && total+8*Big(m)+(link_manifest?48:0)<=std::min<Big>(scratch,2*Big(n)),"column scratch/geometry");
- guard();fs::path partial=out;partial+=".partial";ck(fs::create_directory(partial),"fresh partial directory");int dict=file(partial/"dictionary.lex64",U(total));double td=omp_get_wtime();
+ ck(term==1 && total==Big(owned)+16*Big(k)-8,"lexical key geometry");
+ guard();fs::path partial=out;partial+=".partial";double td=omp_get_wtime();
+ if(!histogram){
+ ck(total+8*Big(m)+(link_manifest?48:0)<=std::min<Big>(scratch,2*Big(n)),"column scratch");
+ ck(fs::create_directory(partial),"fresh partial directory");int dict=file(partial/"dictionary.lex64",U(total));
 #pragma omp parallel for schedule(dynamic,1)
  for(U b=0;b<BINS;++b){double begin=omp_get_wtime();Buffer dest{dict,col[b],0,{}};U lo=bins[b],hi=bins[b+1];
   const U* head=heads+heads_at[b];for(U j=lo;j<hi;++j){if(!(j%65536))guard();if((head[(j-lo)/WORD]>>((j-lo)%WORD))&1){
     U p=project.pos(entries[j]),next=starts.following(p),len=length(p,next),tag=(len<<1)|U(next==n);dest.put(&tag,8);dest.put(raw+p,len);
   }}dest.flush();ck(dest.at==col[b+1],"dictionary range end");meters[b].publish_lane=omp_get_thread_num();meters[b].publish=omp_get_wtime()-begin;
  }
- double published=omp_get_wtime();finish(dict);ck(!munmap(const_cast<uint8_t*>(raw),n) && !close(fd),"release raw before scatter");double tw=omp_get_wtime();
+ finish(dict);
+ }
+ double published=omp_get_wtime();ck(!munmap(const_cast<uint8_t*>(raw),n) && !close(fd),"release raw before scatter");double tw=omp_get_wtime();
  // The text map is gone. Recompute just the distinct record spans from the start bitmap, not their contents.
  auto keys=(U*)anon(8*m);U high_keys=0;
 #pragma omp parallel for schedule(dynamic,1) reduction(+:high_keys)
@@ -141,7 +153,9 @@ static void run(const char* input,const fs::path& out,U threads,U grant,U scratc
    }U ordinal=starts.ordinal(p);ck(ordinal<m,"text ordinal extent");keys[ordinal]=key;high_keys+=key>UINT32_MAX;
   }ck(at==col[b+1],"scatter range end");
  }
- munmap(entries,8*m);munmap(heads,8*heads_at.back());int keyfd=file(partial/"keys.u64",8*m);writeat(keyfd,(const uint8_t*)keys,8*m,0);finish(keyfd);munmap(keys,8*m);syncdir(partial);guard();
+ munmap(entries,8*m);munmap(heads,8*heads_at.back());int keyfd=file(histogram ? out : partial/"keys.u64",8*m);writeat(keyfd,(const uint8_t*)keys,8*m,0);
+ if(histogram){ck(!close(keyfd),"close keys");munmap(keys,8*m);return;}
+ finish(keyfd);munmap(keys,8*m);syncdir(partial);guard();
  if(link_manifest){
   // Some quota filesystems have hard links but no RENAME_NOREPLACE for a
   // directory. OUT in this explicit ABI is an exclusive regular-file commit

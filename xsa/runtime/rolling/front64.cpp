@@ -23,7 +23,7 @@ static_assert(sizeof(off_t)==8 && sizeof(size_t)==8 && std::endian::native==std:
 static void ck(bool ok,const char*why){if(!ok)fail(why);}
 static U num(const char*s){U v=0;ck(*s,"empty integer");for(;*s;++s){ck(*s>='0' && *s<='9',"nondecimal integer");U digit=*s-'0';ck(v<=(UINT64_MAX-digit)/10,"integer overflow");v=v*10+digit;}return v;}
 static const char*flag;static U deadline;
-static void guard(){if(std::time(nullptr)>=time_t(deadline) || !access(flag,F_OK) || errno!=ENOENT)fail("deadline/stop");}
+static void guard(){if(!flag)return;if(std::time(nullptr)>=time_t(deadline) || !access(flag,F_OK) || errno!=ENOENT)fail("deadline/stop");}
 static constexpr U BINS=4096,W=8,BLOCK=1<<20;
 struct Entry{U prefix,ord;};static_assert(sizeof(Entry)==16);
 static U budget(U n,U m,U t){Big x=n+24*Big(m)+8+(4ull<<20)+t*(2ull<<20);ck(n && m && m<=n && t>=1 && t<=64 && x<=PTRDIFF_MAX,"address extent");return U(x);}
@@ -117,6 +117,9 @@ static void front(const char*input,const fs::path&out,U threads,U grant,U scratc
 }
 #include "front64_positions.hpp"
 int main(int ac,char**av)try{
+ if(ac==8 && std::string(av[1])=="keys"){ // RAW KEYS HISTOGRAM THREADS MEMORY SCRATCH
+  posfront::run(av[2],av[3],num(av[5]),num(av[6]),num(av[7]),false,av[4]);return 0;
+ }
  if(ac==5 && std::string(av[1])=="plan-pos"){std::printf("front64_position_bound=%llu\n",(unsigned long long)posfront::scheduled(num(av[2]),num(av[3]),num(av[4])));return 0;}
  if(ac==9 && (std::string(av[1])=="pos" || std::string(av[1])=="pos-manifest")){flag=av[7];deadline=num(av[8]);ck(deadline<=INT64_MAX,"deadline extent");guard();posfront::run(av[2],av[3],num(av[4]),num(av[5]),num(av[6]),std::string(av[1])=="pos-manifest");return 0;}
  if(ac==5 && std::string(av[1])=="plan"){ std::printf("front64_array_bound=%llu\n",(unsigned long long)budget(num(av[2]),num(av[3]),num(av[4])));return 0;}ck(ac==8,"front64 [pos] RAW NEW_DIR THREADS ARRAY_BYTES SCRATCH_BYTES STOP DEADLINE or plan|plan-pos N M THREADS");flag=av[6];deadline=num(av[7]);ck(deadline<=INT64_MAX,"deadline extent");guard();front(av[1],av[2],num(av[3]),num(av[4]),num(av[5]));return 0;}catch(const std::exception&e){fail(e.what());}
