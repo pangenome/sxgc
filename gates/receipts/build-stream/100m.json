@@ -1,0 +1,59 @@
+{
+  "name": "100m",
+  "product": "/mnt/nvme2n1/erikg/TAPEREADER/stream-builds/run-mJrBMU/100m/index.sxi2",
+  "bytes": 87192432,
+  "input_bytes": 100000503,
+  "input": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-map100-S4bZm0/inputs/raw",
+  "map": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-map100-S4bZm0/inputs/map",
+  "sha256": "eac582ca1e51ead51239b60b1506c44cacf9b6713b675b16003f57fc4f3f98bd",
+  "matched_whole_product_sha": true,
+  "wall_s": 89.07396872062236,
+  "phases": {
+    "keys": 0.704,
+    "rank": 0.116,
+    "stream+finish": 88.088
+  },
+  "postcheck_s": 0.06990831065922976,
+  "memory_peak": 305131520,
+  "memory_stat_at_sampled_high": {
+    "anon": 108822528,
+    "file": 193490944,
+    "shmem": 0,
+    "slab": 445656
+  },
+  "peaks_sampled_bytes": {
+    "scratch_logical": 112199852,
+    "scratch_allocated": 112205824
+  },
+  "scratch_limit": 200001006,
+  "build_argv": [
+    "/mnt/nvme2n1/erikg/TAPEREADER/stream-builds/run-mJrBMU/xsa",
+    "build-stream",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-map100-S4bZm0/inputs/raw",
+    "--docs-map",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-map100-S4bZm0/inputs/map",
+    "-T",
+    "/mnt/nvme2n1/erikg/TAPEREADER/stream-builds/run-mJrBMU/100m/scratch",
+    "-o",
+    "/mnt/nvme2n1/erikg/TAPEREADER/stream-builds/run-mJrBMU/100m/index.sxi2",
+    "-j",
+    "4",
+    "-m",
+    "320M",
+    "-v"
+  ],
+  "clock": "build wall includes program startup/tool lookup/publication, excludes postcheck; regular-file scratch sampled every 0.1s; input and index excluded",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "cgroup_memory_max": "2147483648",
+  "cgroup_cpu": "400000 100000",
+  "cgroup_swap": "0",
+  "io_before": null,
+  "io_after": null,
+  "utc": "2026-11-25T05:41:17.289960+00:00",
+  "memphis": "2026-11-24T23:41:17.289960-06:00"
+}
