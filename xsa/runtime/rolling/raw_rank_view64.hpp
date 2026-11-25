@@ -2,6 +2,7 @@
 // Parse-start navigation from the immutable RAW text and a streaming one-based inverse.u64 only.
 // Linux, 64-bit file/address space. No dictionary/key column is opened; no byte SA or rank spool.
 #include "view64_proof.hpp"
+#include "pfp_trigger.hpp"
 #include <array>
 #include <bit>
 #include <cerrno>
@@ -15,7 +16,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 namespace rawview {
-using U=uint64_t;using Big=__uint128_t;constexpr U W=8,B=64;
+using U=uint64_t;using Big=__uint128_t;constexpr U W=xsa_pfp::width,B=64;
 static_assert(sizeof(size_t)==8 && sizeof(off_t)==8 && std::endian::native==std::endian::little);
 [[noreturn]] inline void refuse(const char* s){std::fprintf(stderr,"raw_rank_view64 refused: %s\n",s);std::_Exit(75);}
 inline void need(bool x,const char* s){if(!x)refuse(s);}
@@ -53,7 +54,7 @@ struct Reader {
    for(U done=0;done<8*len;){auto z=pread(fd,(uint8_t*)buf.data()+done,8*len-done,8*pos+done);if(z<0 && errno==EINTR)continue;need(z>0,"short rank input");done+=z;}pos+=len;}
   return buf[cursor++];}
 };
-inline bool trigger(const uint8_t* p){U h=1469598103934665603ull;for(U x=0;x<W;++x)h=(h^p[x])*1099511628211ull;return h%31==0;}
+using xsa_pfp::trigger;
 struct Stats {
  U groups=0,owned=0,tape=0,high=0,max_h=0;Big extended=0,carried=0;
  double scan=0,scatter=0,groups_s=0,plcp=0,minima=0,build=0;

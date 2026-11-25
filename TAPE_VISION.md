@@ -50,11 +50,16 @@ anything; we choose the level of the onion with a census.
   the machine writes is positions, IDs, and references (8-16 B each).
   No expansion: peak disc ~3.5 TB at the pile, phase inputs deleted as
   outputs complete, the statvfs governor refuses with numbers.
-- NO-CROSS. Documents are independent parse units at every level;
-  comparisons end at document ends.
-- THE TRIGGER. One-sided (strictly smaller than the w preceding k-mers,
-  suppressed in each phrase's first w positions) — provably prefix-free;
-  the walk remains only as the doc-end residual's safety net, journaled.
+- NO-CROSS FOR DOCUMENT CONTEXT. The existing v10 suffix order is over
+  one finite raw stream with one virtual END. XSEP supplies the document
+  starts and clamps document context; it does not insert parse anchors or
+  terminators into that stream.
+- THE TRIGGER. Use a fixed set of complete windows (byte level: the
+  existing modulo-31 hash on 8 bytes). Accept *every* occurrence,
+  including overlapping hits. I/O sizes never force logical cuts. The
+  [one-sided nonoverlapping prototype's natural triggers cannot be used
+  here](docs/pfp-component-inventory.md); its whole-phrase argument did
+  not establish prefix-freeness for interior representatives.
 - NO DECISIONS IN THE BLADE. Uniform strokes; level selection is a
   one-time corpus-level census measurement, never a per-row branch.
 - NO SIGNALS. Files and exit codes. Refusals die with numbers.

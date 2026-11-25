@@ -24,12 +24,13 @@ static void ck(bool ok,const char*why){if(!ok)fail(why);}
 static U num(const char*s){U v=0;ck(*s,"empty integer");for(;*s;++s){ck(*s>='0' && *s<='9',"nondecimal integer");U digit=*s-'0';ck(v<=(UINT64_MAX-digit)/10,"integer overflow");v=v*10+digit;}return v;}
 static const char*flag;static U deadline;
 static void guard(){if(!flag)return;if(std::time(nullptr)>=time_t(deadline) || !access(flag,F_OK) || errno!=ENOENT)fail("deadline/stop");}
-static constexpr U BINS=4096,W=8,BLOCK=1<<20;
+#include "pfp_trigger.hpp"
+static constexpr U BINS=4096,W=xsa_pfp::width,BLOCK=1<<20;
 struct Entry{U prefix,ord;};static_assert(sizeof(Entry)==16);
 static U budget(U n,U m,U t){Big x=n+24*Big(m)+8+(4ull<<20)+t*(2ull<<20);ck(n && m && m<=n && t>=1 && t<=64 && x<=PTRDIFF_MAX,"address extent");return U(x);}
 static U cut(U n,U i,U q){return U(Big(n)*i/q);}
 static void* anon(U bytes){void*p=mmap(nullptr,bytes,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);ck(p!=MAP_FAILED,"array mapping");return p;}
-static bool trigger(const uint8_t*w){U h=1469598103934665603ull;for(U i=0;i<W;++i)h=(h^w[i])*1099511628211ull;return h%31==0;}
+using xsa_pfp::trigger;
 static void writeat(int fd,const uint8_t*data,U len,U at){while(len){guard();ssize_t z=pwrite(fd,data,std::min<U>(len,4<<20),at);if(z<0 && errno==EINTR)continue;ck(z>0,"short file write");at+=z;len-=z;data+=z;}}
 struct Buffer{int fd;U at,used=0;std::array<uint8_t,65536>b;
  void flush(){if(used)writeat(fd,b.data(),used,at);at+=used;used=0;}
