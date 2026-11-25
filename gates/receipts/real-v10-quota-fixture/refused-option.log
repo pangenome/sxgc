@@ -1,0 +1,9 @@
+fuse: unknown option `rw+'
+Traceback (most recent call last):
+  File "/home/erikg/sxgc/gates/overlap_real_v10_volume_test.py", line 43, in <module>
+    if __name__=='__main__':main(Path(sys.argv[1]))
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/erikg/sxgc/gates/overlap_real_v10_volume_test.py", line 22, in main
+    if p.poll() is not None:raise RuntimeError('unprivileged private fuse2fs mount refused, rc='+str(p.returncode))
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: unprivileged private fuse2fs mount refused, rc=0

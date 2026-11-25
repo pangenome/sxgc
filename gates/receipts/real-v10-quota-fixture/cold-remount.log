@@ -1,0 +1,1 @@
+PASS: preallocated NVMe, exact guest fit, cold offline backing, remount and retirement; all helpers 0

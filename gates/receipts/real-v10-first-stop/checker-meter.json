@@ -1,0 +1,43 @@
+{
+  "after": {
+    "cores": [
+      4
+    ],
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 6875589\nuser_usec 5843851\nsystem_usec 1031738\ncore_sched.force_idle_usec 0\nnr_periods 537\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "146800640",
+    "memory.peak": "112578560",
+    "memory.swap.max": "0"
+  },
+  "before": {
+    "cores": [
+      4
+    ],
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 58812\nuser_usec 41866\nsystem_usec 16945\ncore_sched.force_idle_usec 0\nnr_periods 1\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "146800640",
+    "memory.peak": "10932224",
+    "memory.swap.max": "0"
+  },
+  "cmd": [
+    "/tmp/real-v10-tools-Fch4DR/witness",
+    "--real-v10-reference-100m",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/in/checker",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/stop.requested",
+    "1795568756"
+  ],
+  "wall_s": 53.56947555206716,
+  "worker": {
+    "cpu_s": 6.8159339999999995,
+    "major_faults": 475,
+    "maxrss_bytes": 105058304,
+    "minor_faults": 1842,
+    "rc": 75,
+    "ru_inblock_bytes": 100003840,
+    "ru_oublock_bytes": 0
+  }
+}

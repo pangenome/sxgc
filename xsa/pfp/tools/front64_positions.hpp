@@ -51,7 +51,7 @@ struct Project {
  }
  U pos(U entry) const{return entry&mask;}
 };
-static void run(const char* input,const fs::path& out,U threads,U grant,U scratch){
+static void run(const char* input,const fs::path& out,U threads,U grant,U scratch,bool link_manifest=false){
  ck(threads>=1 && threads<=64 && threads<=U(omp_get_num_procs()),"worker extent");
  omp_set_dynamic(0);omp_set_num_threads(int(threads));int actual=0;
 #pragma omp parallel
@@ -123,7 +123,7 @@ static void run(const char* input,const fs::path& out,U threads,U grant,U scratc
   }}col[b+1]=bytes;meters[b].order_lane=omp_get_thread_num();meters[b].sort=sorted-begin;meters[b].label=omp_get_wtime()-sorted;
  }
  double ordered=omp_get_wtime();Big total=0;for(U b=1;b<=BINS;++b){total+=col[b];ck(total<=INT64_MAX,"dictionary extent");col[b]=U(total);}
- ck(term==1 && total==Big(owned)+16*Big(k)-8 && total+8*Big(m)<=std::min<Big>(scratch,2*Big(n)),"column scratch/geometry");
+ ck(term==1 && total==Big(owned)+16*Big(k)-8 && total+8*Big(m)+(link_manifest?48:0)<=std::min<Big>(scratch,2*Big(n)),"column scratch/geometry");
  guard();fs::path partial=out;partial+=".partial";ck(fs::create_directory(partial),"fresh partial directory");int dict=file(partial/"dictionary.lex64",U(total));double td=omp_get_wtime();
 #pragma omp parallel for schedule(dynamic,1)
  for(U b=0;b<BINS;++b){double begin=omp_get_wtime();Buffer dest{dict,col[b],0,{}};U lo=bins[b],hi=bins[b+1];
@@ -142,7 +142,15 @@ static void run(const char* input,const fs::path& out,U threads,U grant,U scratc
   }ck(at==col[b+1],"scatter range end");
  }
  munmap(entries,8*m);munmap(heads,8*heads_at.back());int keyfd=file(partial/"keys.u64",8*m);writeat(keyfd,(const uint8_t*)keys,8*m,0);finish(keyfd);munmap(keys,8*m);syncdir(partial);guard();
- ck(syscall(SYS_renameat2,AT_FDCWD,partial.c_str(),AT_FDCWD,out.c_str(),RENAME_NOREPLACE)==0,"publish columns");syncdir(out.has_parent_path()?out.parent_path():fs::path("."));double end=omp_get_wtime();
+ if(link_manifest){
+  // Some quota filesystems have hard links but no RENAME_NOREPLACE for a
+  // directory. OUT in this explicit ABI is an exclusive regular-file commit
+  // record, not a directory. Neither column is read until BOTH are durable.
+  U seal[]={0x3143465058ull,n,m,k,owned,U(total)};fs::path stamp=partial/"manifest";
+  int sealed=file(stamp,sizeof(seal));writeat(sealed,(const uint8_t*)seal,sizeof(seal),0);
+  finish(sealed);syncdir(partial);guard();ck(!link(stamp.c_str(),out.c_str()),"exclusive column manifest");
+ }else ck(syscall(SYS_renameat2,AT_FDCWD,partial.c_str(),AT_FDCWD,out.c_str(),RENAME_NOREPLACE)==0,"publish columns");
+ syncdir(out.has_parent_path()?out.parent_path():fs::path("."));double end=omp_get_wtime();
  report_bins(bins,meters,actual,false,ordered-tp);report_bins(bins,meters,actual,true,published-td);
  std::printf("FRONT64_LAYOUT position_bits=%u projected_prefix_bits=%u start_bytes=%llu rank_anchor_bytes=%llu entry_bytes=%llu head_bytes=%llu\n",
    project.position_bits,project.projection_bits,(unsigned long long)(8*starts.words),(unsigned long long)(8*(starts.blocks+1)),(unsigned long long)(8*m),(unsigned long long)(8*heads_at.back()));

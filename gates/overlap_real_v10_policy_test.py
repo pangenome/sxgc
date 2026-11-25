@@ -7,7 +7,7 @@ from overlap_real_v10_meter import collect,files
 from overlap_real_v10_plan import model,N,PRODUCT
 
 def main():
-    p=model();assert p['candidate']['stream']==199001858<=2*N and p['candidate']['front']==168024532 and p['reference']['front']==167605419 and p['ef_bytes_upper']<p['prc_payload_slots']
+    p=model();assert p['candidate']['stream']==199001906<=2*N and max(p['outer_cap'].values())==199229440<=2*N and p['candidate']['front']==168024580 and p['reference']['front']==167605419 and p['ef_bytes_upper']<p['prc_payload_slots']
     with tempfile.TemporaryDirectory() as td:
         r=Path(td);d=r/'candidate';(d/'in').mkdir(parents=True);raw=d/'in/raw';raw.write_bytes(b'raw');q=d/'work.sxi2.partial';q.write_bytes(b'output');slot=d/'slot';slot.write_bytes(bytes(11));os.link(slot,d/'published');hidden=d/'dead';hidden.write_bytes(bytes(7));assert q.stat().st_size<PRODUCT
         with hidden.open('rb') as f:

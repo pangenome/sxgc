@@ -11,14 +11,15 @@ fn real_v10_join() {
     let index = "work.sxi2";
     let check = |name, limit| { let s = std::fs::symlink_metadata(name).unwrap();
         assert!(s.is_file() && s.nlink()==1 && s.len()>0 && s.len()<=limit); };
-    check(index, 128 << 20); check("m20", 16 << 20); check("in/map/seps.bin", 68_344);
+    let m20 = if std::env::args().nth(1).as_deref()==Some("real-v10-quota-join") { "quota/m20" } else { "m20" };
+    check(index, 128 << 20); check(m20, 16 << 20); check("in/map/seps.bin", 68_344);
     let map = std::fs::read("in/map/seps.bin").unwrap();
     assert_eq!(format!("{:x}", Sha256::digest(&map)), "63bb635e128e00d06037eaef5ce9e83d343cc622509b155d010789e4a20654ac");
     let base = qlite::Reader::open(index).unwrap();
     assert_eq!((base.version,base.n), (7,100_000_504));
     assert_eq!(base.members.iter().map(|m| m.id).collect::<Vec<_>>(), [1,4,5,7,10,11,12,13]);
     drop(base);
-    let trie = std::fs::read("m20").unwrap();
+    let trie = std::fs::read(m20).unwrap();
     let word = |i: usize| u64::from_le_bytes(trie[i*8..(i+1)*8].try_into().unwrap());
     assert_eq!([word(0),word(1),word(2),word(3),word(4),word(7),word(19),word(20),word(21)],
                [3,8,1000,100_000_504,100_000_503,1000,3,0,1]);

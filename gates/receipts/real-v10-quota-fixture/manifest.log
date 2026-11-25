@@ -1,0 +1,4 @@
+RENAME_NOREPLACE directories unsupported, errno=22; original position front cannot publish here
+private mount: 124 31 0:54 / /tmp/real-v10-fs-test-yOKcF3/private rw,nosuid,nodev,noatime shared:93 - fuse.ext4 /tmp/real-v10-fs-test-yOKcF3/fixed.img rw,user_id=1001,group_id=1001
+PASS manifest cap/refusal, exclusive publication and byte-identical columns on quota FS
+PASS private FS exact ENOSPC, fsync, cold/mincore, reopen and hard-link credit

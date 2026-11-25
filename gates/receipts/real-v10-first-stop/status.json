@@ -1,0 +1,460 @@
+{
+  "after": {
+    "cores": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 122270777\nuser_usec 91844220\nsystem_usec 30426557\ncore_sched.force_idle_usec 0\nnr_periods 646\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "2147483648",
+    "memory.peak": "1676435456",
+    "memory.swap.max": "0"
+  },
+  "argv": {
+    "finish": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--data=201326592:201326592",
+        "--",
+        "/home/erikg/.cache/xsa/13524d6bbedad508fdd8e30e7ab709dbf62ae5db64eb0cd8864dd79efa5b7b4c/xsa_finish",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/in/raw",
+        "--remap",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/in/remap",
+        "--threads",
+        "2",
+        "--prefix",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/merged/frag",
+        "--lcp-bands",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/bands",
+        "--output",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/work.sxi2",
+        "--container-stream",
+        "--with-chi",
+        "--no-lcp-runs",
+        "--wit-ram-budget",
+        "134217728",
+        "--poll-timeout",
+        "120"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "LD_PRELOAD": "/tmp/resident-bin-DmG99k/monitor.so",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "PFCK_SPACING": "64",
+        "RAYON_NUM_THREADS": "2",
+        "XSA_GATE_PRIVATE_STOP": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/stop.requested",
+        "XSA_WORK_ROOT": "driver"
+      }
+    },
+    "front": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/tmp/resident-bin-DmG99k/lexparse",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/in/raw",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/cols",
+        "--packed"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "relay": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=262144:262144",
+        "--stack=8388608:8388608",
+        "--",
+        "/tmp/native-v10-p4oy1a/tools/relay",
+        "narrow",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/in/raw",
+        "100000503",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/tap-bands",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/stop.requested"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "resident": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/tmp/overlap-radix-Pymxu1/overlap_resident",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/cols",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/stop.requested",
+        "1503238553"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2",
+        "XSA_RESIDENT_PACKED": "1",
+        "XSA_RESIDENT_RADIX_LANES": "4",
+        "XSA_RESIDENT_RADIX_STEP": "16384",
+        "XSA_RESIDENT_WIDE_DICT": "1"
+      }
+    },
+    "sink": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--data=67108864:67108864",
+        "--",
+        "/tmp/real-v10-tools-Fch4DR/sink",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/in/raw",
+        "--remap",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/in/remap",
+        "--threads",
+        "2",
+        "--out-prefix",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/merged/frag",
+        "--bands",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/bands",
+        "--scratch-budget-bytes",
+        "200001006"
+      ],
+      "env": {
+        "CROSS_V2_PIECES": "1",
+        "CROSS_V2_PIECE_WINDOW": "6",
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "PFCK_SPACING": "64",
+        "RAYON_NUM_THREADS": "2",
+        "SS_LCP_SLICE_WINDOW": "5",
+        "XSA_BATCH_SXLS_ESCAPES": "1",
+        "XSA_TEST_EXTERNAL_TRIPLES": "1",
+        "XSA_TEST_REAL_V10_100M_POOLS": "1"
+      }
+    },
+    "tap": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=16777216:16777216",
+        "--stack=8388608:8388608",
+        "--data=167772160:167772160",
+        "--",
+        "/tmp/v10-fixture-1001-1206931/tools/target/release/xsa",
+        "ctx-tap",
+        "--bands",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/tap-bands",
+        "--corpus",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/in/raw",
+        "--n",
+        "100000504",
+        "--doc-starts",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/in/map",
+        "--depth",
+        "8",
+        "--min-support",
+        "1000",
+        "--docs-min-support",
+        "1000",
+        "--threads",
+        "1",
+        "--out",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference/m20"
+      ],
+      "env": {
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2"
+      }
+    },
+    "witness": {
+      "cmd": [
+        "/usr/bin/prlimit",
+        "--fsize=134217728:134217728",
+        "--stack=8388608:8388608",
+        "--",
+        "/usr/bin/systemd-run",
+        "--user",
+        "--quiet",
+        "--wait",
+        "--pipe",
+        "--collect",
+        "--expand-environment=no",
+        "-p",
+        "MemoryMax=140M",
+        "-p",
+        "MemorySwapMax=0",
+        "-p",
+        "CPUQuota=100%",
+        "-p",
+        "Nice=10",
+        "-p",
+        "IOAccounting=yes",
+        "-p",
+        "LimitCORE=0",
+        "-p",
+        "LimitSTACK=8M",
+        "-p",
+        "LimitFSIZE=2M",
+        "-p",
+        "UMask=0077",
+        "-p",
+        "RuntimeMaxSec=657s",
+        "-p",
+        "TimeoutStopSec=3s",
+        "/usr/bin/taskset",
+        "-c",
+        "4",
+        "/usr/bin/python3",
+        "-BE",
+        "/tmp/overlap-study-src-hhsIkE/gates/overlap_real_v10_meter.py",
+        "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-pair100-kSIsZ8/reference",
+        "reference",
+        "1795568756",
+        "4"
+      ],
+      "env": {
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1001/bus",
+        "GOMP_SPINCOUNT": "0",
+        "HOME": "/home/erikg",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MALLOC_ARENA_MAX": "2",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OMP_STACKSIZE": "2M",
+        "OMP_THREAD_LIMIT": "4",
+        "OMP_WAIT_POLICY": "PASSIVE",
+        "PATH": "/usr/bin:/bin",
+        "RAYON_NUM_THREADS": "2",
+        "XDG_RUNTIME_DIR": "/run/user/1001"
+      }
+    }
+  },
+  "before": {
+    "cores": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "cpu.max": "400000 100000",
+    "cpu.stat": "usage_usec 221789\nuser_usec 149857\nsystem_usec 71931\ncore_sched.force_idle_usec 0\nnr_periods 3\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "io.stat": null,
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "2147483648",
+    "memory.peak": "11386880",
+    "memory.swap.max": "0"
+  },
+  "clocks": {
+    "input_setup_and_cold_s": 0.31193895637989044,
+    "raw_to_prepared_s": 3.289766715839505,
+    "ready_to_start_consumers_s": 6.899823111481965
+  },
+  "log_bytes": 236304,
+  "log_errors": [
+    "log limit: sink.log"
+  ],
+  "memory_stat_at_sample": {
+    "anon": 1289453568,
+    "file": 377516032,
+    "kernel_stack": 360448,
+    "pagetables": 3575808,
+    "shmem": 0,
+    "slab": 3651592,
+    "sock": 0
+  },
+  "peaks": {
+    "aliases": 257,
+    "inputs_allocated": 200081408,
+    "inputs_bytes": 200069606,
+    "open_unlinked_fds": 0,
+    "output_allocated": 33423360,
+    "output_bytes": 27606728,
+    "scratch_allocated": 233312256,
+    "scratch_bytes": 159061356,
+    "whole_allocated": 433393664
+  },
+  "pipe_capacity": {
+    "finish": [
+      65536
+    ],
+    "front": [
+      65536
+    ],
+    "relay": [
+      65536,
+      65536
+    ],
+    "resident": [
+      65536,
+      65536
+    ],
+    "sink": [
+      65536
+    ],
+    "tap": [
+      65536
+    ],
+    "witness": [
+      65536,
+      65536
+    ]
+  },
+  "sampled_high_phase": {
+    "aliases": "front",
+    "inputs_allocated": "front",
+    "inputs_bytes": "front",
+    "open_unlinked_fds": "front",
+    "output_allocated": "stream",
+    "output_bytes": "stream",
+    "scratch_allocated": "front",
+    "scratch_bytes": "front",
+    "whole_allocated": "front"
+  },
+  "sampled_memory_high": 1675886592,
+  "service_body_s": 64.34021335840225,
+  "stop": true,
+  "supervisor_io_including_prep_and_proof": {
+    "ru_inblock_bytes": 149745664,
+    "ru_oublock_bytes": 200351744
+  },
+  "utc": "2026-11-25T00:55:56Z",
+  "worker": {
+    "finish": {
+      "cpu_s": 37.02063,
+      "major_faults": 3052,
+      "maxrss_bytes": 102957056,
+      "minor_faults": 44697,
+      "rc": 75,
+      "ru_inblock_bytes": 55525376,
+      "ru_oublock_bytes": 67334144,
+      "wall_s": 53.710758643224835
+    },
+    "front": {
+      "cpu_s": 3.16128,
+      "major_faults": 1,
+      "maxrss_bytes": 107020288,
+      "minor_faults": 3308,
+      "rc": 0,
+      "ru_inblock_bytes": 100020224,
+      "ru_oublock_bytes": 329650176,
+      "wall_s": 3.187848450616002
+    },
+    "relay": {
+      "cpu_s": 1.732416,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 355,
+      "rc": 75,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 580911104,
+      "wall_s": 53.70554921682924
+    },
+    "resident": {
+      "cpu_s": 27.847987,
+      "major_faults": 0,
+      "maxrss_bytes": 1209028608,
+      "minor_faults": 433292,
+      "rc": 101,
+      "ru_inblock_bytes": 140394496,
+      "ru_oublock_bytes": 0,
+      "wall_s": 60.73708808515221
+    },
+    "sink": {
+      "cpu_s": 3.445208,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 101008,
+      "rc": 101,
+      "ru_inblock_bytes": 65536,
+      "ru_oublock_bytes": 445517824,
+      "wall_s": 53.723020610399544
+    },
+    "tap": {
+      "cpu_s": 45.639308,
+      "major_faults": 179,
+      "maxrss_bytes": 100937728,
+      "minor_faults": 3374,
+      "rc": 75,
+      "ru_inblock_bytes": 44552192,
+      "ru_oublock_bytes": 9076736,
+      "wall_s": 53.74655767530203
+    },
+    "witness": {
+      "cpu_s": 0.00997,
+      "major_faults": 0,
+      "maxrss_bytes": 23068672,
+      "minor_faults": 473,
+      "rc": 1,
+      "ru_inblock_bytes": 0,
+      "ru_oublock_bytes": 0,
+      "wall_s": 53.75817000120878
+    }
+  }
+}

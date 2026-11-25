@@ -1,0 +1,23 @@
+Traceback (most recent call last):
+  File "/tmp/overlap-study-src-hhsIkE/gates/overlap_real_v10_product.py", line 111, in <module>
+    if __name__=='__main__':main(sys.argv[1],Path(sys.argv[2]),int(sys.argv[3]),int(sys.argv[4]))
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/overlap-study-src-hhsIkE/gates/overlap_real_v10_product.py", line 107, in main
+    try:arm(h,vcpu)
+        ^^^^^^^^^^^
+  File "/tmp/overlap-study-src-hhsIkE/gates/overlap_real_v10_product.py", line 80, in arm
+    h.until(lambda:(pref.parent/'frag.pieces/start').is_file() and (d/'bands/slice-slots').is_dir());h.launch('finish',[FIN,*common,'--prefix',pref,'--lcp-bands',d/'bands','--output',product,'--container-stream','--with-chi','--no-lcp-runs','--wit-ram-budget',128<<20,'--poll-timeout',120],env={'XSA_WORK_ROOT':'driver','PFCK_SPACING':'64','LD_PRELOAD':str(MON),'XSA_GATE_PRIVATE_STOP':str(stop)},data=192<<20);h.wait();ts=clock();h.timing.update(raw_to_base_finish_s=ts-start,prepared_to_base_finish_s=ts-prepared)
+                                                                                                                                                                                                                                                                                                                                                                                                                           ^^^^^^^^
+  File "/tmp/overlap-study-src-hhsIkE/gates/overlap_real_v10_meter.py", line 129, in wait
+    self.until(lambda:all(p.returncode is not None for p in self.work.values()))
+  File "/tmp/overlap-study-src-hhsIkE/gates/overlap_real_v10_meter.py", line 125, in until
+    self.tick()
+  File "/tmp/overlap-study-src-hhsIkE/gates/overlap_real_v10_meter.py", line 120, in tick
+    self.guard()
+  File "/tmp/overlap-study-src-hhsIkE/gates/overlap_real_v10_meter.py", line 81, in guard
+    need(time.time()<self.end and not self.stop.exists() and not (self.root/'stop.requested').exists() and not self.errors,'STOP/deadline/log cap: '+str(self.errors));need(shutil.disk_usage(self.root).free>512<<20,'disk headroom')
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/overlap-study-src-hhsIkE/gates/overlap_real_v10_plan.py", line 20, in need
+    if not ok:raise ValueError(msg)
+              ^^^^^^^^^^^^^^^^^^^^^
+ValueError: STOP/deadline/log cap: ['log limit: sink.log']

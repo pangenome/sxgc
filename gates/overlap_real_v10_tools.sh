@@ -11,7 +11,7 @@ if [[ $# == 2 && $1 == compile ]];then
  python3 -BE - "$d" <<'PY'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1])/'old/xsa/src/main.rs';s=p.read_text();assert s.count('fn main() {')==1;p.write_text(s.replace('fn main() {',Path('gates/overlap_real_v10_join.rs').read_text()+'\nfn main() {\nif std::env::args().nth(1).as_deref()==Some("real-v10-join"){real_v10_join();return;}'))
+p=Path(sys.argv[1])/'old/xsa/src/main.rs';s=p.read_text();assert s.count('fn main() {')==1;p.write_text(s.replace('fn main() {',Path('gates/overlap_real_v10_join.rs').read_text()+'\nfn main() {\nif matches!(std::env::args().nth(1).as_deref(), Some("real-v10-join"|"real-v10-quota-join")){real_v10_join();return;}'))
 PY
  deps=$HOME/sxgc/xsa/target/release/deps;flags=();for k in flate2 memmap2 rayon serde_json sha2 tempfile tiny_http;do a=("$deps"/lib"$k"-*.rlib);[[ ${#a[@]} == 1 ]];flags+=(--extern "$k=${a[0]}");done
  rustc --version;rustc --crate-name xsa --edition=2021 -C opt-level=2 -C codegen-units=4 -L "dependency=$deps" "${flags[@]}" "$d/old/xsa/src/main.rs" -o "$d/xsa"
