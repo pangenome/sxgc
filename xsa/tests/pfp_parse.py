@@ -67,7 +67,9 @@ def main(front, rank):
         check(front, rank, text)
     if len(os.sched_getaffinity(0)) >= 2: check(front, rank, witness, workers=2)
     # Final-window and overlapping triggers, read-buffer seam, many sort runs.
-    check(front, rank, 320000*b',', mem=512<<10)
+    # -m is a SORT-ARRAY budget that also charges the (now mapped) input, so the
+    # many-runs case needs 1 MiB for a 320 KB text; it still spills ~57 runs.
+    check(front, rank, 320000*b',', mem=1<<20)
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp); raw=d/'raw'; raw.write_bytes(witness); out=d/'a'; out.mkdir()
         assert b'scratch' in run([front,raw,out,1,64<<20,8*5+24*3+2048-1], False)

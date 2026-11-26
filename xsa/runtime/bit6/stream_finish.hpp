@@ -1,7 +1,12 @@
 // Ordered row input needs no seam repair or LCE oracle. Within a BWT run
 // the head LCP is its first adjacent LCP and the interior LCP is the minimum
 // of the remaining ones. Carry one open run across input packets.
+#include <chrono>
 namespace rowfinish {
+// Wall intervals for the three consumers of this stage. Reporting only.
+static inline double now_s() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 struct Frame { uint32_t pos, lcp, tag; };
 static_assert(sizeof(Frame)==12);
 
@@ -80,6 +85,7 @@ static void member(ContainerOut& out,unsigned id,uint64_t count,uint64_t bytes) 
 
 static int finish_row_stream(const char* histogram,const char* scratch,const char* output) {
     using namespace rowfinish;
+    const double t_entry=now_s();
     std::array<uint64_t,256> hist{},freq{};
     int fd=::open(histogram,O_RDONLY|O_CLOEXEC);pf_check(fd>=0,"open byte histogram");
     pf_read_full(fd,hist.data(),sizeof(hist),"byte histogram");::close(fd);
@@ -94,10 +100,14 @@ static int finish_row_stream(const char* histogram,const char* scratch,const cha
     Blocks blocks(out,freq); WitnessBitmap bitmap(n,scratch);
     SweepImpl<WitnessBatch> sweep(n,WitnessBatch{&bitmap,-1});
     NRun run{};uint64_t top=0,interior=INF,prev=n-1;
-    auto close_run=[&]{if(run.len){blocks.add(run);sweep.advance(run,top,interior);}};
+    double spend_add=0,spend_sweep=0;
+    auto close_run=[&]{if(run.len){double s=now_s();blocks.add(run);double m=now_s();sweep.advance(run,top,interior);spend_add+=m-s;spend_sweep+=now_s()-m;}};
+    double t_begin=now_s(),spend_read=0,spend_row=0;
     std::vector<Frame> packet(32768);
     for(uint64_t rank=0;rank<n;) {
-        size_t take=std::min<uint64_t>(packet.size(),n-rank);pf_read_full(0,packet.data(),take*sizeof(Frame),"ordered rows");
+        size_t take=std::min<uint64_t>(packet.size(),n-rank);double s=now_s();
+        pf_read_full(0,packet.data(),take*sizeof(Frame),"ordered rows");
+        spend_read+=now_s()-s;s=now_s();
         for(size_t j=0;j<take;++j,++rank) {
             auto f=packet[j];unsigned b=f.tag&511;
             uint64_t p=f.pos | uint64_t((f.tag>>9)&2047)<<32;
@@ -107,10 +117,14 @@ static int finish_row_stream(const char* histogram,const char* scratch,const cha
             if(!run.len || run.c!=c) {close_run();run={c,1,p,p};top=h;interior=INF;}
             else {++run.len;run.t=p;interior=std::min(interior,h);}
         }
+        spend_row+=now_s()-s;
     }
-    close_run();sweep.finish();blocks.finish();
+    close_run();double sweep_s=now_s();sweep.finish();blocks.finish();
+    const double sweep_finish_s=now_s()-sweep_s;
     pf_check(std::equal(freq.begin(),freq.end(),blocks.samples.cum),"BWT histogram differs from corpus");
+    double s=now_s();
     write_chi(out,bitmap,n,sweep.chi);
+    const double chi_s=now_s()-s;s=now_s();
     out.begin(4,4,0);out.num(0x434e4158,4);out.num(0);
     out.begin(7,7,256);out.write(map,sizeof(map));out.begin(10,110,blocks.runs);
     out.begin(11,111,blocks.sparse.size());out.num(10);out.num(blocks.sparse.size());out.write(blocks.sparse.data(),8*blocks.sparse.size());
@@ -119,5 +133,9 @@ static int finish_row_stream(const char* histogram,const char* scratch,const cha
     member(out,20,n-1,word());uint64_t docs=word();pf_check(docs && docs<n,"document count");member(out,15,docs,word());
     char extra;pf_check(::read(0,&extra,1)==0,"extra bytes after document metadata");
     out.writeVersion=10;out.finish(n,1,blocks.runs,1|8|16|PF_FLAG_M1_BLOCKED|256|512);
+    fprintf(stderr,"XSA_FINISH_TIME total=%.6f pre=%.6f read=%.6f rows=%.6f add=%.6f sweep=%.6f"
+        " sweep_finish=%.6f chi=%.6f tail=%.6f runs=%llu rows_n=%llu\n",
+        now_s()-t_entry,t_begin-t_entry,spend_read,spend_row,spend_add,spend_sweep,sweep_finish_s,chi_s,
+        now_s()-s,blocks.runs,n);
     return 0;
 }

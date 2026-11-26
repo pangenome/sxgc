@@ -25,4 +25,25 @@ Scratch planning covers live phrase-naming runs, ancestor tapes/refs, child rank
 
 **Current limits.** The deepest tape must fit the integer kernel. Each lift must fit its smaller occurrence tables, largest first-ID cell and paged sort/output workspace, and have scratch for its dictionary-offset postings. A shortened upper tape alone does not guarantee any of those, or a speedup. The row-view budget still includes the raw mapping and packed aligned-rank tables. If one two-symbol cell exceeds the available descriptor slots, or the complete compressed posting index exceeds the scratch grant, the producer refuses. It does **not** fall back to a byte suffix sort or rescan all offsets for each range. Historical rolling runs through 10 GB measured a different producer and do not establish fit or speed for this version.
 
+## Measured scaling
+
+The construction phases scale with workers; the emission chain is the floor.
+[Measured ladder and method](../gates/receipts/pfp-scale/): 100 MB in 58.4 s of
+which 4.5 s is naming and 6.7 s row ordering; 1 GB naming 14.4 s and row ordering
+102 s; 10 GB naming 168 s and rank 3.9 s for 318,164,488 phrases. Every published
+product matched its earlier whole-v10 SHA.
+
+Three mechanisms carry that: phrase occurrences are sorted on the first two
+eight-byte words of their finite window (the exact comparator only breaks key
+ties), the occurrence set is sorted in parallel chunks and merged into a second
+buffer, and the input is mapped rather than read through a 4 KiB page cache.
+Row ordering uses a 16-byte arena record — the eight bytes past the band's known
+prefix, plus the packed dictionary code — which is the 16 bytes per descriptor
+the planner already reserved.
+
+What remains single-threaded is the row pipeline's two consumers: the m20 context
+builder (about 202 s per GB) and the v10 writer (about 181 s per GB, of which 98 s
+is the per-row loop and 56 s the χ sweep). At 10 GB they, not the sorter, set the
+wall time. m20 and m15 are container members, not options.
+
 For a repeat build with a trusted **whole-product** checksum, run `sha256sum -c expected.sha256` after success. The compact CLI regression is `python3 xsa/tests/build_pfp.py xsa/target/release/xsa`; it is not called during a build. [Qualification and clocks](../gates/receipts/pfp-levels/) distinguish a three-level build, a real prepared-tape lift at 96 MiB, and the ordinary 100 MB real v10 build at 320 MiB.

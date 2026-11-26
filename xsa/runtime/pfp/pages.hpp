@@ -23,13 +23,18 @@ struct Cache {
 // write-back pages, including the short last page; no extra ordinal sort.
 struct IdPage { U key=UINT64_MAX; std::array<U,PAGE/8> ids; };
 struct Scatter {
-    const File& f; U m; std::vector<IdPage> pages;
+    const File& f; U m; bool complete; std::vector<IdPage> pages;
+    Scatter(const File& file,U count,std::vector<IdPage> slab)
+        :f(file),m(count),complete(slab.size()>=ceildiv(8*count,PAGE)),pages(std::move(slab)) {}
     void flush(IdPage& b) const {
         if (b.key!=UINT64_MAX) { U pos=b.key*PAGE; f.write(pos,b.ids.data(),std::min(PAGE,8*m-pos)); }
     }
+    // Every ordinal is set exactly once. When the slab covers the whole tape
+    // there is no reload at all (no eviction, no read of an unset page).
     void set(U i,U id) {
         U key=i/(PAGE/8); IdPage& b=pages[key%pages.size()];
-        if (b.key!=key) { flush(b); b.key=key; U p=PAGE*key; f.read(p,b.ids.data(),std::min(PAGE,8*m-p)); }
+        if (b.key!=key) { flush(b); b.key=key; U p=PAGE*key;
+            if (complete) b.ids.fill(0); else f.read(p,b.ids.data(),std::min(PAGE,8*m-p)); }
         b.ids[i%(PAGE/8)] = id;
     }
     void finish() { for (auto& b:pages) flush(b); }

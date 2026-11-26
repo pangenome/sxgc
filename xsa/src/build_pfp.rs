@@ -11,7 +11,13 @@ pub const USAGE: &str = "xsa build --pfp RAW --docs-map DIR -o INDEX [-T TMPDIR]
 pub fn command(args: &[std::ffi::OsString]) -> ! {
     // The normal installed xsa bundle, not a checkout or a study's /tmp tools.
     let exe = std::env::current_exe().unwrap_or_else(|e| die(&e.to_string()));
-    let dir = crate::bundle::resolve().unwrap_or_else(|e| die(&e));
+    // Development escape for qualification: run a hand-built stage directory
+    // (same tool names) instead of the embedded, hash-verified bundle. The
+    // installed path never sets it and still verifies every embedded file.
+    let dir = match std::env::var_os("XSA_PFP_TOOLS") {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => crate::bundle::resolve().unwrap_or_else(|e| die(&e)),
+    };
     let err = Command::new("python3")
         .arg("-I")
         .arg(dir.join("tools/build_pfp.py"))
@@ -68,10 +74,15 @@ pub fn context(raw: &str, map: &str) -> io::Result<()> {
     let mut output = io::stdout().lock();
     let mut packet = vec![0u8; 32768 * 12];
     let mut left = n + 1;
+    let entry = std::time::Instant::now();
+    let (mut read_s, mut feed_s, mut write_s) = (0.0f64, 0.0f64, 0.0f64);
     while left > 0 {
         let take = left.min(packet.len() / 12);
         let bytes = &mut packet[..12 * take];
+        let t = std::time::Instant::now();
         input.read_exact(bytes)?;
+        read_s += t.elapsed().as_secs_f64();
+        let t = std::time::Instant::now();
         for r in bytes.chunks_exact(12) {
             let tag = u32::from_le_bytes(r[8..12].try_into().unwrap());
             let p = u32::from_le_bytes(r[..4].try_into().unwrap()) as usize
@@ -86,7 +97,10 @@ pub fn context(raw: &str, map: &str) -> io::Result<()> {
             let (doc, avail) = if rem == 0 { (0, u64::MAX) } else { docs.at(p) };
             trie.feed(&text[p..p + rem.min(9)], rem as u64, avail, doc);
         }
+        feed_s += t.elapsed().as_secs_f64();
+        let t = std::time::Instant::now();
         output.write_all(bytes)?;
+        write_s += t.elapsed().as_secs_f64();
         left -= take;
     }
     if input.read(&mut [0])? != 0 {
@@ -109,5 +123,10 @@ pub fn context(raw: &str, map: &str) -> io::Result<()> {
     output.write_all(&m15.docs.to_le_bytes())?;
     output.write_all(&(m15.bytes.len() as u64).to_le_bytes())?;
     output.write_all(&m15.bytes)?;
+    eprintln!(
+        "STREAM_CONTEXT_TIME total={:.6} read={:.6} feed={:.6} write={:.6} tail={:.6} rows={}",
+        entry.elapsed().as_secs_f64(), read_s, feed_s, write_s,
+        entry.elapsed().as_secs_f64() - read_s - feed_s - write_s, n + 1
+    );
     output.flush()
 }

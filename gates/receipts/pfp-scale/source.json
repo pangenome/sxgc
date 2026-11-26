@@ -1,0 +1,13 @@
+{
+  "scope": "hand-built stage directory (XSA_PFP_TOOLS) used by the 10 GB arm while iterating; the installed bundle builds the same sources",
+  "stages": {
+    "pfp_parse": "c8c0d5a48c54ec3be5dd8f2c6f58b0330f55d6e9d52a9c6385f815d27018a151",
+    "pfp_rows": "b9724ba18ae3686ccd311054fd5465957e540dba9c5c9186c83e79e6861e164c",
+    "stream_rank": "c9350b31d7d77a55bad4bc766e8ac2c566ff5e352e05970d747a6d0a7b158c7a",
+    "xsa_finish": "825aee89a62adf5d325e711abc01f5ae424b8098ba773fe2e430fedfe628a74b"
+  },
+  "xsa_sha256_at_run": "50a1f83ff91ce5696948bb448a6e4d6938d037dbc15e12374511de40d7d140fd",
+  "git_head": "fbde88b239fdf54d6891530154d6f03dd7aea30e",
+  "note": "pfp_parse and pfp_rows were rebuilt with the same g++ flags build_tools.py uses; stream_rank and xsa_finish came from the verified bundle (xsa_finish rebuilt with the timer lines).",
+  "final_tree": "The committed tree differs from the 10 GB arm only in one accounting detail: Emit::prepare now measures the exact array need (per-band layouts, tile bookkeeping, arena) and drops slots by the excess instead of relying on the guarded pre-plan. That changes range packing, not the row order. The final release build was re-qualified on the 1 GB anchor (see 1g-final-j32-m16G.json) and on every fixture."
+}
