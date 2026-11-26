@@ -1,0 +1,63 @@
+{
+  "mode": "prepared",
+  "bundle": "6228679971e37c86817465857598391e7f91ba272591e82bfba290de342494da",
+  "argv": [
+    "/usr/bin/python3",
+    "-BE",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pfp-levels-100m-kAaLkG/arm.py",
+    "rank-worker",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pfp-levels-100m-kAaLkG/prepared/scratch/inverse"
+  ],
+  "raw_or_prepared_input": "/tmp/xsa-rpfp-id-census-suFfhH/p1.u64",
+  "input_bytes": 25364248,
+  "output": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pfp-levels-100m-kAaLkG/prepared/scratch/inverse",
+  "output_bytes": 25364248,
+  "sha256": "afc938c0a1e96a62a2a6159fa119546a919b3042f8820847c207890bc9cafe67",
+  "utc_start": "2026-11-26T01:19:55.106461+00:00",
+  "memphis_start": "2026-11-25T19:19:55.106461-06:00",
+  "utc_closed": "2026-11-26T01:19:57.845688+00:00",
+  "memphis_closed": "2026-11-25T19:19:57.845688-06:00",
+  "wall_s": 2.7389585180208087,
+  "postpublication_sha_s": 0.040259016677737236,
+  "cpu_s": 4.258672,
+  "wait4_read_bytes": 20480,
+  "wait4_write_bytes": 80162816,
+  "major_faults": 0,
+  "minor_faults": 34332,
+  "device_nvme2n1_read_delta": 20480,
+  "device_nvme2n1_write_delta": 0,
+  "cgroup_io_before": null,
+  "cgroup_io_after": null,
+  "cgroup_memory_peak": 197832704,
+  "high_sample": {
+    "anon": 116211712,
+    "file": 80048128,
+    "shmem": 0,
+    "slab": 355800
+  },
+  "affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "memory_max": "2147483648",
+  "cpu_max": "400000 100000",
+  "swap_max": "0",
+  "scratch_logical_sample": 80026018,
+  "scratch_allocated_sample": 54804480,
+  "phase_lines": [
+    "PFP_ID_PARSE symbols=3170531 trigger_scans=1 occurrences=101950 words=101505 owned_offsets=3162140 initial_phrase_runs=1 external_merge_passes=0 scratch_peak=3251760 scratch_final=3251760",
+    "stage: parse P1 1.062375s",
+    "PFP_CENSUS level=1 lower=3170531 upper=101950 words=101505 owned=3162140 direct_bytes=139404152 lift_scratch=80025848 free=97587440 descend=1",
+    "PFP_ID_PARSE symbols=101950 trigger_scans=1 occurrences=3327 words=3327 owned_offsets=101950 initial_phrase_runs=1 external_merge_passes=0 scratch_peak=106504 scratch_final=106504",
+    "stage: parse P2 0.008352s",
+    "PFP_CENSUS level=2 lower=101950 upper=3327 words=3327 owned=101950 direct_bytes=16660912 lift_scratch=2579920 free=94335680 descend=0",
+    "PFP_LEAF level=2 symbols=101950 alphabet=101505 array_bound=16660912",
+    "HEAD rows=101950 tiles=128 distinct=101505 max_group=18 unresolved=782 radix_passes=3 keys_above_u32=0 requested=4 team=4",
+    "stage: rank P2 0.003449s",
+    "PFP_LIFT lower=3170531 upper=101950 words=101505 ranges=17 slots=1589721 counted=3162140 routed=3162140 ordered=3162140 shared_groups=3358 ranks=3170531 posting_bytes=50594240 array_bound=100663280",
+    "stage: lift P2->P1 1.560975s"
+  ],
+  "clock": "Uncontrolled page cache; serialized services. Device counters for nvme2n1 are host-wide, not per-worker. Scratch subtree sampled every 0.05s, index/build.log excluded, prepared inverse included; not a filesystem quota."
+}

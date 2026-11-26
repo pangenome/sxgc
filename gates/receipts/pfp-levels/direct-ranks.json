@@ -1,0 +1,54 @@
+{
+  "mode": "direct",
+  "bundle": "6228679971e37c86817465857598391e7f91ba272591e82bfba290de342494da",
+  "argv": [
+    "/tmp/xsa-pfp-levels-4g8oHj/cache/xsa/6228679971e37c86817465857598391e7f91ba272591e82bfba290de342494da/stream_rank",
+    "inverse",
+    "/tmp/xsa-rpfp-id-census-suFfhH/p1.u64",
+    "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pfp-levels-100m-kAaLkG/direct/scratch/inverse",
+    "4",
+    "167772160"
+  ],
+  "raw_or_prepared_input": "/tmp/xsa-rpfp-id-census-suFfhH/p1.u64",
+  "input_bytes": 25364248,
+  "output": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/pfp-levels-100m-kAaLkG/direct/scratch/inverse",
+  "output_bytes": 25364248,
+  "sha256": "afc938c0a1e96a62a2a6159fa119546a919b3042f8820847c207890bc9cafe67",
+  "utc_start": "2026-11-26T01:19:54.891000+00:00",
+  "memphis_start": "2026-11-25T19:19:54.891000-06:00",
+  "utc_closed": "2026-11-26T01:19:54.996002+00:00",
+  "memphis_closed": "2026-11-25T19:19:54.996002-06:00",
+  "wall_s": 0.10472674015909433,
+  "postpublication_sha_s": 0.017011314630508423,
+  "cpu_s": 0.260009,
+  "wait4_read_bytes": 0,
+  "wait4_write_bytes": 25370624,
+  "major_faults": 0,
+  "minor_faults": 37698,
+  "device_nvme2n1_read_delta": 0,
+  "device_nvme2n1_write_delta": 0,
+  "cgroup_io_before": null,
+  "cgroup_io_after": null,
+  "cgroup_memory_peak": 110530560,
+  "high_sample": {
+    "anon": 109129728,
+    "file": 4096,
+    "shmem": 0,
+    "slab": 105784
+  },
+  "affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "memory_max": "2147483648",
+  "cpu_max": "400000 100000",
+  "swap_max": "0",
+  "scratch_logical_sample": 10,
+  "scratch_allocated_sample": 0,
+  "phase_lines": [
+    "HEAD rows=3170531 tiles=128 distinct=2689467 max_group=3367 unresolved=627785 radix_passes=3 keys_above_u32=0 requested=4 team=4"
+  ],
+  "clock": "Uncontrolled page cache; serialized services. Device counters for nvme2n1 are host-wide, not per-worker. Scratch subtree sampled every 0.05s, index/build.log excluded, prepared inverse included; not a filesystem quota."
+}

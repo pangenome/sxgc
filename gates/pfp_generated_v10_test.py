@@ -1,5 +1,6 @@
 """Installed PFP path: compare the published product, not an input or v8 hash."""
 from hashlib import sha256, shake_256
+import os
 from pathlib import Path
 import re
 import struct
@@ -19,6 +20,10 @@ def check(xsa):
         p = subprocess.run([xsa, 'build-pfp', inputs/'raw', '--docs-map', inputs/'map',
                             '-T', d, '-j', '1', '-v', '-o', index], capture_output=True, timeout=120)
         assert p.returncode == 0, p.stderr[-4000:]
+        # The first-level words repeat, but on this input ALL upper words are
+        # distinct. With ample workspace the measured census keeps P1 as leaf.
+        assert re.findall(rb'PFP_LEAF level=(\d+) symbols=(\d+)',p.stderr)==[(b'1',b'101798')]
+        assert b'PFP_LIFT' not in p.stderr
         counts = {k: int(v) for k, v in re.findall(rb'([a-z_]+)=(\d+)', p.stderr.split(b'PFP_ROWS ')[1].splitlines()[0])}
         # Repetitive fixture: neither visits per range nor one sort record per byte.
         assert counts[b'parse_positions'] == 101798 and counts[b'phrases'] == 2306
@@ -38,12 +43,15 @@ def recursive(xsa):
         raw.write_bytes(block*12+block[:117]); n=raw.stat().st_size
         (d/'seps.bin').write_bytes(struct.pack('<4sIII4Q3IQ', b'XSEP',1,1,64,3,n,1,0,0,117,n//2-117,0))
         cmd=[xsa,'build-pfp',raw,'--docs-map',d,'-T',scratch,'-j','1','-v','-o',d/'index']
-        p=subprocess.run(cmd,capture_output=True,timeout=60)
-        assert p.returncode==0,p.stderr
-        assert re.findall(rb'HEAD rows=(\d+)',p.stderr)==[b'12'],p.stderr
-        assert re.findall(rb'PFP_LIFT lower=(\d+) upper=(\d+)',p.stderr)==[(b'349',b'12'),(b'12725',b'349')],p.stderr
-        assert sha256((d/'index').read_bytes()).hexdigest()==pin
-        (d/'index').unlink()
+        team=str(min(2,len(os.sched_getaffinity(0))))
+        for budget,workers in [('256M','1'),('48M',team)]:
+            cmd[cmd.index('-j')+1]=workers
+            p=subprocess.run(cmd+['-m',budget],capture_output=True,timeout=60)
+            assert p.returncode==0,p.stderr
+            assert re.findall(rb'HEAD rows=(\d+)',p.stderr)==[b'12'],p.stderr
+            assert re.findall(rb'PFP_LIFT lower=(\d+) upper=(\d+)',p.stderr)==[(b'349',b'12'),(b'12725',b'349')],p.stderr
+            assert sha256((d/'index').read_bytes()).hexdigest()==pin
+            (d/'index').unlink()
         p=subprocess.run(cmd+['-m','1M'],capture_output=True,timeout=60)
         assert p.returncode and b'P3 direct rank needs' in p.stderr,p.stderr
         assert not (d/'index').exists() and not list(scratch.iterdir()) and not list(d.glob('.xsa-publish-*'))

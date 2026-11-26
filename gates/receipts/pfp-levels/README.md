@@ -1,0 +1,31 @@
+# `build-pfp`: recursive ranks and one real 100 MB product
+
+Source `153a2a1d`, bundle `6228679971e37c86817465857598391e7f91ba272591e82bfba290de342494da`. Offline Cargo release, relocated executable, fresh tool cache (`proc_34d0`). No change to the `xsa build` default. [Level selection and lift ABI](../../../docs/pfp-handoff.md#recursive-id-levels).
+
+**Is the sort really at the smaller level?** On a 393,333-byte repeated-block fixture the only direct kernel logged `HEAD rows=12`. P1=12,725 → P2=349 → P3=12. The first lift ordered 88 dictionary offsets and assigned 349 ranks; the second ordered 1,114 offsets and assigned 12,725 ranks. A separate comparison found every P1 rank identical to the direct kernel. The installed writer produced 310,032 bytes, SHA `02508df3d06b153a8211237ec3d89a3e9e0e29d57bb66e6aeaddff2b4064dcb3` (pinned beforehand with `56dda458`'s single-level release). Both 256 MiB / one worker and 48 MiB / two workers matched. At 1 MiB the deepest kernel refused, private files cleaned, no product. Conversely, on the 6.3 MB generated fixture all 3,221 upper words are distinct; the census kept P1 and matched the [prior 378,392-byte v10 pin](../pfp-handoff/).
+
+Reproduce: `python3 -BE xsa/tests/build_pfp.py XSA`, `python3 -BE gates/pfp_generated_v10_test.py XSA`, `python3 -BE xsa/tests/pfp_lift.py BUNDLE_DIR`. The lift test also checks numeric LE u64 lexical naming vs a Python model, direct vs brute ranks, equal representatives, END, overlapping/final hits, rank and budget refusals. On the same 24,000-ID tape: **3 → 8** disjoint ranges, always **24,000 counted / routed / loaded**, identical inverse. The real sources passed the ID fixtures under ASan + UBSan (`proc_5c08`); byte-column and every-row tests passed against the bundled stages, including byte ranges 2 → 16 at unchanged work.
+
+## Saved real P1: capacity, not a speedup
+
+`proc_7eca`, serialized native runs on cores 0–3, 2 GiB cgroup, no swap, ordinary XFS. Input was the already-prepared LE u64 tape of 3,170,531 IDs (SHA `b4bcc90bfd6be0d4101e0229642c629f0bbccd254b02a71b402fac3383ed6c9e`), **not** raw text. Equal output length 25,364,248 B, SHA `afc938c0a1e96a62a2a6159fa119546a919b3042f8820847c207890bc9cafe67`; both files also `cmp` equal to the [prior direct inverse](../recursive-id-census/).
+
+| Prepared P1 → inverse(P1) | [Direct native kernel](direct-ranks.json) | [Installed recursive rank stage](lifted-ranks.json) |
+|---|---:|---:|
+| Sort-array grant | 160 MiB | 96 MiB |
+| Wall / separate SHA (s) | 0.105 / 0.017 | 2.739 / 0.040 |
+| Cgroup memory.peak incl cache and measurement process (B) | 110,530,560 | 197,832,704 |
+| Wait4 attributed read / write (B) | 0 / 25,370,624 | 20,480 / 80,162,816 |
+
+The direct P1 array **admission** needs 139,404,152 B; it cannot run with the 96 MiB dial. Under that dial the driver parsed P1 in 1.062 s: **101,950** words in text order, **101,505 distinct**, **3,162,140** owned ID offsets. P2 was the leaf (its own trial had no repeated word). P2 sort 0.003 s, P2→P1 lift 1.561 s, 17 ranges, exactly 3,162,140 offsets counted/routed/ordered, 3,358 shared groups. No kernel sorted the 3,170,531 parent positions in this arm. Peak simultaneous new logical files planned 80,025,848 B; scratch subtree including directories sampled 80,026,018 B logical / 54,804,480 B allocated. For the short direct arm the sampler missed the final growth: the closed inverse alone was 25,364,248 B / 25,366,528 B allocated. These are incremental prepared-arm files; the planner separately deducted the retained P1 tape, refs and histogram. The smaller required sort grant is **not a reduction in measured total RAM** on this input. The two dial settings test admission, not a matched-dial speed comparison.
+
+## Real raw → v10
+
+[One normal installed build](real-100m.json) from the existing 100,000,503-byte input and XSEP map, `-j 4 -m 320M`. No reference inputs or exhaustively checked row stream in the builder. The product closed Nov 26 **01:21:35 UTC** / Nov 25 **19:21:35 Memphis**. **87,192,432 B**, matched [trusted whole-v10 SHA](../real-v10-product-100m/) `eac582ca1e51ead51239b60b1506c44cacf9b6713b675b16003f57fc4f3f98bd` after publication; also `cmp` equal to the old native product. 100,000,504 rows, 38,647,521 runs, χ=29,716,347, 16,556 documents.
+
+* Raw naming **31.146 s** (one trigger scan, 2,689,467 distinct byte phrases); upper census **0.772 s**; direct P1 rank **0.074 s**. At this grant P1 fit and `U2+m2 > |P1|`: no point claiming a recursive lift occurred in this full build. Raw → prepared **31.996 s**.
+* Prepared rows + writer **65.288 s**. Producer wall: aligned view 0.304 s, offset census / range plan / routing 0.163 / 0.002 / 0.650 s, posting load + dictionary ordering **38.664 s**, expansion including pipe backpressure **24.772 s**. Writer and context overlap; these are not additive worker CPU clocks. 80 ranges; **95,434,516** owned dictionary offsets each counted/routed/ordered once, 85,107,405 representative groups.
+* **97.397 s** invocation → published index + **0.067 s** separate SHA. Cgroup peak 446,337,024 B. Sampled scratch 127,777,974 B logical / 118,751,232 B allocated vs 200,001,006 B target, input/product excluded. 50 ms sampling, not enforcement. Wait4 attributed R/W 100,073,472 / 368,070,656 B. Host-wide nvme2n1 sectors in that interval: 100,073,472 / 307,785,728 B; dirty writeback may be later, `io.stat` unavailable. Row pipe is not disk traffic.
+* [Earlier installed native producer](../build-stream/100m.json): same raw product, four cores, 2 GiB, no swap, 320 MiB dial, raw→publication **89.074 s**, stream+finish **88.088 s**. The new complete path took 1.09× that wall in these observations, despite faster prepared emission. The [older resident reference](../real-v10-product-100m/) took 94.747 s raw→joined **with a different filesystem and online witness**; not a like-for-like promotion measurement.
+
+Full logs, inverse files, product and exact external meter: `$S/pfp-levels-100m-kAaLkG/{direct,prepared,full,arm.py}`, `$S=/mnt/nvme2n1/erikg/TAPEREADER/sandbox`. No larger run or production promotion. The byte-level rank view still charges the entire raw mapping, independent of recursive integer ranking.
