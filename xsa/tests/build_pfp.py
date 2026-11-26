@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI smoke test (not part of construction). Usage: build_stream.py PATH/TO/xsa"""
+"""CLI smoke test (not part of construction). Usage: build_pfp.py PATH/TO/xsa"""
 import os
 from pathlib import Path
 import struct
@@ -19,11 +19,13 @@ with tempfile.TemporaryDirectory() as directory:
     cuts = [0,777,len(text)+5]
     (d/'seps.bin').write_bytes(struct.pack('<4sIII4Q',b'XSEP',1,1,64,3,len(text)+9,1,0)
                                 +struct.pack('<3IQ',0,cuts[1],cuts[2]-cuts[1],0))
-    cmd = [xsa,'build-stream',raw,'--docs-map',d,'-T',scratch,'-o',index,'-j','1']
+    cmd = [xsa,'build-pfp',raw,'--docs-map',d,'-T',scratch,'-o',index,'-j','1']
     def run(argv,ok=True):
         p = sp.run(argv,capture_output=True,timeout=60)
         assert (p.returncode==0)==ok,(p.returncode,p.stdout,p.stderr)
         return p
+    assert b'xsa build-pfp' in run([xsa,'build-pfp','--help']).stdout
+    assert b'renamed to build-pfp' in run([xsa,'build-stream','--help'],False).stderr
     build = run(cmd)
     assert not build.stdout and not build.stderr, (build.stdout,build.stderr)
     first = index.read_bytes()
@@ -47,4 +49,4 @@ with tempfile.TemporaryDirectory() as directory:
     (d/'seps.bin').write_bytes(b'bad map')
     run(cmd,False); assert not index.exists()
     assert not list(scratch.iterdir()) and not list(d.glob('.xsa-publish-*'))
-print('build-stream: query, document boundaries, deterministic bytes and error cleanup passed')
+print('build-pfp: query, document boundaries, deterministic bytes and error cleanup passed')

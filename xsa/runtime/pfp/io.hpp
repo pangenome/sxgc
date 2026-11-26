@@ -82,4 +82,7 @@ template<class T, size_t K = 256> struct Writer {
 // terminal is unambiguous even when a nonterminal's overlap ends at N.
 struct Phrase { U start, stride, count; };
 static_assert(sizeof(Phrase)==24);
+// ID-level census in symbols, not bytes. This is a fixed-size private wire.
+struct Census { U n, m, k, owned, max_id; };
+static_assert(sizeof(Census)==40);
 }

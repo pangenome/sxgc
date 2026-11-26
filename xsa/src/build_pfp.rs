@@ -1,4 +1,4 @@
-//! `build-stream`: fresh construction. Rows flow through bounded Unix pipes;
+//! `build-pfp`: fresh construction. Rows flow through bounded Unix pipes;
 //! the only bytes following the rows are the two metadata members.
 use crate::{ctx, die, docstarts};
 use std::fs::File;
@@ -12,12 +12,12 @@ pub fn command(args: &[std::ffi::OsString]) {
     let dir = crate::bundle::resolve().unwrap_or_else(|e| die(&e));
     let err = Command::new("python3")
         .arg("-I")
-        .arg(dir.join("tools/build_stream.py"))
+        .arg(dir.join("tools/build_pfp.py"))
         .arg(&dir)
         .arg(exe)
         .args(args)
         .exec();
-    die(&format!("build-stream: exec python3: {err}"));
+    die(&format!("build-pfp: exec python3: {err}"));
 }
 
 // One coarse entry per 16 KiB keeps the random doc lookup to a small local

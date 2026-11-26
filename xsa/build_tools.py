@@ -89,7 +89,8 @@ for name, src in [('rpfbwt_endpoints', 'rpfbwt_endpoints.cpp'), ('slim_dump', 'c
 run('bash', repo/'tools/build_slim_dump.sh', bundle/'xsa_finish', 'bit6/xsa_finish.cpp', env=env)
 # Bounded phrase naming: raw -> text-order lexical IDs + dictionary refs/census.
 run('g++', '-O3', '-std=c++20', '-fopenmp', repo/'pfp/parse.cpp', '-o', bundle/'pfp_parse', env=env)
-# One ranker over the integer tape; the row producer consumes those columns.
+# Sort only the deepest ID tape; lift through the measured parse levels.
+run('g++', '-O3', '-std=c++20', '-fopenmp', repo/'pfp/lift.cpp', '-o', bundle/'pfp_lift', env=env)
 run('g++', '-O3', '-std=c++20', '-fopenmp', repo/'rolling/parse64.cpp', '-o', bundle/'stream_rank', env=env)
 run('g++', '-O3', '-std=c++20', '-fopenmp', '-pthread', repo/'pfp/rows.cpp',
     '-lcrypto', '-o', bundle/'pfp_rows', env=env)

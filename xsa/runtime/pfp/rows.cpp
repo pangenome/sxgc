@@ -35,6 +35,9 @@ int main(int argc,char** argv) try {
     e.emit_to(STDOUT_FILENO,e.plan.jobs.size(),true);
     U counted=0,routed=0;for (auto& stripe:ix.stripe) {counted+=stripe.counted;routed+=stripe.routed;}
     check(counted==d && routed==d && e.totals.loaded==d && e.totals.rows==n,"PFP dictionary/output coverage");
+    // Producer wall intervals, not additive with concurrent context/writer CPU.
+    std::fprintf(stderr,"PFP_ROW_TIME aligned_s=%.6f count_s=%.6f plan_s=%.6f route_s=%.6f order_s=%.6f expand_pipe_s=%.6f\n",
+        view.stats.build,ix.census_s,ix.plan_s,ix.encode_s,e.sort_wall,e.stream_wall);
     std::fprintf(stderr,"PFP_ROWS parse_positions=%" PRIu64 " phrases=%" PRIu64 " offsets=%" PRIu64
         " emit_fixed=%" PRIu64 " slots=%" PRIu64 " ranges=%zu counted=%" PRIu64 " routed=%" PRIu64 " ordered=%" PRIu64
         " groups=%" PRIu64 " shared_groups=%" PRIu64 " rows=%" PRIu64 " posting_bytes=%" PRIu64 "\n",m,k,d,U(base),slots,ix.bands.size(),counted,routed,e.totals.loaded,e.totals.groups,e.totals.multi,n+1,ix.wire);

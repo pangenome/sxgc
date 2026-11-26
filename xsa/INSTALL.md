@@ -31,7 +31,7 @@ The installed `MANIFEST.sha256` additionally records one `source_sha256`: a
 digest over the exact first-party source bytes the running build compiled,
 recomputed on every build and compared against nothing.
 
-`xsa build-stream RAW --docs-map DIR -T /scratch -o INDEX` builds the raw-corpus
+`xsa build-pfp RAW --docs-map DIR -T /scratch -o INDEX` builds the raw-corpus
 v10 profile from an overlapping prefix-free parse, its integer suffix ranks,
 and an ordered row stream. The refs, census and ID tape are private scratch;
 no extra parser installation is needed. This route needs no FUSE, systemd,
