@@ -1,0 +1,13 @@
+{
+  "label": "1g-refine-j32-m8G",
+  "ok": false,
+  "exit": 1,
+  "threads": 32,
+  "memory_grant": "8G",
+  "input_bytes": 1000000665,
+  "wall_s": 120.81083786021918,
+  "verdict": "REJECTED by the PFP row contract: build(target) refines a band whose size exceeds the wave target, and rows.cpp asserts a no-replay plan (`!e.plan.scans && e.plan.jobs.size()==ix.bands.size()` -> \"PFP ranges require replay\"). Refinement replays the refined job's postings, so this route is closed; the parallel-sort-inside-a-job route does not replay and remains open.",
+  "phase_lines": [
+    "PFP_PARSE bytes=1000000665 trigger_scans=1 occurrences=31784026 words=25336659 owned_offsets=938179281 initial_phrase_runs=1 external_merge_passes=0 sort_calls=1 scan_s=5.503335 sort_s=3.120458(part=0.245468 level=2.260494) merge_s=0.000000 name_s=5.633617 scratch_peak=862354072 scratch_final=862354072"
+  ]
+}

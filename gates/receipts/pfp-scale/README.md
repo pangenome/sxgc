@@ -125,12 +125,40 @@ So above about 8-16 workers this pipeline is no longer CPU-bound: more workers
 cannot shorten phases that are paced by an indivisible range, a fan-in leader, or
 a single-threaded consumer.
 
+## Huge pages (kept)
+
+This host sets `transparent_hugepage/enabled=madvise`, so anonymous scratch stays on
+4 KiB pages unless asked. The row view's columns and the arena are read at random over
+gigabytes, which is a TLB miss per row. `rawview::Mem::open` and the arena now request
+`MADV_HUGEPAGE`. Same 1 GB arm, same grants, same product SHA
+([thp](1g-thp-j32-m48G.json) vs [final](1g-final-j32-m48G.json)): wall 620.3 -> **549.7 s**,
+row ordering 106.2 -> 99.6 s, expansion 478.6 -> 413.7 s. A second pair at `-m 8G`
+([thp](1g-thp-j32-m8G.json), 651.6 s) shows the same direction under a tighter arena.
+The gain should be larger at 10 GB, where the columns are ten times bigger; it is not
+measured there yet.
+
+## A rejected fix, and why it matters
+
+The obvious way to fix the 8.4-lane row ordering is to let the *planner* refine an
+oversized range down to the wave target. That was implemented and measured
+([1g-refine-j32-m8G-REJECTED.json](1g-refine-j32-m8G-REJECTED.json)): the build
+**refused** with `PFP ranges require replay`. The PFP row producer asserts a
+one-pass plan (`!e.plan.scans && e.plan.jobs.size()==ix.bands.size()`), and planner
+refinement replays the refined job's postings. That guard is the no-replay law for
+this path, so the route is closed rather than relaxed.
+
+The open route with the same goal is a **parallel sort inside one job**: gather once,
+sort the job's arena in `4 x workers` chunks, then merge in place. It replays nothing,
+so the contract holds.
+
 ## Next tickets, in the order the numbers above justify
 
-1. **Split an oversized dictionary range across lanes.** The largest two-symbol
-   cell (212 M descriptors here) is indivisible to the *planner*, but its slots
-   can be sorted by several lanes and merged, exactly as the naming phase now
-   does. This is the direct fix for 8.4 effective lanes.
+1. **Sort one job with several lanes.** The largest two-symbol cell (212 M
+   descriptors here) is indivisible to the *router* and may not be refined
+   (that replays postings), but its slots can be gathered once, sorted in
+   `4 x workers` chunks and merged in place, exactly as the naming phase does.
+   Ceiling: row ordering 2,037 -> about 400 s, so the 10 GB wall falls to the
+   expansion.
 2. **Drain tiles without a single ordered leader.** Give each lane a larger
    out-of-order budget, or emit per-lane ordered segments and interleave by tile
    sequence, so one occurrence-heavy tile cannot stall the other lanes.

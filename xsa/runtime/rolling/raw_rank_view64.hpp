@@ -32,7 +32,11 @@ struct Mem {
  void* ptr=MAP_FAILED;U size=0;
  Mem()=default;Mem(const Mem&)=delete;~Mem(){drop();}
  void drop(){if(ptr!=MAP_FAILED){need(!munmap(ptr,size),"unmap");ptr=MAP_FAILED;size=0;}}
- void open(Big bytes,int fd=-1){need(ptr==MAP_FAILED,"map lifetime");size=extent(bytes);ptr=mmap(nullptr,size,fd<0?PROT_READ|PROT_WRITE:PROT_READ,MAP_PRIVATE|(fd<0?MAP_ANONYMOUS:0),fd,0);need(ptr!=MAP_FAILED,"mapping");}
+ void open(Big bytes,int fd=-1){need(ptr==MAP_FAILED,"map lifetime");size=extent(bytes);ptr=mmap(nullptr,size,fd<0?PROT_READ|PROT_WRITE:PROT_READ,MAP_PRIVATE|(fd<0?MAP_ANONYMOUS:0),fd,0);need(ptr!=MAP_FAILED,"mapping");
+  // Anonymous scratch is read at random over gigabytes. This host only grants
+  // huge pages on request, so an unadvised mapping stays on 4 KiB pages and
+  // every row misses the TLB; ask for huge pages for anonymous mappings.
+  if(fd<0) (void)madvise(ptr,size,MADV_HUGEPAGE);}
  U* words(){return (U*)ptr;}const uint8_t* bytes()const{return (const uint8_t*)ptr;}
 };
 struct Input {

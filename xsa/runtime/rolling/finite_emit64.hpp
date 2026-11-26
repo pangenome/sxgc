@@ -94,7 +94,13 @@ struct Emit {
   if (want>grant) { U drop=U((want-grant)/sizeof(Slot))+1; slots=slots>drop?slots-drop:0; want=need_bytes(slots); }
   need(slots && want<=grant,"ordered stream array grant");arrays=narrow(want);plan.build(slots);}
  void emit_to(int sink,U through,bool tiled){const auto& jobs=plan.jobs;need(next_job<through && through<=jobs.size(),"epoch job coverage");stop.check();
-  std::vector<Slot> arena(slots);std::vector<Marks> marks;marks.reserve(team);for(int i=0;i<team;++i)marks.emplace_back(m);
+  std::vector<Slot> arena(slots);
+  // The arena is read and written at random for the whole job; ask for huge
+  // pages (the host only grants them on request).
+  { uintptr_t lo=(uintptr_t)arena.data(), hi=lo+sizeof(Slot)*slots, pg=4096;
+    lo=(lo+pg-1)&~(uintptr_t)(pg-1); hi&=~(uintptr_t)(pg-1);
+    if(hi>lo) (void)madvise((void*)lo,size_t(hi-lo),MADV_HUGEPAGE); }
+  std::vector<Marks> marks;marks.reserve(team);for(int i=0;i<team;++i)marks.emplace_back(m);
   if(!next_job){int flags=fcntl(sink,F_GETFL);need(flags>=0 && !fcntl(sink,F_SETFL,flags|O_NONBLOCK),"nonblocking row sink");Row first=row(n,0,text[n-1]);send(sink,&first,1,stop,sink_stats);}
   for(U lo=next_job,hi;lo<through;lo=hi){std::array<U,65> at{};hi=lo;while(hi<through && hi-lo<U(team)){U i=hi-lo,d=jobs[hi].exact?0:jobs[hi].d;if(d>slots-at[i])break;at[i+1]=at[i]+d;++hi;}
    int lanes=int(hi-lo);need(lanes>0,"empty wave");++waves;std::vector<Counts> stats(lanes);double ts=omp_get_wtime();
