@@ -1,0 +1,26 @@
+{
+  "label": "100m-t9-nopcheck-j16",
+  "verdict": "REJECTED: replacing the writer's six-condition per-row fence with a packet-granularity fence changed nothing (rows 10.51 -> 10.68 s, wall 50.48 -> 49.89 s; both within noise, and the SHA pins still matched).",
+  "writer_split_100m_j16": {
+    "base": {
+      "read": 37.652,
+      "rows": 10.512,
+      "add": 2.411,
+      "sweep": 5.758,
+      "chi": 0.747,
+      "total": 49.063,
+      "wall": 50.478
+    },
+    "nopcheck": {
+      "read": 36.835,
+      "rows": 10.679,
+      "add": 2.464,
+      "sweep": 5.915,
+      "chi": 0.747,
+      "total": 48.418,
+      "wall": 49.894
+    }
+  },
+  "conclusion": "The 98 ns/row in the writer is run bookkeeping (compare byte, extend run, close run), not validation. At 100 MB the writer is not the pacer either: its own work is 19.5 s of a 50.5 s build and it is read-blocked 37.7 s, so the m20 context feed still paces this rung.",
+  "next": "T5 (m20 counts from row contiguity) is the right 100 MB ticket; the writer's own 19.5 s/100 MB argues against T7/T8 at this rung until the context is fixed."
+}

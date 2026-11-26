@@ -118,7 +118,7 @@ Status legend: `open` / `landed` / `rejected` / `blocked`.
 | T6 | **m20 in parallel**: split the sorted row stream at first- and second-byte bucket boundaries, build subtrees independently, concatenate in bucket order; root document accumulator merged separately | consumer | 100 MB e2e | feed /lanes; 100 MB feed ≤8 s | any pin moves, or feed does not fall by ≥2× at 32 lanes | open |
 | T7 | **m1 blocks in parallel**: the 65,536-run blocks are independent (payload + directory are position-addressed) — encode on N threads, concatenate, prefix-sum the directory | consumer | 100 MB e2e | writer `add` 21 s/GB and part of `rows` overlap; 10 GB writer −30 % | 100 MB emission does not move | open |
 | T8 | **Chunk the χ sweep**: save/restore the 256-entry state at run-range boundaries and sweep ranges in parallel (witnesses go to a bitmap, so order is irrelevant) | consumer | 100 MB e2e | `sweep` 56 s/GB → /chunks | χ count or m5 bytes differ from the pin | open |
-| T9 | **Cheaper per-row validation** in the writer: the six-condition `pf_check` per row is most of the 98 ns row loop; keep it at packet granularity + a sampled per-row check | consumer | 100 MB e2e | `rows` 98 → ~60 ns/row | 100 MB emission does not move | open |
+| T9 | ~~Cheaper per-row validation~~ | consumer | 100 MB e2e | `rows` 98 → ~60 ns/row | — | **rejected** (R4): the fence is free |
 
 ### Closed
 
@@ -126,14 +126,16 @@ Status legend: `open` / `landed` / `rejected` / `blocked`.
 |---|---|---|
 | R1 | planner refinement of an oversized range | **rejected**: the build refuses `PFP ranges require replay`; refinement replays postings. `gates/receipts/pfp-scale/1g-refine-j32-m8G-REJECTED.json` |
 | R3 | chunk-sort + `std::merge` ping-pong ordering (T2, first attempt) | **inconclusive, reverted**: with 1,557 pieces of 17,835 records the 100 MB producer-only arm did not reach the post-sort point in 90 s where the baseline orders the same input in 9.6 s. Not isolated yet; the next step is to time one piece sort and one merge level in isolation. No code kept. |
+| R4 | packet-granularity fence instead of the per-row six-condition check (T9) | **rejected**: rows 10.51 -> 10.68 s at 100 MB, wall 50.48 -> 49.89 s, pins unchanged. The row loop's cost is run bookkeeping, not validation. `100m-t9-nopcheck-j16-REJECTED.json` |
 | R2 | `std::inplace_merge` over chunk-sorted jobs | **rejected**: 11 h 44 m of CPU on 32 cores in 22 min for 1.14 GB of rows; rotation-based merging at tens of millions of records. `1g-orderwave-j32-m8G-REJECTED.json` |
 | L1 | `MADV_HUGEPAGE` on the row view's anonymous columns and the arena | **landed** `0135d6d5`: 1 GB 620.3 → 549.7 s, same pins. Should be larger at 10 GB — not yet measured there |
 
 ## Ordering of work
 
-1. **T5, T9** (consumer, 100 MB arm, ~60 s each): the producer-only measurement
-   above shows the emission is consumer-bound, so these are the tickets that can
-   move the wall today. Both are local rewrites of a loop body.
+1. **T5** (consumer, 100 MB arm, ~60 s): the only consumer term that paces the
+   100 MB rung. T9 is closed — the writer's fence turned out to be free, and its
+   whole own-work share at 100 MB is 19.5 s of a 50.5 s build with 37.7 s
+   read-blocked.
 2. **T7, T8** (consumer): m1 blocks in parallel, then the χ sweep in chunks.
 3. **T2** (producer): the ordering is the producer's only large term and does not
    overlap with the consumers, so its gain is close to 1:1 on the wall.
