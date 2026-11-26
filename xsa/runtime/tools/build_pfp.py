@@ -1,4 +1,4 @@
-"""Fresh v10 construction. Invoked by the installed `xsa build-pfp`."""
+"""Fresh v10 construction. Invoked by the installed `xsa build --pfp`."""
 import argparse
 import os
 from pathlib import Path
@@ -102,16 +102,19 @@ def rank_tape(tools, tape, alphabet, inverse, workers, memory, free, run, note, 
 
 def main(argv):
     tools, xsa = Path(argv[0]), argv[1]
-    cli = argparse.ArgumentParser(prog='xsa build-pfp', description='Build a document-aware v10 suffix index by prefix-free parsing.')
-    cli.add_argument('corpus', type=Path)
+    cli = argparse.ArgumentParser(prog='xsa build --pfp', description='Build a document-aware v10 suffix index by prefix-free parsing.')
+    cli.add_argument('--pfp', action='store_true', required=True, help=argparse.SUPPRESS)  # already in prog
+    source = cli.add_mutually_exclusive_group(required=True)
+    source.add_argument('corpus', nargs='?', type=Path, metavar='RAW', help='raw corpus')
+    source.add_argument('--input', type=Path, metavar='RAW', help='raw corpus instead of positional RAW')
     cli.add_argument('--docs-map', required=True, type=Path, metavar='DIR', help='XSEP map of the corpus (or of the same stream before prefix truncation)')
     cli.add_argument('-o','--output', required=True, type=Path, metavar='INDEX', help='new index; never overwrites')
-    cli.add_argument('-T','--tmpdir', type=Path, help='scratch parent (default: TMPDIR or output directory)')
+    cli.add_argument('-T','--tmpdir','--scratch', type=Path, help='scratch parent (default: TMPDIR or output directory)')
     cli.add_argument('-j','--threads', type=int, default=min(4,len(os.sched_getaffinity(0))), help='sort workers (default: up to 4)')
     cli.add_argument('-m','--sort-memory', type=byte_size, help='sort array budget, not total RSS (default: max(256M, 2 x corpus bytes))')
     cli.add_argument('-v','--verbose', action='store_true', help='print stage diagnostics and phase times to stderr')
     a = cli.parse_args(argv[2:])
-    raw = a.corpus.resolve(strict=True)
+    raw = (a.input or a.corpus).resolve(strict=True)
     n = raw.stat().st_size
     if not raw.is_file() or not 0 < n < 1<<43:
         cli.error('corpus must be a nonempty regular file shorter than 2^43 bytes')
@@ -148,7 +151,7 @@ def main(argv):
                         sys.stderr.buffer.write(errors.read())
                     raise
                 elapsed = time.monotonic()-start
-                note(f'build-pfp: {name} {elapsed:.3f}s')
+                note(f'build --pfp: {name} {elapsed:.3f}s')
             def note(message):
                 if a.verbose:
                     print(message,file=sys.stderr,flush=True)
@@ -178,7 +181,7 @@ def main(argv):
         finally:
             os.close(dfd)
         if a.verbose:
-            print(f'build-pfp: {a.output} ({a.output.stat().st_size} bytes); raw-to-prepared {prepared:.3f}s',file=sys.stderr)
+            print(f'build --pfp: {a.output} ({a.output.stat().st_size} bytes); raw-to-prepared {prepared:.3f}s',file=sys.stderr)
 
 
 def interrupted(sig,frame):
@@ -191,4 +194,4 @@ if __name__ == '__main__':
     try:
         main(sys.argv[1:])
     except (OSError,RuntimeError) as e:
-        sys.exit(f'build-pfp: {e}')
+        sys.exit(f'build --pfp: {e}')

@@ -1,4 +1,4 @@
-//! `build-pfp`: fresh construction. Rows flow through bounded Unix pipes;
+//! `xsa build --pfp`: fresh construction. Rows flow through bounded Unix pipes;
 //! the only bytes following the rows are the two metadata members.
 use crate::{ctx, die, docstarts};
 use std::fs::File;
@@ -6,7 +6,9 @@ use std::io::{self, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
-pub fn command(args: &[std::ffi::OsString]) {
+pub const USAGE: &str = "xsa build --pfp RAW --docs-map DIR -o INDEX [-T TMPDIR] [-j THREADS] [-m SORT_MEMORY]";
+
+pub fn command(args: &[std::ffi::OsString]) -> ! {
     // The normal installed xsa bundle, not a checkout or a study's /tmp tools.
     let exe = std::env::current_exe().unwrap_or_else(|e| die(&e.to_string()));
     let dir = crate::bundle::resolve().unwrap_or_else(|e| die(&e));
@@ -17,7 +19,7 @@ pub fn command(args: &[std::ffi::OsString]) {
         .arg(exe)
         .args(args)
         .exec();
-    die(&format!("build-pfp: exec python3: {err}"));
+    die(&format!("build --pfp: exec python3: {err}"));
 }
 
 // One coarse entry per 16 KiB keeps the random doc lookup to a small local

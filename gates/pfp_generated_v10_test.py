@@ -17,7 +17,7 @@ def check(xsa):
     with tempfile.TemporaryDirectory(prefix='xsa-pfp-product-') as temp:
         d = Path(temp); inputs = d/'fixture'; make(inputs)
         index = d/'index.sxi2'
-        p = subprocess.run([xsa, 'build-pfp', inputs/'raw', '--docs-map', inputs/'map',
+        p = subprocess.run([xsa, 'build', '--pfp', inputs/'raw', '--docs-map', inputs/'map',
                             '-T', d, '-j', '1', '-v', '-o', index], capture_output=True, timeout=120)
         assert p.returncode == 0, p.stderr[-4000:]
         # The first-level words repeat, but on this input ALL upper words are
@@ -42,7 +42,7 @@ def recursive(xsa):
         block=shake_256(b'xsa-pfp-level-lift').digest(32768).replace(b'\xff',b'\x00')
         raw.write_bytes(block*12+block[:117]); n=raw.stat().st_size
         (d/'seps.bin').write_bytes(struct.pack('<4sIII4Q3IQ', b'XSEP',1,1,64,3,n,1,0,0,117,n//2-117,0))
-        cmd=[xsa,'build-pfp',raw,'--docs-map',d,'-T',scratch,'-j','1','-v','-o',d/'index']
+        cmd=[xsa,'build','--pfp',raw,'--docs-map',d,'-T',scratch,'-j','1','-v','-o',d/'index']
         team=str(min(2,len(os.sched_getaffinity(0))))
         for budget,workers in [('256M','1'),('48M',team)]:
             cmd[cmd.index('-j')+1]=workers

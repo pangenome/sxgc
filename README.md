@@ -30,7 +30,7 @@ xsa search pile.sxi2 --pattern " function " --corpus
 xsa mem    pile.sxi2 "the quick brown fox"          # maximal exact matches (widths + positions)
 ```
 
-**Builder design:** [The parse is the tape](TAPE_VISION.md). The target for `xsa build` is to sort the integer prefix-free parse and stream the byte-level index from that order. The existing `--tape` rehearsal sorted raw positions. [`xsa build-pfp`](docs/build-pfp.md) constructs a lexical overlapping PFP tape, recursively ranks its IDs when the census warrants another level, and induces v10 rows from parse ranks and dictionary representatives. Its current rank/row-view workspace limits and the earlier rolling measurements are separate from qualification of the target `xsa build`.
+**Builder design:** [The parse is the tape](TAPE_VISION.md). The target for `xsa build` is to sort the integer prefix-free parse and stream the byte-level index from that order. The existing `--tape` rehearsal sorted raw positions. [`xsa build --pfp`](docs/build-pfp.md) constructs a lexical overlapping PFP tape, recursively ranks its IDs when the census warrants another level, and induces v10 rows from parse ranks and dictionary representatives. Its current rank/row-view workspace limits and the earlier rolling measurements are separate from qualification of the target `xsa build`.
 
 ### One container format, and nothing else
 
@@ -143,7 +143,7 @@ walk, and no per-suffix position column anywhere in the product path
    publishes the lite container and deletes the rlebwt. Its own work is
    **118.9 s/GB** after decomposition (211.8 s/GB before).
 
-There is ONE route. The pre-bin chunk+merge front end is gone (its flags
+For raw builds without `--pfp`, the pre-bin chunk+merge front end is gone (its flags
 `--legacy-merge`, `--chunks`, `--chunk-mb`, `--fanin`, `--kway` are refused by
 name), and `--v2-pipeline` is accepted and ignored: the bin machine *is* the
 pipeline, and `--tape` selects its producer, not a different route.

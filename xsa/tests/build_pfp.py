@@ -19,13 +19,22 @@ with tempfile.TemporaryDirectory() as directory:
     cuts = [0,777,len(text)+5]
     (d/'seps.bin').write_bytes(struct.pack('<4sIII4Q',b'XSEP',1,1,64,3,len(text)+9,1,0)
                                 +struct.pack('<3IQ',0,cuts[1],cuts[2]-cuts[1],0))
-    cmd = [xsa,'build-pfp',raw,'--docs-map',d,'-T',scratch,'-o',index,'-j','1']
+    cmd = [xsa,'build','--pfp',raw,'--docs-map',d,'-T',scratch,'-o',index,'-j','1']
     def run(argv,ok=True):
         p = sp.run(argv,capture_output=True,timeout=60)
         assert (p.returncode==0)==ok,(p.returncode,p.stdout,p.stderr)
         return p
-    assert b'xsa build-pfp' in run([xsa,'build-pfp','--help']).stdout
-    assert b'renamed to build-pfp' in run([xsa,'build-stream','--help'],False).stderr
+    assert b'xsa build --pfp' in run([xsa,'build','--help']).stdout
+    assert b'xsa build --pfp' in run([xsa,'build','--pfp','--help']).stdout
+    for old in ('build-pfp','build-stream'):
+        assert b'use `xsa build --pfp`' in run([xsa,old,*cmd[3:]],False).stderr
+    for other in ('--bin','--tape','--agc','--fasta','--fastq','--selftest'):
+        assert b'mutually exclusive' in run([xsa,'build',other,*cmd[2:]],False).stderr
+    assert b'not allowed' in run([*cmd,'--input',raw],False).stderr
+    # Without --pfp the raw and genomic forms still go to their original parsers.
+    assert b'need --scratch' in run([xsa,'build','--input',raw],False).stderr
+    assert b'need -o' in run([xsa,'build','--fasta',raw],False).stderr
+    assert not index.exists() and not list(scratch.iterdir())
     build = run(cmd)
     assert not build.stdout and not build.stderr, (build.stdout,build.stderr)
     first = index.read_bytes()
@@ -37,8 +46,9 @@ with tempfile.TemporaryDirectory() as directory:
     assert str(text.count(b'banana')).encode() in result,result
     run(cmd,False); assert index.read_bytes()==first  # atomic no overwrite
     index.unlink()
-    cmd[-1]=str(min(2,len(os.sched_getaffinity(0))))
-    second = run([*cmd, '-v'])
+    team = str(min(2,len(os.sched_getaffinity(0))))
+    second = run([xsa,'build','--input',raw,'--scratch',scratch,'--pfp',
+                  '--docs-map',d,'--output',index,'--threads',team,'-v'])
     assert b'PFP_PARSE' in second.stderr and b'trigger_scans=1' in second.stderr and b'PFP_ROWS' in second.stderr
     assert index.read_bytes()==first  # deterministic across sort workers
     index.unlink(); raw.write_bytes(bytes(range(256)))
@@ -49,4 +59,4 @@ with tempfile.TemporaryDirectory() as directory:
     (d/'seps.bin').write_bytes(b'bad map')
     run(cmd,False); assert not index.exists()
     assert not list(scratch.iterdir()) and not list(d.glob('.xsa-publish-*'))
-print('build-pfp: query, document boundaries, deterministic bytes and error cleanup passed')
+print('build --pfp: query, document boundaries, deterministic bytes and error cleanup passed')

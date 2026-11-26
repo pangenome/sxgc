@@ -1,16 +1,16 @@
-# `xsa build-pfp`: build a v10 index from a raw corpus
+# `xsa build --pfp`: build a v10 index from a raw corpus
 
-This is the renamed `build-stream` command. The arguments and v10 format are unchanged. The default `xsa build` has not been switched.
+Select PFP with `--pfp` instead of `--tape` or `--bin`. This replaces the standalone `xsa build-pfp` (formerly `build-stream`); the existing PFP arguments, defaults and v10 format are unchanged. Omitting `--pfp` does not select this path.
 
 ```sh
 cargo build --release --locked --manifest-path xsa/Cargo.toml -p xsa
-xsa/target/release/xsa build-pfp corpus.bin --docs-map documents -T /scratch -o corpus.sxi2
+xsa/target/release/xsa build --pfp corpus.bin --docs-map documents -T /scratch -o corpus.sxi2
 xsa/target/release/xsa query corpus.sxi2 --count 'search term'
 ```
 
-`corpus.bin` is a nonempty regular file. Its writer must be finished. The builder reads it in place. `documents/seps.bin` is an XSEP v1 document map for those bytes; the map may cover a longer stream if the input is its prefix starting at byte zero. The last document ends at the input length. Document boundaries are never guessed from delimiter bytes. As in the existing v10 format, one of the 256 byte values must be unused so the alphabet has a code for END.
+Pass the corpus as `corpus.bin` or `--input corpus.bin`, not both. It must be a nonempty regular file. Its writer must be finished. The builder reads it in place. `documents/seps.bin` is an XSEP v1 document map for those bytes; the map may cover a longer stream if the input is its prefix starting at byte zero. The last document ends at the input length. Document boundaries are never guessed from delimiter bytes. As in the existing v10 format, one of the 256 byte values must be unused so the alphabet has a code for END.
 
-`-T DIR` selects an ordinary scratch directory (default: `$TMPDIR`, otherwise the output's parent). `-j N` selects sort workers; the context and container workers also run during emission. `-m SIZE` sets the sort-array budget (binary `K`, `M`, `G`, `T` suffixes), **not** a process RSS limit. It includes the raw mapping and sort arenas but not the other workers, index directories, trie or kernel page cache. The default is `max(256 MiB, 2 × input bytes)`. Use `-v` for diagnostics and phase times. Normally success is silent. Errors go to stderr and return nonzero. An existing output is not overwritten.
+`-T DIR` (or `--scratch DIR`) selects an ordinary scratch directory (default: `$TMPDIR`, otherwise the output's parent). `-j N` selects sort workers; the context and container workers also run during emission. `-m SIZE` sets the sort-array budget (binary `K`, `M`, `G`, `T` suffixes), **not** a process RSS limit. It includes the raw mapping and sort arenas but not the other workers, index directories, trie or kernel page cache. The default is `max(256 MiB, 2 × input bytes)`. Use `-v` for diagnostics and phase times. Normally success is silent. Errors go to stderr and return nonzero. An existing output is not overwritten.
 
 ## Data path
 

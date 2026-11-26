@@ -252,7 +252,7 @@ fn usage() -> ! {
     eprintln!("xsa — chi sa. suffixient-array tools over r-space artifacts");
     eprintln!();
     eprintln!("usage:");
-    eprintln!("  xsa build-pfp RAW --docs-map DIR -o INDEX [-T TMPDIR] [-j THREADS] [-m SORT_MEMORY]");
+    eprintln!("  {}", build_pfp::USAGE);
     eprintln!("  xsa build --tape --input <file> --scratch <dir> [--threads N] [--memory-gb N]");
     eprintln!("             [--docs-map X]  X is a DIR holding seps.bin: embed m15, the document");
     eprintln!("              starts (SXI2 v10, boundaries as METADATA); X is a PREFIX holding");
@@ -332,12 +332,12 @@ fn usage() -> ! {
 
 fn main() {
     let raw: Vec<_> = std::env::args_os().skip(1).collect();
-    if raw.first().is_some_and(|a| a == "build-stream") {
-        die("build-stream was renamed to build-pfp; the arguments are unchanged");
-    }
-    if raw.first().is_some_and(|a| a == "build-pfp") {
-        build_pfp::command(&raw[1..]);
-        return;
+    match raw.first().and_then(|a| a.to_str()) {
+        Some("build") => return build::command(&raw[1..]),
+        Some(old @ ("build-pfp" | "build-stream")) => {
+            die(&format!("{old} was removed; use `xsa build --pfp` with the same arguments"));
+        }
+        _ => {}
     }
     if raw.first().is_some_and(|a| a == "branches") {
         qlite::branches_command(&raw[1..]);
@@ -394,7 +394,6 @@ fn main() {
     }
     let args: Vec<String> = raw.into_iter().map(|a| a.into_string().unwrap_or_else(|_| die("arguments must be UTF-8"))).collect();
     match args.first().map(|s| s.as_str()) {
-        Some("build") => build::command(&args[1..]),
         Some("stream-context") if args.len() == 3 => build_pfp::context(&args[1], &args[2])
             .unwrap_or_else(|e| die(&format!("stream-context: {e}"))),
         Some("sxi-info") => sxi::command(&args[1..]),

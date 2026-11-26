@@ -1,5 +1,5 @@
 //! Timed, fail-closed source pipeline with endpoint samples from the vendored tap.
-use std::path::PathBuf;
+use std::{ffi::OsString, path::PathBuf};
 
 #[derive(Debug)]
 struct Options {
@@ -96,19 +96,29 @@ fn run(args: &[String]) -> Result<(), String> {
     if status.success() { Ok(()) } else { Err(format!("pipeline failed: {status}")) }
 }
 
-pub fn command(args: &[String]) {
+pub fn command(raw: &[OsString]) {
+    // The selector is an option (in any position before `--`), not a new verb.
+    // Forward the original argv so the PFP parser keeps normal option/value semantics.
+    let mut flags = raw.iter().take_while(|a| *a != "--").filter_map(|a| a.to_str());
+    if flags.clone().any(|a| a == "--pfp") {
+        if let Some(other) = flags.find(|a| matches!(*a, "--tape" | "--bin" | "--agc" | "--fasta" | "--fastq" | "--selftest")) {
+            super::die(&format!("build: --pfp and {other} are mutually exclusive"));
+        }
+        super::build_pfp::command(raw);
+    }
+    let args: Vec<_> = raw.iter().map(|a| a.to_str().unwrap_or_else(|| super::die("arguments must be UTF-8")).to_owned()).collect();
     if args.iter().any(|a| a == "--text") {
         super::die("build: LEGACY_TEXT_REFUSED: --text is retired; use xsa build --tape --input <file> --scratch <dir> (virtual END)");
     }
     if args.iter().any(|a| matches!(a.as_str(), "--input" | "--selftest")) {
-        super::chain::command(args); // the consolidated construction chain route
+        super::chain::command(&args); // the consolidated construction chain route
         return;
     }
     if args.len() == 1 && matches!(args[0].as_str(), "--help" | "-h") {
-        println!("{}", super::chain::USAGE);
+        println!("usage: {}\n       See `xsa build --pfp --help` for PFP options.\n\n{}", super::build_pfp::USAGE, super::chain::USAGE);
         return;
     }
-    if let Err(e) = run(args) {
+    if let Err(e) = run(&args) {
         super::die(&format!("build: {e}"));
     }
 }
