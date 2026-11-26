@@ -48,6 +48,24 @@ Two consequences worth keeping in mind:
   already on the critical path there. A ticket that does not move the 100 MB
   emission is dead.
 
+### First producer-only measurement (100 MB, 16 lanes, `-m 2G`, rows to `/dev/null`)
+
+`PFP_ROW_TIME order_s=9.57 expand_pipe_s=**2.00** gather_cpu_s=11.5 sort_cpu_s=79.6
+key_cmp=2.45G text_cmp=0.54G waves=3 tiles=61,962 ranges=35`.
+
+The producer's **own expansion is 2.0 s for 100 M rows**. In the same input's
+end-to-end arm `expand_pipe` was **44.3 s**. So almost all of that phase is the
+producer *waiting for its consumers*, not producing rows — and by extension most
+of the 10 GB `expand_pipe = 4,551 s` is stall, not work. Two consequences:
+
+* **T3 (heavy-class fan-in) is not the first thing to do.** The expansion is
+  already fast; it is idle because the consumer chain is slow.
+* **The ordering is the producer's real term** (9.6 s here, 2,037 s at 10 GB) and
+  it does not overlap with the consumers at all, because a wave sorts before it
+  emits. T2's gain is therefore close to 1:1 on the wall.
+
+**Revised priority: consumers first (T5, T9, T7, T8), then T2, then T1/T3/T4/T6.**
+
 ### Producer-only arm (new, cheap)
 
 The columns are `parse.u64`, `phrases.ref`, `inverse` — the prepared state. Given
@@ -107,20 +125,22 @@ Status legend: `open` / `landed` / `rejected` / `blocked`.
 | # | ticket | outcome |
 |---|---|---|
 | R1 | planner refinement of an oversized range | **rejected**: the build refuses `PFP ranges require replay`; refinement replays postings. `gates/receipts/pfp-scale/1g-refine-j32-m8G-REJECTED.json` |
+| R3 | chunk-sort + `std::merge` ping-pong ordering (T2, first attempt) | **inconclusive, reverted**: with 1,557 pieces of 17,835 records the 100 MB producer-only arm did not reach the post-sort point in 90 s where the baseline orders the same input in 9.6 s. Not isolated yet; the next step is to time one piece sort and one merge level in isolation. No code kept. |
 | R2 | `std::inplace_merge` over chunk-sorted jobs | **rejected**: 11 h 44 m of CPU on 32 cores in 22 min for 1.14 GB of rows; rotation-based merging at tens of millions of records. `1g-orderwave-j32-m8G-REJECTED.json` |
 | L1 | `MADV_HUGEPAGE` on the row view's anonymous columns and the arena | **landed** `0135d6d5`: 1 GB 620.3 → 549.7 s, same pins. Should be larger at 10 GB — not yet measured there |
 
 ## Ordering of work
 
-1. **T1, T2** (producer, cheap, producer-only arm): the two that can plausibly
-   take 10 GB from 6,919 s to ~3,000 s.
-2. **T5, T9** (consumer, 100 MB arm): the cheapest consumer wins; both are local
-   rewrites of a loop body.
-3. **T3** (producer): the heavy-class fan-in, the biggest single remaining term.
-4. **T7, T8** then **T6**: writer first (independent blocks), χ second (state
-   chunking), m20 last (it needs the bucket split and a merge of document
-   accumulators — the most delicate, and the one where byte identity is hardest).
-5. **T4** last among the producers: it only matters once ordering is parallel.
+1. **T5, T9** (consumer, 100 MB arm, ~60 s each): the producer-only measurement
+   above shows the emission is consumer-bound, so these are the tickets that can
+   move the wall today. Both are local rewrites of a loop body.
+2. **T7, T8** (consumer): m1 blocks in parallel, then the χ sweep in chunks.
+3. **T2** (producer): the ordering is the producer's only large term and does not
+   overlap with the consumers, so its gain is close to 1:1 on the wall.
+4. **T1, T3, T4** (producer): prefetch, heavy-class fan-in, wider key — these
+   matter only once the consumers stop pacing the emission.
+5. **T6** (m20 bucket parallelism) last: it needs the bucket split and a merge of
+   document accumulators, and it is where byte identity is hardest.
 
 Promotion rule for the plan as a whole: a 10 GB run is authorised only when the
 1 GB end-to-end arm shows the intended phase moving, and the plan is finished
