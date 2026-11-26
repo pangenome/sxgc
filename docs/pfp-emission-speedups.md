@@ -104,6 +104,60 @@ So: **3–4× is engineering inside this design; 10× needs those four to land p
 the per-row work to stop paying a random access per row.** The tickets below are
 ordered by evidence, not by ambition.
 
+## Better ideas than the ticket list
+
+The tickets above make each phase faster. These make the *shape* faster, and the
+measurements say the shape is where the wall is: `expand_pipe` 4,551 s is stall,
+the two consumers are single-threaded sums over 1.0e10 rows (m20 3,062 s, writer
+2,627 s), and the ordering (2,037 s) does not overlap with either.
+
+**I1 — K independent row pipelines, one per range group.** The row stream is
+already produced *range by range*, and each range is internally ordered with its
+seam carried in `prev`. So the producer does not need one downstream chain; it can
+hand consecutive range groups to K `(context, writer)` pairs and concatenate their
+outputs. That divides **both** serial consumers by K instead of making them
+faster. What it needs: (a) cut every group boundary at a *run* boundary — the
+writer tracks the previous byte, so the producer can end a group where the byte
+changes and no run is split; (b) merge the per-group m1 payloads, m12 `runStart`
+and m13 `dir*` arrays by run index; (c) pass the χ state (256 `rr_len`/`rr_pos`
+entries) from group k to group k+1, or chunk it as in I4; (d) merge the per-group
+m20 tries. Projection at K=8: emission 6,740 → about 1,500 s.
+
+**I2 — radix ordering on the 8-byte slot key.** The sort pays 17,062 core-s for
+2.7e11 comparison calls on a key that is an unsigned 64-bit word. Three counting
+passes over 16-byte slots (8 bits each on the high bytes) replace the comparison
+sort: the traffic is about 440 GB, tens of seconds at machine bandwidth, against
+~270 s of pure comparison even at 64 lanes. Ordering 2,037 → ~250 s. It also
+retires T2 and T4 (a longer key is free when the sort is a counting sort).
+
+**I3 — m20 over context runs, not rows.** A context's rows are contiguous in
+suffix order by construction. So a single pass can compute a node's `count` as
+`row − start` and merge its document set once per context run, instead of
+touching all eight levels for all 1.0e10 rows. This is T5 taken to its end:
+O(contexts), not O(rows), with the per-row work reduced to one compare.
+
+**I4 — χ as a parallel scan.** The sweep's state is a per-char running maximum
+(`rr_len`, `rr_pos`, and the activity flags). Running maxima compose
+associatively, so a scan over K chunks yields all K boundary states, after which
+the K chunks emit witnesses in parallel (witnesses land in a bitmap, so their
+order is irrelevant). This removes the 980 s serial floor that would otherwise
+cap I1.
+
+**I5 — fold the m20 builder into each pipeline.** It is a separate process only
+because it was added later; inside a pipeline it saves one 120 GB pipe hop and one
+scheduler hop per group.
+
+**Where the four land**, all at 10 GB and K=8: naming 177 s + ordering ~250 s +
+expansion ~500 s + consumers ~1,000/8 ≈ 125 s, plus the χ scan → **roughly
+900–1,200 s, i.e. 6–7.5×**, and ~700 s (10×) if the χ scan and the expansion's
+prefetch land too. That is a redesign of the emission stage's shape, not a tuning
+pass, and it is the only route to the 10× that the per-unit numbers allow.
+
+Order of attack if these are adopted: **I2** first (self-contained, no output
+change, 100 MB producer-only arm), then **I3** (100 MB arm, pins), then **I1+I5**
+(the redesign), with **I4** either before I1 (if χ is to be chunked) or after (if
+a sequential handoff is acceptable at first).
+
 ## Tickets
 
 Status legend: `open` / `landed` / `rejected` / `blocked`.
