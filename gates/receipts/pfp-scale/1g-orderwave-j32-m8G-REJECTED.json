@@ -1,0 +1,8 @@
+{
+  "label": "1g-orderwave-j32-m8G-STOPPED",
+  "verdict": "REJECTED: sorting one job's arena in 8*team chunks and merging the chunks with std::inplace_merge regressed catastrophically.",
+  "observation": "pfp_rows used 11 h 44 m of CPU in 22 min wall (about 32 cores) and had written only 1.14 GB of the 12 GB row stream when stopped; the same arm without the change completes the whole build in 651.6 s (1g-thp-j32-m8G). xsa_finish had 0 CPU time and had read 8 KiB: the ordering phase never finished.",
+  "cause": "std::inplace_merge over tens of millions of 16-byte records is rotation-based and repeatedly asks for a large temporary buffer from 32 threads; at this range size it is orders of magnitude worse than the linear-buffer merge used by the naming phase.",
+  "next": "The same idea needs a ping-pong buffer (two slot arrays, merge with std::merge) and therefore half the slot count per grant; that is a separate, measured change. The no-replay contract is not the obstacle here.",
+  "kept": "No code from this experiment is committed; the tree is at the huge-page commit."
+}

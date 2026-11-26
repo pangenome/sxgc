@@ -151,6 +151,19 @@ The open route with the same goal is a **parallel sort inside one job**: gather 
 sort the job's arena in `4 x workers` chunks, then merge in place. It replays nothing,
 so the contract holds.
 
+## A second rejected fix
+
+Sorting one job's arena in `8 x team` chunks and merging them with
+`std::inplace_merge` was implemented and **stopped after 22 minutes**
+([1g-orderwave-j32-m8G-REJECTED.json](1g-orderwave-j32-m8G-REJECTED.json)): the
+ordering phase burned 11 h 44 m of CPU on 32 cores and had emitted 1.14 GB of the
+12 GB row stream, where the unchanged arm finishes the whole build in 651.6 s.
+Rotation-based in-place merging over tens of millions of records, with large
+temporary allocations from every lane, is the cause. The fix must use a
+ping-pong buffer and `std::merge` (the naming phase's pattern), which halves the
+number of slots per grant — a separate, measured change. No code from this
+experiment is committed.
+
 ## Next tickets, in the order the numbers above justify
 
 1. **Sort one job with several lanes.** The largest two-symbol cell (212 M
