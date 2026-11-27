@@ -7,7 +7,7 @@ namespace finiteemit {
 // One arena record: the representative's first bytes past the band's known
 // prefix (big-endian, zero-padded) and the packed dictionary code. Sixteen
 // bytes is what the row planner already reserves per descriptor slot.
-struct Slot {U key=0,code=0;};
+struct Slot {U k1=0,k2=0,code=0;};   // 16 bytes of representative key + the code
 struct Counts {U rows=0,groups=0,multi=0,bitmaps=0,max_tie=0,max_mass=0,loaded=0,keycmp=0,textcmp=0;double sort=0,gather=0,produce=0;finitecache::Stats order;};
 struct Emit {
  const Route& ix;const std::vector<U>* learned;Planner plan;const rawview::View& v;const uint8_t* text;U n,m;int team;rawview::Stop stop;
@@ -24,11 +24,14 @@ struct Emit {
  Span span(U r,U off)const{return plan.span(r,off);}
  Span span(const Slot& s)const{auto [r,off]=unpack(s);return span(r,off);}
  Slot pack(U r,U off,U tok,U skip,Span key)const{U code=pair?((r-1)<<ob)|off:tok;need(!(code&~value_mask) && skip<=key.len,"slot packing");
-  // Eight bytes past the known prefix. A span shorter than that is zero-padded:
-  // a proper prefix then compares smaller unless the longer one also continues
-  // with zero bytes, and that tie falls through to the exact comparator.
-  U high=0;unsigned bytes=unsigned(std::min<U>(8,key.len-skip));std::memcpy(&high,text+key.p+skip,bytes);
-  return {__builtin_bswap64(high),code};}
+  // Sixteen bytes past the known prefix, big-endian and left-aligned. A span
+  // shorter than that is zero-padded: a proper prefix then compares smaller
+  // unless the longer one also continues with zero bytes, and that tie falls
+  // through to the exact comparator.
+  U h1=0,h2=0;const U rest=key.len-skip;
+  const unsigned b1=unsigned(std::min<U>(8,rest));std::memcpy(&h1,text+key.p+skip,b1);
+  if(rest>8){const unsigned b2=unsigned(std::min<U>(8,rest-8));std::memcpy(&h2,text+key.p+skip+8,b2);}
+  return {__builtin_bswap64(h1),__builtin_bswap64(h2),code};}
  int cmp(Span a,Span b)const{U len=std::min(a.len,b.len),h=0;while(len-h>65536){int z=std::memcmp(text+a.p+h,text+b.p+h,65536);if(z)return z;h+=65536;stop.check();}
   int z=std::memcmp(text+a.p+h,text+b.p+h,len-h);if(z)return z;if(a.len!=b.len)return a.len<b.len?-1:1;return int(a.terminal)-int(b.terminal);}
  U seam(Span a,Span b)const{if(!a.len)return 0;U h=0,len=std::min(a.len,b.len);while(len-h>=8){U x,y;std::memcpy(&x,text+a.p+h,8);std::memcpy(&y,text+b.p+h,8);if(x!=y){h+=std::countr_zero(x^y)/8;break;}h+=8;if(!(h%65536))stop.check();}
@@ -41,18 +44,18 @@ struct Emit {
  // an unsigned 64-bit word, so this replaces ~2.7e11 comparison calls on the
  // 10 GB tape with four streaming passes over 16-byte slots.
  void sort_slots(Slot* a,U d,Slot* tmp,Counts& c)const{need(!cached,"slot arena has no cached-order path");
-  auto exact=[&](const Slot& x,const Slot& y){++c.keycmp;if(x.key!=y.key)return x.key<y.key;++c.textcmp;return cmp(span(x),span(y))<0;};
+  auto exact=[&](const Slot& x,const Slot& y){++c.keycmp;if(x.k1!=y.k1)return x.k1<y.k1;if(x.k2!=y.k2)return x.k2<y.k2;++c.textcmp;return cmp(span(x),span(y))<0;};
   if(d<2048 || !tmp){U compares=0;std::sort(a,a+d,[&](const Slot& x,const Slot& y){if(!(++compares%32768))stop.check();return exact(x,y);});return;}
   static thread_local std::vector<U> cnt;cnt.assign(65536,0);
   Slot* src=a;Slot* dst=tmp;
   for(unsigned pass=0;pass<4;++pass){const unsigned shift=16*pass;
    std::fill(cnt.begin(),cnt.end(),0);
-   for(U i=0;i<d;++i) ++cnt[(src[i].key>>shift)&0xFFFFu];
+   for(U i=0;i<d;++i) ++cnt[(src[i].k1>>shift)&0xFFFFu];
    U sum=0;for(U& v:cnt){U k=v;v=sum;sum+=k;}
-   for(U i=0;i<d;++i) dst[cnt[(src[i].key>>shift)&0xFFFFu]++]=src[i];
+   for(U i=0;i<d;++i) dst[cnt[(src[i].k1>>shift)&0xFFFFu]++]=src[i];
    std::swap(src,dst);}
   need(src==a,"radix pass parity");
-  for(U i=0;i<d;){U j=i+1;while(j<d && a[j].key==a[i].key)++j;if(j-i>1) std::sort(a+i,a+j,exact);i=j;}}
+  for(U i=0;i<d;){U j=i+1;while(j<d && a[j].k1==a[i].k1)++j;if(j-i>1) std::sort(a+i,a+j,exact);i=j;}}
  void order(const Job& j,Slot* a,Slot* tmp,Counts& c)const{if(j.exact)return;double ts=omp_get_wtime();const U d=j.d;U i=0,known=std::max<U>(skip(j.band),j.depth);
   plan.visit(j,[&](U r,U off,U tok,Span s){need(i<d,"sort arena overrun");a[i++]=pack(r,off,tok,known,s);++c.loaded;});need(i==d,"sort arena underflow");
   c.gather=omp_get_wtime()-ts;sort_slots(a,d,tmp,c);c.sort=omp_get_wtime()-ts;}
@@ -72,7 +75,7 @@ struct Emit {
   if(job.exact){auto key=job.anchor;union_group(key,seam(prev,key),marks,out,c,[&](auto add){plan.visit(job,[&](U r,U,U,Span s){need(!cmp(s,key),"nonuniform bypass class");add(r);});});
    c.groups=1;c.max_tie=d;c.max_mass=c.rows;d=0;}
   for(U i=0,j=0;i<d;i=j){auto key=span(a[i]);U h0=seam(prev,key);prev=key;j=i+1;
-   while(j<d && a[j].key==a[i].key && !cmp(key,span(a[j]))){if(!(j%16384))stop.check();++j;}
+   while(j<d && a[j].k1==a[i].k1 && a[j].k2==a[i].k2 && !cmp(key,span(a[j]))){if(!(j%16384))stop.check();++j;}
    U mass0=c.rows;++c.groups;c.max_tie=std::max(c.max_tie,j-i);
    if(j==i+1){auto [r,off]=unpack(a[i]);U hi=v.after_head(r);
     for(U z=r;z<hi;++z){if(!(c.rows%16384))stop.check();U p=v.position(z)+off,h=h0;if(z>r){U aligned=v.previous_lcp(z);need(aligned>=off,"unmatched singleton prefix");h=aligned-off;}
@@ -90,7 +93,7 @@ struct Emit {
   for(int j=0;j<lanes;++j){const auto& job=plan.jobs[lo+j];if(job.exact){work.push_back({lo+j,at[j],job.d,prev,true});prev=job.anchor;continue;}
    for(U a=at[j],end=at[j+1];a<end;){stop.check();U b=a+std::min(GRAIN,end-a),wanted=b;Span last=span(arena[b-1]);
     // Extend right, never cut a finite equality class. Same-projection test is only a filter.
-    while(b<end && arena[b].key==arena[b-1].key && !cmp(last,span(arena[b]))){++b;if(!(b%16384))stop.check();}
+    while(b<end && arena[b].k1==arena[b-1].k1 && arena[b].k2==arena[b-1].k2 && !cmp(last,span(arena[b]))){++b;if(!(b%16384))stop.check();}
     extended_cuts+=b-wanted;work.push_back({lo+j,a,b-a,prev,b==end});prev=last;a=b;}}
   need(!work.empty() && work.size()<=bound,"tile plan reservation");tiles+=work.size();for(auto& tile:work)max_piece=std::max(max_piece,tile.len);tile_plan_s+=omp_get_wtime()-start;
   int w=int(std::min<U>(team,work.size()));std::vector<std::unique_ptr<TilePipe>> pipes;std::array<Counts,64> results{};for(int j=0;j<w;++j)pipes.emplace_back(std::make_unique<TilePipe>(stop));

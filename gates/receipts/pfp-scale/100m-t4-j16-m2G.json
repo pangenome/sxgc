@@ -1,0 +1,22 @@
+{
+  "label": "100m-t4-j16-m2G",
+  "ticket": "T4 16-byte representative key (24-byte slot)",
+  "verdict": "LANDED: the arena slot carries sixteen key bytes past the band's known prefix; the counting sort ranks on the first word and equal-first-word runs use (second word, exact).",
+  "producer_only_100m_16lanes": {
+    "order_s_i2": 7.202,
+    "order_s_t4": 4.673,
+    "sort_cpu_s_i2": 54.525,
+    "sort_cpu_s_t4": 18.883,
+    "key_cmp_i2": 499729791,
+    "key_cmp_t4": 483043657,
+    "text_cmp_i2": 499729791,
+    "text_cmp_t4": 95292551,
+    "order_s_original": 9.566,
+    "sort_cpu_s_original": 79.559
+  },
+  "end_to_end_100m_j16_m2G": {
+    "pin": "eac582ca...",
+    "matched": true
+  },
+  "note": "Equal-key groups collapsed from ~500M to ~95M exact comparisons; ordering is now 2.05x faster than the comparison sort that started this ticket list. The arena is 2 x 24 bytes per slot, so rows.cpp divides the grant by 48."
+}
