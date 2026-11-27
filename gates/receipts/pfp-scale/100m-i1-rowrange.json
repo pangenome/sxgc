@@ -1,0 +1,19 @@
+{
+  "label": "100m-i1-rowrange",
+  "ticket": "I1 step 1 - v10 writer row-range contract with an explicit group carry",
+  "verdict": "LANDED: writer accepts --rows A:B with --carry-in/--carry-out/--chi-shared; two groups at an m1-block-aligned run boundary reproduce the single-group m1, m12, m13 and m5 members byte for byte.",
+  "carry": "magic ROWGRP01 v1, n, row A, run_base, prev position, open run (c,len,h,t,top,interior), sweep state (rr_len/rr_pos/rr_act/m/p/p_sa_last/previous_interior/first, heap rebuilt by heapInit), and the run-directory global state (idx_row, occ[256], cum[256], lastSample[256], lastSampleOcc[256], sample_group) plus <=256 m13 tail-stride repairs.",
+  "gates": {
+    "a_default_0:n": "87,192,432 B, sha256 eac582ca...4f3f98bd - reproduced (verified by the parent with the final code, twice)",
+    "b_two_groups": "cut at row 50,000,082 = start of global run 23,959,553 (run%1024=1, byte 78->110); merged m1 35,967,704 B (payload 22,038,192+13,323,304, prefix-summed directory), m12 306,720 B, m13 30,095,856 B (header row 100,000,504 / runs 38,647,521, 1,252,110 entries, 166/166 tail-stride repairs), m5 29,716,347 - all byte-identical to the single-group members (worker measurement; containers and the merge script are in /tmp/i1-rowrange)",
+    "c_fixtures": "build_pfp.py pass; pfp_generated_v10_test.py 378,392 B 921f4e47... and recursive 02508df3... pass",
+    "d_off_grid_cut": "refused with numbers (continues at global run 23,959,579, 27 past the 1024-run block grid); no output and no partial left behind"
+  },
+  "two_findings": [
+    "StreamRunIndex samples and dirCum are global quantities, so the carry must include occ/cum/lastSample/lastSampleOcc/index-row - not just the open run and the sweep state.",
+    "write() patches each char's last sample with the distance to the end of the observed stream, so a mid-stream group writes a wrong tail stride; the merged m13 needs a carried per-char repair (<=256 entries), which is why the merged member is byte-identical rather than 'self-consistent'.",
+    "A group cut must land on a global run index divisible by M1_BLOCK_RUNS=1024 (m1 blocks carry their own padded bit streams); this is a numbered refusal, not a comment."
+  ],
+  "correction": "the 'first frame byte equals the carried code' guard I asked for is wrong at a run boundary - the byte changes there by definition. The writer asserts the two legal continuations instead: same code grows the carried run by one row ending at this position, different code starts a fresh one-row run.",
+  "todo": "the merge that this proves is not yet a product step: the K-pipeline assembler (prefix-summed m1 directory, concatenated m12/m13 with the carried repairs, shared bitmap m5) still has to be written and wired into build_pfp.py."
+}

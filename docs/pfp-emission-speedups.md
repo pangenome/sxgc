@@ -165,6 +165,19 @@ change, 100 MB producer-only arm), then **I3** (100 MB arm, pins), then **I1+I5*
 (the redesign), with **I4** either before I1 (if χ is to be chunked) or after (if
 a sequential handoff is acceptable at first).
 
+## I1 step 1 - LANDED (writer row-range contract)
+
+`xsa_finish --from-rows HIST SCRATCH OUT [--rows A:B] [--carry-in F] [--carry-out F] [--chi-shared F]`.
+Two groups cut at a global run index divisible by `M1_BLOCK_RUNS` reproduce the
+single-group **m1, m12, m13 and m5 members byte for byte** on the 100 MB anchor
+(`100m-i1-rowrange.json`), and an off-grid cut is refused with numbers. Three
+things the sketch below did not anticipate, all now implemented: the carry must
+include the run directory's global sampling state; `write()` patches a per-char
+tail stride that a mid-stream group cannot know, so the merged m13 needs a
+carried per-char repair; and the cut must sit on the m1 block grid. What remains
+for I1 is the **assembler** - the K-pipeline step that applies those rules to
+produce one container - and the producer routing.
+
 ## I1 implementation sketch (call-site level)
 
 The producer already emits range by range, in order, carrying the seam in

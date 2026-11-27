@@ -2725,18 +2725,35 @@ static int selftest_sweep_monoid() {
 // The sweep retains its interval-lifetime selection rule. Membership is keyed
 // by text position, not suffix rank. Ascending set bits feed the existing m5
 // Elias-Fano codec without an O(chi) vector or external comparison sort.
+//
+// SHARED_FILE is the I1 group mode: K row groups OR their witnesses into ONE
+// named file, so it is created if absent but never truncated and never removed
+// here, and the counts it holds are this process's only. The group that ends the
+// stream calls rescan() to take the union's count before m5 is encoded.
 struct WitnessBitmap {
+    enum Shape { OWN_FILE, SHARED_FILE };
     uint64_t n, bytes, totalValues = 0, duplicates = 0;
     std::string path;
     int fd = -1;
+    bool owns = true;
     uint8_t* bits = nullptr;
     std::vector<uint64_t> delta;
     WitnessBitmap(uint64_t size, const std::string& prefix, bool enabled = true)
         : n(size), bytes(enabled ? size / 8 + (size % 8 != 0) : 0),
           path(prefix + ".chi-bitmap") {
         if (!bytes) return;
+        open_bitmap(finish_spool::enabled() ? O_TRUNC : O_EXCL, true);
+    }
+    WitnessBitmap(uint64_t size, const std::string& file, Shape shape)
+        : n(size), bytes(size / 8 + (size % 8 != 0)), path(file) {
+        pf_check(shape == SHARED_FILE, "a witness bitmap is either owned or shared");
+        if (!bytes) return;
+        open_bitmap(0, false);
+    }
+    void open_bitmap(int exclusive, bool owner) {
+        owns = owner;
         pf_check(bytes <= uint64_t(INT64_MAX) && bytes <= SIZE_MAX, "chi bitmap size overflow");
-        fd = ::open(path.c_str(), O_RDWR | O_CREAT | (finish_spool::enabled() ? O_TRUNC : O_EXCL), 0600);
+        fd = ::open(path.c_str(), O_RDWR | O_CREAT | exclusive, 0600);
         pf_check(fd >= 0, "create chi bitmap");
         pf_check(::ftruncate(fd, off_t(bytes)) == 0, "size chi bitmap");
         void* map = ::mmap(nullptr, size_t(bytes), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -2779,9 +2796,19 @@ struct WitnessBitmap {
                 (unsigned long long)bytes, (unsigned long long)ru.ru_maxrss,
                 (unsigned long long)totalValues, (unsigned long long)duplicates);
     }
+    // The union's count, for the group that ends the stream: every group has
+    // already ORed its witnesses into this file, and the per-process duplicate
+    // counter means nothing across writers.
+    void rescan() {
+        pf_check(bits && bytes, "rescan of an empty chi bitmap");
+        pf_check(::madvise(bits, size_t(bytes), MADV_SEQUENTIAL) == 0, "advise chi bitmap sequential");
+        uint64_t count = 0;
+        for (uint64_t byte = 0; byte < bytes; ++byte) count += uint64_t(__builtin_popcount(bits[byte]));
+        totalValues = count; duplicates = 0;
+    }
     void cleanup() {
         if (bits) { ::munmap(bits, size_t(bytes)); bits = nullptr; }
-        if (fd >= 0) { ::close(fd); fd = -1; ::unlink(path.c_str()); }
+        if (fd >= 0) { ::close(fd); fd = -1; if (owns) ::unlink(path.c_str()); }
     }
 };
 
@@ -5361,8 +5388,37 @@ static void fp_self_check(SlimFingerprint<CorpusText>& fh, const CorpusText& tex
 
 int main(int argc, char** argv) {
     try {
-        if (argc == 5 && std::string(argv[1]) == "--from-rows")
-            return finish_row_stream(argv[2], argv[3], argv[4]);
+        if (argc >= 5 && std::string(argv[1]) == "--from-rows") {
+            // I1 group runs: --rows A:B --carry-in F --carry-out F --chi-shared F.
+            // No option at all is the single-group path (`--rows 0:n`).
+            rowfinish::RowRange range;
+            auto amount = [](const std::string& v) {
+                char* end = nullptr;
+                const unsigned long long x = std::strtoull(v.c_str(), &end, 10);
+                pf_check(!v.empty() && end && *end == '\0', "row-range counts are decimal: " + v);
+                return uint64_t(x);
+            };
+            for (int i = 5; i < argc; ++i) {
+                const std::string a = argv[i];
+                auto need = [&]() -> std::string {
+                    pf_check(i + 1 < argc, a + " requires a value");
+                    return argv[++i];
+                };
+                if (a == "--rows") {
+                    const std::string v = need();
+                    const size_t colon = v.find(':');
+                    pf_check(colon != std::string::npos, "--rows needs A:B, not " + v);
+                    range.from = amount(v.substr(0, colon));
+                    const std::string hi = v.substr(colon + 1);
+                    range.to = hi == "n" ? 0 : amount(hi);
+                }
+                else if (a == "--carry-in") range.carry_in = need();
+                else if (a == "--carry-out") range.carry_out = need();
+                else if (a == "--chi-shared") range.chi_shared = need();
+                else pf_fail("unknown --from-rows argument " + a);
+            }
+            return finish_row_stream(argv[2], argv[3], argv[4], range);
+        }
         if (argc == 2 && std::string(argv[1]) == "--benchmark-repair-chunks") return benchmark_repair_chunks();
         if (argc == 2 && std::string(argv[1]) == "--selftest-packed-bits") return selftest_packed_bits();
         if (argc == 2 && std::string(argv[1]) == "--selftest-lcp-runs") return selftest_lcp_runs();
