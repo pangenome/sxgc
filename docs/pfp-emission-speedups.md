@@ -130,7 +130,7 @@ and m13 `dir*` arrays by run index; (c) pass the χ state (256 `rr_len`/`rr_pos`
 entries) from group k to group k+1, or chunk it as in I4; (d) merge the per-group
 m20 tries. Projection at K=8: emission 6,740 → about 1,500 s.
 
-**I2 — radix ordering on the 8-byte slot key. LANDED** (`100m-i2-j16-m2G.json`: producer-only order 9.57 -> 7.20 s, sort CPU 79.6 -> 54.5 s; 100 MB end-to-end 50.5 -> 41.7 s, pin unchanged). The sort pays 17,062 core-s for
+**I2 — radix ordering on the 8-byte slot key. LANDED** (`100m-i2-j16-m2G.json`: producer-only order 9.57 -> 7.20 s, sort CPU 79.6 -> 54.5 s; 100 MB end-to-end 50.5 -> 41.7 s, pin unchanged). **Confirmed at 1 GB with T4** (`1g-i2t4-j32-m48G.json`): ordering 99.6 -> **56.3 s**, sort CPU 1,413.9 -> **388.4**, and the exact text comparator ran **once** in 938 M slots (7.4 G comparisons all settled by the two key words). Wall 620.3 -> **499.8 s**, pin `13cab8b6…` unchanged. The sort pays 17,062 core-s for
 2.7e11 comparison calls on a key that is an unsigned 64-bit word. Three counting
 passes over 16-byte slots (8 bits each on the high bytes) replace the comparison
 sort: the traffic is about 440 GB, tens of seconds at machine bandwidth, against
