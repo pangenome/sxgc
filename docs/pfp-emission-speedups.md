@@ -19,7 +19,9 @@ The construction path is now cheap: at 10 GB, naming + census + rank is
 
 1. **The product gate comes first.** Any ticket that can change emitted order
    must pass, in this order: `xsa/tests/build_pfp.py`, `gates/pfp_generated_v10_test.py`
-   (pins 378,392 B / `921f4e47…` and 310,032 B / `02508df3…`),
+   (pins 387,920 B / `0d60ab58…` and 311,648 B / `24174d32…` as of the 2026-11-27
+   m20 `dtop` format change; they supersede 378,392 B / `921f4e47…` and 310,032 B /
+   `02508df3…`),
    `xsa/tests/pfp_rows.py`, `xsa/tests/pfp_lift.py`, and then the 100 MB anchor
    pin `eac582ca…` and the 1 GB anchor pin `13cab8b6…`. A phase that gets faster
    while a pin moves is a defect, not a result.
@@ -189,12 +191,24 @@ Misra-Gries heavy-document candidate, differs on 3 of 64,353 nodes** because MG
 with decrements is order-dependent, so two halves' counters cannot reproduce the
 single pass's candidate once a node overflows.
 
-That is a format decision, not a bug: either m20 stays a single stage inside I1
-(the emission floor is then the m20 feed, about 3,000 s at 10 GB, so I1 buys
-about 2x and I3 becomes the lever), or `dtop` is redefined to be order
-independent, which changes the member bytes and every existing v10 pin. Nothing
-in this step is committed to a default; the unchanged product still matches
-`eac582ca...`.
+That was a format decision, not a bug, and the operator **approved option B on
+2026-11-27**: `dtop` is now order-independent instead of a Misra-Gries candidate.
+It changes the m20 member bytes and retires every earlier v10 pin — the 100 MB
+anchor moved from `eac582ca…` (87,192,432 B) to `e99fb40e…` (87,069,576 B), the
+generated fixture from 378,392 B / `921f4e47…` to 387,920 B / `0d60ab58…`, and the
+recursive fixture from 310,032 B / `02508df3…` to 311,648 B / `24174d32…`. Both
+halves of the anchor now merge into a member byte-identical to the single pass in
+every column, `dtop` included ([receipt](gates/receipts/pfp-scale/100m-m20slice-b.json)).
+
+## I1 step 3 (continued) - what `dtop` is after the format change
+
+A node that has NOT overflowed `DOC_SMALL` keeps its exact document set and
+`dtop` is the smallest id in it; a node that HAS overflowed stores no candidate
+and `dtop` = 0. That is exactly mergeable (`min(A ∪ B) = min(min A, min B)`), while
+a decrementing candidate cannot survive a split. The two M-G counters left
+`DocAcc` and the per-node accumulator record, which shrank from 128 to 104 bytes
+(partial magic `XSLICE01` → `XSLICE02`); the HLL registers, `n` and the exact list
+stay. "How many documents" is still answered by the exact list or the HLL.
 
 ## I1 implementation sketch (call-site level)
 

@@ -1,0 +1,46 @@
+{
+  "label": "100m-m20slice-b",
+  "ticket": "I1 step 3 - m20 row-slice merge byte-identical under the APPROVED dtop format change (option B)",
+  "verdict": "LANDED on the 100 MB anchor: two halves cut where the 8-byte context changes merge into a member BYTE-IDENTICAL to the single pass in every column, dtop included. The member bytes changed, so the 100 MB anchor pin and both generated-v10 fixture pins move. Previous receipt 100m-m20slice.json is not edited: it records the state before the decision.",
+  "decision": "Operator-approved 2026-11-27: dtop stops being a Misra-Gries candidate and becomes order-independent. A node that has not overflowed DOC_SMALL keeps its exact set and dtop = the SMALLEST id in it; a node that has overflowed stores no candidate and dtop = 0. Merge: exact+exact = union in first-appearance order with dtop = smallest id; if either side overflowed the result overflows and dtop = 0. Exactly mergeable because min(A u B) = min(min A, min B). The two MG counters left DocAcc and the per-node accumulator record; the HLL registers, n, over and the exact list stay. ndocs/HLL still answers \"how many documents\".",
+  "implemented": "xsa/src/ctx.rs: DocAcc drops mg/mgc; DocAcc::dtop replaces DocAcc::heavy (smallest exact id, 0 once over); doc_summary emits it; merge_docs loses the summed-counter block (the merged dtop is read off the merged accumulator); the accumulator record is 104 B (8 x u32 exact list, n, over, 64 HLL registers) instead of 128 and the partial magic is XSLICE02 so an old partial is refused rather than misread; the reader's Trie::docs reports no candidate for an estimator node (it used to report the MG estimate). xsa/src/build_pfp.rs unchanged. gates/pfp_ctx_slice_test.py: accepts XSLICE02. gates/pfp_generated_v10_test.py: both pins re-pinned, with the format change named as the cause.",
+  "gates": {
+    "a_product": "PASS - rebuilt by the changed binary from the same inputs (/raw,/map of real-v10-map100-S4bZm0), -j 8, -m 2G, workers pinned to cores 20-27: 87,069,576 B, sha256 e99fb40e1e11d57a2a4687b4c75491ed83dd3d6308fc27fb2336dd35efdd7f28, n=100,000,504 rows, 10 members. m20 member 6,680,272 B (was 6,803,128 B); m1 35,967,704 B, m13 30,095,856 B and m15 37,192 B unchanged.",
+    "a_whole_range_payload": "PASS 6,680,272 B equals the product's m20 member byte for byte",
+    "b_merged_member": "PASS byte-identical (merged member sha256 prefix 16bd1dba34e7c798): cut row 50,000,255 of 100,000,504 (8-byte contexts b'ew Jacks' vs b'ew Jagan', 5-deep shared prefix); the lower half's partial (3,184,788,336 B, magic XSLICE02) merged into the upper range's build -> merged member 6,680,272 B == single pass, every column including dtop (previously dtop differed on 3 of 64,353 nodes)",
+    "b_m15": "PASS 37,208 B trailer identical",
+    "c_fixtures": "PASS xsa/tests/build_pfp.py; PASS gates/pfp_generated_v10_test.py at 387,920 B / 0d60ab58... and recursive 311,648 B / 24174d32... (identical at 256M/1 worker and 48M/2 workers)",
+    "d_partial_size": "3,184,788,336 B for rows [0,50000255) = 27,962,102 retained nodes, of which the accumulator section is 2,908,058,608 B = 104 B/node (the 128 B record would have been 3,579,149,056 B, total 3,855,079,784 B ~ the old 3.86 GB). 0.83x the old partial."
+  },
+  "new_pins": {
+    "anchor_100m": {
+      "bytes": 87069576,
+      "sha256": "e99fb40e1e11d57a2a4687b4c75491ed83dd3d6308fc27fb2336dd35efdd7f28",
+      "retires": "eac582ca1e51ead51239b60b1506c44cacf9b6713b675b16003f57fc4f3f98bd (87,192,432 B), retired by this approved format change",
+      "inputs": "/mnt/nvme2n1/erikg/TAPEREADER/sandbox/real-v10-map100-S4bZm0/inputs/{raw,map}"
+    },
+    "generated_v10_fixture": {
+      "bytes": 387920,
+      "sha256": "0d60ab581b54e398ada3d7c1c3735b01e914b5cdf9b95dcaeb3dcb53a0b68af5",
+      "retires": "378392 B / 921f4e47..."
+    },
+    "recursive_v10_fixture": {
+      "bytes": 311648,
+      "sha256": "24174d328bd54edd15d789891ef2b74da36470976e4728707f721d842f9326f8",
+      "retires": "310032 B / 02508df3..."
+    }
+  },
+  "single_run": "gates/pfp_ctx_slice_test.py (a)+(b)+(c) all PASS in one run; final line CTX_SLICE_PASS pin=e99fb40e... rows=100000504 cut=50000255 chain=5 partial=3184788336 member=6680272 nodes=64353 edges=1642415 sha256=16bd1dba34e7c798",
+  "commands": [
+    "cargo build --release --offline --locked -j 8 --manifest-path xsa/Cargo.toml -p xsa (pinned 20-27, 11 s, bundle cached)",
+    "xsa build --pfp <anchor>/raw --docs-map <anchor>/map -T /tmp/i1b/scratch -j 8 -m 2G -o /tmp/i1b/index.sxi2",
+    "python3 -B gates/pfp_ctx_slice_test.py xsa --pin e99fb40e... --rows /tmp/i1-rrgate2/cap/rows.bin --index /tmp/i1b/index.sxi2 --threads 8 --cpus 20-27",
+    "python3 -B gates/pfp_generated_v10_test.py xsa (after re-pinning)"
+  ],
+  "open_risks": [
+    "The stored dtop for an ESTIMATOR node is 0, and doc id 0 is a legal id: only flags bit1 (exact list vs HLL) separates them. Trie::docs therefore reports no candidate for estimator nodes; a reader that reads the dtop column directly must check bit1 first.",
+    "TRIE_VERSION (the member head layout) is unchanged at 3: the head layout did not move, only one column's meaning did, so members built before this change still open and still answer, with their old M-G values in dtop (now not surfaced for estimator nodes). Nothing records which dtop semantics a container was built with - if that matters, it needs a version field.",
+    "Only two adjacent ranges can be merged today: a middle group still cannot emit a partial, so the K-range assembler is still open (unchanged by this ticket).",
+    "The half-range partial is still 3.18 GB for 27.96 M retained nodes because every node carries the 64-byte HLL file; keeping registers only for overflowed nodes is the next trim and is not in this ticket."
+  ]
+}

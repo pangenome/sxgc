@@ -43,10 +43,10 @@
 //! DOCUMENT SUMMARY. Counts of documents are exact while a node contains <= 8
 //! distinct documents (an inline sorted id list: the useful case for `project`,
 //! and the one `select` needs to weight by document frequency); beyond that the
-//! node carries the exact top-1 document id (the source-leakage answer) plus a
-//! 64-register HLL estimate of the distinct document count (~13 % standard error,
-//! stated, never presented as exact). A document is a run of bytes delimited by
-//! 0x1E, counted in the ORIGINAL corpus bytes.
+//! node carries a 64-register HLL estimate of the distinct document count (~13 %
+//! standard error, stated, never presented as exact) and NO document id, because no
+//! order-independent single-document answer survives a row split (see `DocAcc::dtop`).
+//! A document is a run of bytes delimited by 0x1E, counted in the ORIGINAL corpus bytes.
 
 use std::io::Write;
 
@@ -530,23 +530,22 @@ fn doc_hash(doc: u64) -> u64 {
     z ^ (z >> 31)
 }
 
+/// One node's document accumulator: the EXACT set while the node holds <= DOC_SMALL
+/// distinct documents, an HLL register file once it overflows. Both parts are
+/// order-independent - a union is the same set and the HLL union is the
+/// register-wise maximum whichever side arrives first - which is exactly what lets
+/// a ROW SPLIT merge into the single pass's accumulator.
 #[derive(Clone)]
 struct DocAcc {
     small: [u32; DOC_SMALL],
     n: usize,
-    /// Misra-Gries with 2 counters: a heavy document id survives with a count of
-    /// at least half its true frequency. This is a CANDIDATE, and it is labelled
-    /// as one; it answers "which document does this context keep coming from"
-    /// (the leakage question) without a per-document counter per node.
-    mg: [u32; 2],
-    mgc: [u32; 2],
     hll: Hll,
     over: bool,
 }
 
 impl DocAcc {
     fn new() -> Self {
-        Self { small: [0; DOC_SMALL], n: 0, mg: [NO_NODE; 2], mgc: [0; 2], hll: Hll::new(), over: false }
+        Self { small: [0; DOC_SMALL], n: 0, hll: Hll::new(), over: false }
     }
     #[inline]
     fn add(&mut self, doc: u32) {
@@ -568,30 +567,23 @@ impl DocAcc {
             self.over = true;
         }
         self.hll.add_hash(doc_hash(doc as u64));
-        if self.mg[0] == doc {
-            self.mgc[0] += 1;
-        } else if self.mg[1] == doc {
-            self.mgc[1] += 1;
-        } else if self.mgc[0] == 0 {
-            self.mg[0] = doc;
-            self.mgc[0] = 1;
-        } else if self.mgc[1] == 0 {
-            self.mg[1] = doc;
-            self.mgc[1] = 1;
-        } else {
-            self.mgc[0] -= 1;
-            self.mgc[1] -= 1;
-        }
     }
-    /// The heavy-document CANDIDATE (exact when the node stayed exact).
-    fn heavy(&self) -> u32 {
-        if !self.over {
-            // exact: the most frequent of the <= 8 documents needs a count, and the
-            // first one is not it. For an exact node the LIST is the answer, so the
-            // candidate is the last id added (stable, documented).
-            return if self.n == 0 { NO_NODE } else { self.small[0] };
+    /// THE MEMBER'S dtop COLUMN: the smallest document id of the node's EXACT set,
+    /// or 0 when the node has overflowed and therefore stores NO candidate.
+    ///
+    /// This field used to hold a Misra-Gries heavy-document CANDIDATE. MG counts up
+    /// and down per occurrence, so it is order-dependent, and two halves could not
+    /// reproduce the single pass's candidate once a node overflowed (I1 step 3: 3
+    /// of 64,353 nodes differed on the 100 MB anchor). An order-dependent candidate
+    /// cannot survive a split; "smallest id" can and does, because
+    /// min(A u B) = min(min A, min B). 0 is unambiguous: flags bit1 keeps saying
+    /// whether the list is exact, and what a reader actually asks - how many
+    /// documents - is `n_docs`, answered by the exact list or the HLL.
+    fn dtop(&self) -> u32 {
+        if self.over {
+            return 0;
         }
-        if self.mgc[1] > self.mgc[0] { self.mg[1] } else { self.mg[0] }
+        self.small[..self.n].iter().copied().min().unwrap_or(0)
     }
     fn n_docs(&self) -> u64 {
         if self.over { self.hll.estimate() } else { self.n as u64 }
@@ -912,8 +904,8 @@ impl Builder {
         id
     }
 
-    /// Document summary of a node: (flags, distinct estimate, heavy-doc candidate,
-    /// exact-id-list index, list length).
+    /// Document summary of a node: (flags, distinct estimate, dtop, exact-id-list
+    /// index, list length).
     fn doc_summary(&mut self, span: u64, d: &DocAcc) -> (u8, u64, u32, u64, u64) {
         if d.n == 0 && !d.over {
             return (0, 0, NO_NODE, u64::MAX, 0);
@@ -923,7 +915,7 @@ impl Builder {
         }
         let exact = !d.over;
         let flags = 1u8 | if exact { 2 } else { 0 };
-        let top = d.heavy();
+        let top = d.dtop();
         if exact {
             let first = self.dids.len();
             for i in 0..d.n {
@@ -1002,7 +994,7 @@ impl Builder {
         // THE STRUCTURAL COLUMNS COME FROM THE ORDINARY EMITTER with min_support 1,
         // so every retained node has a record and its id IS its index; the merge
         // re-emits with the real min_support. The accumulators and the nodes that
-        // `min_support` would have dropped ride in the fixed 128-byte records.
+        // `min_support` would have dropped ride in the fixed 104-byte records.
         let mut e = Builder::new(self.depth, 1, self.docs_min_support);
         let mut dacc = Vec::with_capacity(DOCACC_BYTES * self.nodes.len());
         for (i, r) in self.nodes.iter().enumerate() {
@@ -1072,9 +1064,9 @@ impl Builder {
 // I1 builds the m20 trailer per ROW SLICE and merges the pieces
 // (docs/pfp-emission-speedups.md). A finished member cannot be merged: `min_support`
 // drops contexts whose occurrences happen to be in the neighbouring slice, and the
-// stored summary keeps neither the HLL register file nor the Misra-Gries counters.
+// stored summary keeps no HLL register file.
 // So a slice build retains the tree whole and writes a PARTIAL - the member's
-// node/edge columns plus one fixed 128-byte accumulator record per node - and
+// node/edge columns plus one fixed 104-byte accumulator record per node - and
 // `merge_slices` re-emits a member from two adjacent partials.
 //
 // Only ONE chain of nodes can exist in both halves: the slice is cut at a row
@@ -1082,9 +1074,16 @@ impl Builder {
 // which is one node per depth and appears at the tail of both node vectors, deepest
 // first. Those are the nodes whose counts add and whose accumulators combine; every
 // other node of each half is emitted in the order the concatenation preserves.
-const SLICE_MAGIC: u64 = 0x3130_4543_494c_5358; // "XSLICE01"
+
+// XSLICE02: the accumulator record dropped the two Misra-Gries candidate counters
+// (see `DocAcc::dtop`), so an XSLICE01 partial is a different format and must be
+// refused, not decoded as if the bytes still meant the same thing.
+const SLICE_MAGIC: u64 = 0x3230_4543_494c_5358; // "XSLICE02"
 const SLICE_SECTIONS: usize = 7;
-const DOCACC_BYTES: usize = 128;
+// One accumulator record: the exact list (8 x u32), its length, the overflow flag,
+// then the 64 HLL registers. The records dominate a partial (one per retained
+// node), which is why the candidate counters that used to sit at 40..56 are gone.
+const DOCACC_BYTES: usize = 104;
 
 fn encode_docacc(o: &mut Vec<u8>, a: &DocAcc) {
     let at = o.len();
@@ -1094,11 +1093,7 @@ fn encode_docacc(o: &mut Vec<u8>, a: &DocAcc) {
     }
     put(&mut o[at + 32..], a.n as u64, 4);
     put(&mut o[at + 36..], a.over as u64, 4);
-    put(&mut o[at + 40..], a.mg[0] as u64, 4);
-    put(&mut o[at + 44..], a.mg[1] as u64, 4);
-    put(&mut o[at + 48..], a.mgc[0] as u64, 4);
-    put(&mut o[at + 52..], a.mgc[1] as u64, 4);
-    o[at + 64..at + DOCACC_BYTES].copy_from_slice(&a.hll.reg);
+    o[at + 40..at + DOCACC_BYTES].copy_from_slice(&a.hll.reg);
 }
 
 fn decode_docacc(b: &[u8]) -> DocAcc {
@@ -1109,16 +1104,16 @@ fn decode_docacc(b: &[u8]) -> DocAcc {
     a.n = get(&b[32..], 4) as usize;
     need(a.n <= DOC_SMALL, "slice partial: accumulator list length");
     a.over = get(&b[36..], 4) != 0;
-    a.mg = [get(&b[40..], 4) as u32, get(&b[44..], 4) as u32];
-    a.mgc = [get(&b[48..], 4) as u32, get(&b[52..], 4) as u32];
-    a.hll.reg.copy_from_slice(&b[64..DOCACC_BYTES]);
+    a.hll.reg.copy_from_slice(&b[40..DOCACC_BYTES]);
     a
 }
 
 /// One node's document accumulator over both halves. The two slices hold disjoint
 /// row sets and the lower one holds every earlier row, so while both stay exact the
 /// union in first-appearance order IS the single pass's list, down to the order the
-/// member stores it in and the row at which it overflows.
+/// member stores it in and the row at which it overflows. `dtop` needs no merge of
+/// its own: it is read off the result (smallest id of the exact set, 0 once either
+/// side has overflowed), which is the whole point of replacing the MG candidate.
 fn merge_docs(a: &DocAcc, b: &DocAcc) -> DocAcc {
     let mut m = DocAcc::new();
     if !a.over && !b.over {
@@ -1159,28 +1154,6 @@ fn merge_docs(a: &DocAcc, b: &DocAcc) -> DocAcc {
         }
         (false, false) => Hll::new(),
     };
-    // Misra-Gries: the counters are summed over the candidates the two sides carry.
-    // A side that never overflowed kept no counters; its ROWS are not replayable from
-    // a summary, so its contribution to the heavy-document candidate is absent.
-    let mut cand: Vec<(u32, u32)> = Vec::with_capacity(4);
-    for (doc, cnt) in [(a.mg[0], a.mgc[0]), (a.mg[1], a.mgc[1]), (b.mg[0], b.mgc[0]), (b.mg[1], b.mgc[1])] {
-        if doc == NO_NODE {
-            continue;
-        }
-        match cand.iter_mut().find(|c| c.0 == doc) {
-            Some(c) => c.1 += cnt,
-            None => cand.push((doc, cnt)),
-        }
-    }
-    cand.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(&y.0)));
-    if let Some(&(doc, cnt)) = cand.first() {
-        m.mg[0] = doc;
-        m.mgc[0] = cnt;
-    }
-    if let Some(&(doc, cnt)) = cand.get(1) {
-        m.mg[1] = doc;
-        m.mgc[1] = cnt;
-    }
     m
 }
 
@@ -1700,7 +1673,7 @@ impl<'a> Trie<'a> {
         self.node(node).0 as u64
     }
 
-    /// (exact?, distinct documents, heavy-doc candidate)
+    /// (exact?, distinct documents, smallest document id when exact)
     pub fn docs(&self, node: u32) -> (bool, u64, Option<u32>) {
         let (_, _, flags) = self.node(node);
         if flags & 1 == 0 {
@@ -1708,7 +1681,11 @@ impl<'a> Trie<'a> {
         }
         let ndocs = self.dndocs.get(node as u64);
         let top = self.dtop.get(node as u64) as u32;
-        (flags & 2 != 0, ndocs, if top == NO_NODE { None } else { Some(top) })
+        // dtop is 0 for a node that overflowed (no candidate survives a split), and
+        // an ESTIMATOR node's dtop says nothing about any one document, so report it
+        // as absent rather than as document 0.
+        let exact = flags & 2 != 0;
+        (exact, ndocs, if !exact || top == NO_NODE { None } else { Some(top) })
     }
 
     /// The exact document id list, when the node kept one.

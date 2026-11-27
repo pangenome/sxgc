@@ -287,7 +287,7 @@ def main():
     env1 = dict(env, XSA_CTX_ROWS='0:%d' % cut)
     r0 = arm(cmd, rows, 0, cut, env1)
     part0, _ = trailer(r0.stdout, 0, cut)
-    assert struct.unpack_from('<Q', part0, 184)[0] == int.from_bytes(b'XSLICE01', 'little'), \
+    assert struct.unpack_from('<Q', part0, 184)[0] == int.from_bytes(b'XSLICE02', 'little'), \
         'the range payload is not a mergeable partial'
     p0 = work/'part0.trie'
     p0.write_bytes(part0)

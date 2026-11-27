@@ -9,8 +9,12 @@ import sys
 import tempfile
 from overlap_v10_product_input import make
 
-# Whole v10 reference predates the PFP handoff (receipts/build-stream/generated.json).
-EXPECTED = '921f4e473e19fefcf8a7916d431c28694941323b6262ff109ae3c7c7820f19ab'
+# RE-PINNED by the approved m20 format change (I1 step 3, option B: `dtop` is the
+# smallest exact document id instead of an order-dependent M-G candidate, which
+# moves every v10 product's bytes). It retires 378,392 B / 921f4e47... - the whole
+# v10 reference that predates the PFP handoff (receipts/build-stream/generated.json)
+# - and 310,032 B / 02508df3... below. The unchanged product is 387,920 B now.
+EXPECTED = '0d60ab581b54e398ada3d7c1c3735b01e914b5cdf9b95dcaeb3dcb53a0b68af5'
 
 
 def check(xsa):
@@ -34,9 +38,10 @@ def check(xsa):
 
 
 def recursive(xsa):
-    # Pin made by the prior, direct P1 ranker (56dda458) BEFORE testing the
-    # recursive product. Unlike the first fixture this one repeats ID blocks.
-    pin = '02508df3d06b153a8211237ec3d89a3e9e0e29d57bb66e6aeaddff2b4064dcb3'
+    # Re-pinned by the m20 dtop format change (see EXPECTED); retires the pin the
+    # prior, direct P1 ranker (56dda458) made. Unlike the first fixture this one
+    # repeats ID blocks, so it has to hold across both workspace budgets.
+    pin = '24174d328bd54edd15d789891ef2b74da36470976e4728707f721d842f9326f8'
     with tempfile.TemporaryDirectory(prefix='xsa-pfp-lift-') as temp:
         d=Path(temp); raw=d/'raw'; scratch=d/'scratch'; scratch.mkdir()
         block=shake_256(b'xsa-pfp-level-lift').digest(32768).replace(b'\xff',b'\x00')
