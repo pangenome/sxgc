@@ -10,6 +10,13 @@ The construction path is now cheap: at 10 GB, naming + census + rank is
 
 ## Rules that bound every ticket
 
+0. **`-m` is an array grant; the cgroup must exceed it.** Since the counting sort
+   the arena is two slot arrays of 24 bytes per descriptor (record + ping-pong),
+   so a full-grant arm allocates up to `-m` plus the rank view. Two 1 GB arms
+   died at 48 s with SIGTERM under `MemoryMax=40G` and `-m 48G` (systemd's
+   memory cap, not an OOM kill by the kernel); the same arm runs under
+   `MemoryMax=96G`. Set the cgroup at roughly `-m` + the view, or lower `-m`.
+
 1. **The product gate comes first.** Any ticket that can change emitted order
    must pass, in this order: `xsa/tests/build_pfp.py`, `gates/pfp_generated_v10_test.py`
    (pins 378,392 B / `921f4e47…` and 310,032 B / `02508df3…`),
