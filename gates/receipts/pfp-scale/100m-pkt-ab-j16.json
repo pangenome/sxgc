@@ -1,0 +1,7 @@
+{
+  "label": "100m-pkt-ab-j16",
+  "ticket": "writer read packet 32,768 -> 131,072 rows (4x fewer reads)",
+  "verdict": "LANDED (paired arm, noisy box): wall 83.4 -> 76.5 s, writer total 80.33 -> 74.00 s, rows 14.26 -> 12.77 s, sweep 9.35 -> 7.84 s. Both arms ran back to back on the same 32 idle cores with the same grants; pins matched in both.",
+  "caveat": "Host load was 89 on 256 vCPUs during both arms and the same input's read time moved 65.1 -> 60.2 s, so the noise floor is roughly 5-8%. The change cannot alter the product (packet size is internal) and cuts the writer's input syscalls fourfold; three independent internal clocks agree on the direction.",
+  "cores": "picked from /proc/stat per-core busy% <= 2% (119 idle cores at sampling time)"
+}

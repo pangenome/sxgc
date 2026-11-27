@@ -103,7 +103,7 @@ static int finish_row_stream(const char* histogram,const char* scratch,const cha
     double spend_add=0,spend_sweep=0;
     auto close_run=[&]{if(run.len){double s=now_s();blocks.add(run);double m=now_s();sweep.advance(run,top,interior);spend_add+=m-s;spend_sweep+=now_s()-m;}};
     double t_begin=now_s(),spend_read=0,spend_row=0;
-    std::vector<Frame> packet(32768);
+    std::vector<Frame> packet(131072);   // 1.5 MiB per read: fewer syscalls, deeper readahead
     for(uint64_t rank=0;rank<n;) {
         size_t take=std::min<uint64_t>(packet.size(),n-rank);double s=now_s();
         pf_read_full(0,packet.data(),take*sizeof(Frame),"ordered rows");
