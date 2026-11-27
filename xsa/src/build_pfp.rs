@@ -70,14 +70,36 @@ pub fn context(raw: &str, map: &str) -> io::Result<()> {
     let mut trie = ctx::Builder::new(8, 1000, 1000);
     trie.set_source(ctx::SOURCE_IN_BUILD, 0);
     trie.set_boundary_aware();
-    
-    let mut input = io::stdin().lock();
-    let mut output = io::stdout().lock();
-    let mut packet = vec![0u8; 32768 * 12];
     // A group of a split row stream carries its own trailer, so the count it
     // should expect is the group's row count, not the whole stream's. Default
     // unchanged: the whole stream is n+1 rows including the END row.
-    let left_hint = std::env::var("XSA_CTX_ROWS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(n as u64 + 1);
+    //   XSA_CTX_ROWS=<rows>       the group's row count
+    //   XSA_CTX_ROWS=<A>:<B>      the global rank range it covers
+    // A range build retains the trie and writes a MERGEABLE PARTIAL (I1); with
+    // XSA_CTX_MERGE_IN=<partial> the adjacent lower range's partial is merged in
+    // first, so the two ranges together yield the payload of the whole range.
+    let range = std::env::var("XSA_CTX_ROWS").ok();
+    let bad = |v: &str| io::Error::new(io::ErrorKind::InvalidData, format!("XSA_CTX_ROWS={v}"));
+    let (first_row, left_hint) = match range.as_deref() {
+        Some(v) => match v.split_once(':') {
+            Some((a, b)) => {
+                let (a, b) = (a.parse::<u64>().map_err(|_| bad(v))?, b.parse::<u64>().map_err(|_| bad(v))?);
+                if b < a {
+                    return Err(bad(v));
+                }
+                (a, b - a)
+            }
+            None => (0, v.parse::<u64>().map_err(|_| bad(v))?),
+        },
+        None => (0, n as u64 + 1),
+    };
+    if range.is_some() {
+        trie.set_first_row(first_row);
+        trie.set_slice();
+    }
+    let mut input = io::stdin().lock();
+    let mut output = io::stdout().lock();
+    let mut packet = vec![0u8; 32768 * 12];
     let mut left: usize = left_hint as usize;
     let entry = std::time::Instant::now();
     let (mut read_s, mut feed_s, mut write_s) = (0.0f64, 0.0f64, 0.0f64);
@@ -114,7 +136,15 @@ pub fn context(raw: &str, map: &str) -> io::Result<()> {
             "extra ordered rows",
         ));
     }
-    let (payload, _) = trie.finish(left_hint, n as u64);
+    let payload = if range.is_some() {
+        let part = trie.finish_slice(left_hint, n as u64);
+        match std::env::var_os("XSA_CTX_MERGE_IN") {
+            Some(path) => ctx::merge_slices(&std::fs::read(&path)?, &part),
+            None => part,
+        }
+    } else {
+        trie.finish(left_hint, n as u64).0
+    };
     output.write_all(&(payload.len() as u64).to_le_bytes())?;
     output.write_all(&payload)?;
     drop(payload);
@@ -129,9 +159,9 @@ pub fn context(raw: &str, map: &str) -> io::Result<()> {
     output.write_all(&(m15.bytes.len() as u64).to_le_bytes())?;
     output.write_all(&m15.bytes)?;
     eprintln!(
-        "STREAM_CONTEXT_TIME total={:.6} read={:.6} feed={:.6} write={:.6} tail={:.6} rows={}",
+        "STREAM_CONTEXT_TIME total={:.6} read={:.6} feed={:.6} write={:.6} tail={:.6} rows={} first={}",
         entry.elapsed().as_secs_f64(), read_s, feed_s, write_s,
-        entry.elapsed().as_secs_f64() - read_s - feed_s - write_s, n + 1
+        entry.elapsed().as_secs_f64() - read_s - feed_s - write_s, left_hint, first_row
     );
     output.flush()
 }

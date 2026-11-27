@@ -639,6 +639,18 @@ struct Child {
     node: u32,
 }
 
+/// One node of a ROW SLICE's retained trie (see `Builder::set_slice`). `node` in
+/// every child is the index of that child in the slice's node vector, which is the
+/// order a member numbers its nodes in.
+struct Retained {
+    depth: usize,
+    /// the code its parent's edge carries (the label); 0 for the root
+    code: u16,
+    count: u64,
+    children: Vec<Child>,
+    docs: DocAcc,
+}
+
 pub struct Builder {
     depth: usize,
     min_support: u64,
@@ -669,6 +681,13 @@ pub struct Builder {
     source: u8,
     /// transient bytes the stream cost (the u40 array plus the dense run columns)
     source_mem: u64,
+    /// 1 = a ROW SLICE of the ordered stream: the tree is retained whole (every
+    /// node, with its document accumulator) and `finish_slice` writes a mergeable
+    /// partial instead of a member. A member drops nodes below `min_support` and
+    /// only stores summaries, neither of which a merge can undo.
+    slice: bool,
+    /// the retained trie, in the emit order a member would number it
+    nodes: Vec<Retained>,
     /// THE NO-CROSS LAW, JOURNALED IN THE MEMBER HEAD: 1 = every suffix fed to
     /// this builder was CUT AT ITS DOCUMENT'S END (a starts table was present at
     /// build time), so node counts are non-crossing occurrence counts and the
@@ -712,7 +731,23 @@ impl Builder {
             source: 0,
             source_mem: 0,
             boundary_aware: 0,
+            slice: false,
+            nodes: Vec::new(),
         }
+    }
+
+    /// Build a ROW SLICE (I1): retain every node with its accumulator and write a
+    /// partial from `finish_slice`; `merge_slices` turns two adjacent partials into
+    /// the member the same rows produce in one pass.
+    pub fn set_slice(&mut self) {
+        self.slice = true;
+    }
+
+    /// The global rank of the first row this builder is fed. Node row numbers, and
+    /// the debug anchors that carry them, are then the whole range's, not the
+    /// slice's.
+    pub fn set_first_row(&mut self, row: u64) {
+        self.row = row;
     }
 
     /// Declare that the ordered stream was boundary-cut (see `OwnedStarts`):
@@ -811,25 +846,37 @@ impl Builder {
         let lv = self.stack.pop().expect("builder: close on empty stack");
         let depth = self.stack.len() + 1;
         let count = lv.count;
-        let parent = if depth == 1 { &mut self.root } else { &mut self.stack[depth - 2].children };
-        let last = parent.last_mut().expect("builder: closing a node whose parent has no child");
-        need(last.count == 0 && last.node == NO_NODE, "builder: child already closed");
-        if count == 0 {
-            // EVERY occurrence of this context crossed a boundary: it is not a
-            // match anywhere in the corpus. The zero-count edge is dropped - a
-            // branch that never fired is noise the brute-force oracle does not
-            // have (and a reader must not be offered a content byte that no
-            // in-document occurrence ever took).
-            parent.pop();
-            return;
+        let at = if depth == 1 { self.root.len() - 1 } else { self.stack[depth - 2].children.len() - 1 };
+        let code = if depth == 1 { self.root[at].code } else { self.stack[depth - 2].children[at].code };
+        {
+            let parent = if depth == 1 { &mut self.root } else { &mut self.stack[depth - 2].children };
+            let last = &mut parent[at];
+            need(last.count == 0 && last.node == NO_NODE, "builder: child already closed");
+            if count == 0 {
+                // EVERY occurrence of this context crossed a boundary: it is not a
+                // match anywhere in the corpus. The zero-count edge is dropped - a
+                // branch that never fired is noise the brute-force oracle does not
+                // have (and a reader must not be offered a content byte that no
+                // in-document occurrence ever took).
+                parent.pop();
+                return;
+            }
+            last.count = count;
         }
-        last.count = count;
-        if count < self.min_support {
-            return;
-        }
-        let id = self.emit_node(depth, count, &lv.children, &lv.docs);
+        let id = if self.slice {
+            // retain the node whatever `min_support` says: the other slice may be
+            // what lifts its count over the threshold
+            let id = self.nodes.len() as u32;
+            self.nodes.push(Retained { depth, code, count, children: lv.children, docs: lv.docs });
+            id
+        } else {
+            if count < self.min_support {
+                return;
+            }
+            self.emit_node(depth, count, &lv.children, &lv.docs)
+        };
         let parent = if depth == 1 { &mut self.root } else { &mut self.stack[depth - 2].children };
-        parent.last_mut().expect("builder: parent child vanished").node = id;
+        parent[at].node = id;
     }
 
     fn emit_node(&mut self, depth: usize, span: u64, children: &[Child], docs: &DocAcc) -> u32 {
@@ -889,8 +936,7 @@ impl Builder {
     }
 
     /// Close the root and serialise the member payload.
-    pub fn finish(mut self, n: u64, corpus_len: u64) -> (Vec<u8>, [u64; TRIE_SECTIONS]) {
-        while !self.stack.is_empty() {
+    pub fn finish(mut self, n: u64, corpus_len: u64) -> (Vec<u8>, [u64; TRIE_SECTIONS]) {        while !self.stack.is_empty() {
             self.close_one();
         }
         let root_children = std::mem::take(&mut self.root);
@@ -943,6 +989,67 @@ impl Builder {
         (out, c)
     }
 
+    /// Close the root and serialise a MERGEABLE PARTIAL of the rows fed so far
+    /// (see `merge_slices`). `n` is the slice's row count.
+    pub fn finish_slice(mut self, n: u64, corpus_len: u64) -> Vec<u8> {
+        while !self.stack.is_empty() {
+            self.close_one();
+        }
+        let root_children = std::mem::take(&mut self.root);
+        let root_docs = std::mem::replace(&mut self.root_docs, DocAcc::new());
+        self.nodes.push(Retained { depth: 0, code: 0, count: n, children: root_children, docs: root_docs });
+        let nodes = self.nodes.len() as u64;
+        // THE STRUCTURAL COLUMNS COME FROM THE ORDINARY EMITTER with min_support 1,
+        // so every retained node has a record and its id IS its index; the merge
+        // re-emits with the real min_support. The accumulators and the nodes that
+        // `min_support` would have dropped ride in the fixed 128-byte records.
+        let mut e = Builder::new(self.depth, 1, self.docs_min_support);
+        let mut dacc = Vec::with_capacity(DOCACC_BYTES * self.nodes.len());
+        for (i, r) in self.nodes.iter().enumerate() {
+            let id = e.emit_node(r.depth, r.count, &r.children, &r.docs);
+            need(id as usize == i, "slice partial: node order");
+            encode_docacc(&mut dacc, &r.docs);
+        }
+        let edges = e.prev_edge_end;
+        let nfixed = std::mem::take(&mut e.nfixed);
+        let secs: [Vec<u8>; SLICE_SECTIONS] = [
+            nfixed,
+            e.nedge.finish(),
+            e.ncount.finish(),
+            e.ecode.finish(),
+            e.echild.finish(),
+            e.ecount.finish(),
+            dacc,
+        ];
+        let mut offs = [0u64; SLICE_SECTIONS];
+        let mut at = HEAD as u64;
+        for (i, s) in secs.iter().enumerate() {
+            offs[i] = at;
+            at += ((s.len() as u64 + 7) / 8) * 8;
+        }
+        let mut out = vec![0u8; at as usize];
+        for (i, s) in secs.iter().enumerate() {
+            out[offs[i] as usize..offs[i] as usize + s.len()].copy_from_slice(s);
+        }
+        put(&mut out[0..], TRIE_VERSION, 8);
+        put(&mut out[8..], self.depth as u64, 8);
+        put(&mut out[16..], self.min_support, 8);
+        put(&mut out[24..], n, 8);
+        put(&mut out[32..], corpus_len, 8);
+        put(&mut out[40..], nodes, 8);
+        put(&mut out[48..], edges, 8);
+        put(&mut out[56..], self.docs_min_support, 8);
+        for i in 0..SLICE_SECTIONS {
+            put(&mut out[64 + 8 * i..], offs[i], 8);
+        }
+        put(&mut out[144..], nodes - 1, 8);
+        put(&mut out[152..], self.source as u64, 8);
+        put(&mut out[160..], self.source_mem, 8);
+        put(&mut out[168..], self.boundary_aware as u64, 8);
+        put(&mut out[184..], SLICE_MAGIC, 8);
+        out
+    }
+
     /// Column sizes, for the build's own budget line: what each field costs.
     pub fn column_bytes(&self) -> [u64; TRIE_SECTIONS] {
         [
@@ -958,6 +1065,447 @@ impl Builder {
             self.dids.bytes(),
         ]
     }
+}
+
+// ------------------------------------------------------- the row-slice contract
+//
+// I1 builds the m20 trailer per ROW SLICE and merges the pieces
+// (docs/pfp-emission-speedups.md). A finished member cannot be merged: `min_support`
+// drops contexts whose occurrences happen to be in the neighbouring slice, and the
+// stored summary keeps neither the HLL register file nor the Misra-Gries counters.
+// So a slice build retains the tree whole and writes a PARTIAL - the member's
+// node/edge columns plus one fixed 128-byte accumulator record per node - and
+// `merge_slices` re-emits a member from two adjacent partials.
+//
+// Only ONE chain of nodes can exist in both halves: the slice is cut at a row
+// boundary, so a context both halves contain is a prefix of both boundary rows,
+// which is one node per depth and appears at the tail of both node vectors, deepest
+// first. Those are the nodes whose counts add and whose accumulators combine; every
+// other node of each half is emitted in the order the concatenation preserves.
+const SLICE_MAGIC: u64 = 0x3130_4543_494c_5358; // "XSLICE01"
+const SLICE_SECTIONS: usize = 7;
+const DOCACC_BYTES: usize = 128;
+
+fn encode_docacc(o: &mut Vec<u8>, a: &DocAcc) {
+    let at = o.len();
+    o.resize(at + DOCACC_BYTES, 0);
+    for i in 0..DOC_SMALL {
+        put(&mut o[at + 4 * i..], a.small[i] as u64, 4);
+    }
+    put(&mut o[at + 32..], a.n as u64, 4);
+    put(&mut o[at + 36..], a.over as u64, 4);
+    put(&mut o[at + 40..], a.mg[0] as u64, 4);
+    put(&mut o[at + 44..], a.mg[1] as u64, 4);
+    put(&mut o[at + 48..], a.mgc[0] as u64, 4);
+    put(&mut o[at + 52..], a.mgc[1] as u64, 4);
+    o[at + 64..at + DOCACC_BYTES].copy_from_slice(&a.hll.reg);
+}
+
+fn decode_docacc(b: &[u8]) -> DocAcc {
+    let mut a = DocAcc::new();
+    for i in 0..DOC_SMALL {
+        a.small[i] = get(&b[4 * i..], 4) as u32;
+    }
+    a.n = get(&b[32..], 4) as usize;
+    need(a.n <= DOC_SMALL, "slice partial: accumulator list length");
+    a.over = get(&b[36..], 4) != 0;
+    a.mg = [get(&b[40..], 4) as u32, get(&b[44..], 4) as u32];
+    a.mgc = [get(&b[48..], 4) as u32, get(&b[52..], 4) as u32];
+    a.hll.reg.copy_from_slice(&b[64..DOCACC_BYTES]);
+    a
+}
+
+/// One node's document accumulator over both halves. The two slices hold disjoint
+/// row sets and the lower one holds every earlier row, so while both stay exact the
+/// union in first-appearance order IS the single pass's list, down to the order the
+/// member stores it in and the row at which it overflows.
+fn merge_docs(a: &DocAcc, b: &DocAcc) -> DocAcc {
+    let mut m = DocAcc::new();
+    if !a.over && !b.over {
+        for &doc in a.small[..a.n].iter() {
+            m.add(doc);
+        }
+        for &doc in b.small[..b.n].iter() {
+            m.add(doc);
+        }
+        return m;
+    }
+    m.over = true;
+    m.n = DOC_SMALL;
+    // HLL: a register holds the best rank of its bucket, so the union of the two
+    // sides is the register-wise maximum; a side that is still exact contributes
+    // its list's hashes first, which is the same set one pass would have folded in.
+    m.hll = match (a.over, b.over) {
+        (true, true) => {
+            let mut h = a.hll;
+            for i in 0..h.reg.len() {
+                h.reg[i] = h.reg[i].max(b.hll.reg[i]);
+            }
+            h
+        }
+        (true, false) => {
+            let mut h = a.hll;
+            for &doc in b.small[..b.n].iter() {
+                h.add_hash(doc_hash(doc as u64));
+            }
+            h
+        }
+        (false, true) => {
+            let mut h = b.hll;
+            for &doc in a.small[..a.n].iter() {
+                h.add_hash(doc_hash(doc as u64));
+            }
+            h
+        }
+        (false, false) => Hll::new(),
+    };
+    // Misra-Gries: the counters are summed over the candidates the two sides carry.
+    // A side that never overflowed kept no counters; its ROWS are not replayable from
+    // a summary, so its contribution to the heavy-document candidate is absent.
+    let mut cand: Vec<(u32, u32)> = Vec::with_capacity(4);
+    for (doc, cnt) in [(a.mg[0], a.mgc[0]), (a.mg[1], a.mgc[1]), (b.mg[0], b.mgc[0]), (b.mg[1], b.mgc[1])] {
+        if doc == NO_NODE {
+            continue;
+        }
+        match cand.iter_mut().find(|c| c.0 == doc) {
+            Some(c) => c.1 += cnt,
+            None => cand.push((doc, cnt)),
+        }
+    }
+    cand.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(&y.0)));
+    if let Some(&(doc, cnt)) = cand.first() {
+        m.mg[0] = doc;
+        m.mgc[0] = cnt;
+    }
+    if let Some(&(doc, cnt)) = cand.get(1) {
+        m.mg[1] = doc;
+        m.mgc[1] = cnt;
+    }
+    m
+}
+
+/// A partial as decoded: the same tree, every node, with its accumulator.
+struct Slice {
+    depth: usize,
+    min_support: u64,
+    rows: u64,
+    corpus_len: u64,
+    docs_min_support: u64,
+    source: u8,
+    source_mem: u64,
+    boundary_aware: u8,
+    nodes: Vec<Retained>,
+}
+
+fn decode_slice(d: &[u8]) -> Slice {
+    need(d.len() >= HEAD, "slice partial is shorter than its head");
+    need(get(&d[184..], 8) == SLICE_MAGIC, "not a row-slice trie partial");
+    let depth = get(&d[8..], 8) as usize;
+    let min_support = get(&d[16..], 8);
+    let rows = get(&d[24..], 8);
+    let corpus_len = get(&d[32..], 8);
+    let nodes = get(&d[40..], 8) as usize;
+    let edges = get(&d[48..], 8) as usize;
+    let docs_min_support = get(&d[56..], 8);
+    need(nodes >= 1 && (get(&d[144..], 8) as usize) == nodes - 1, "slice partial: root node id");
+    let mut offs = [0usize; SLICE_SECTIONS];
+    for i in 0..SLICE_SECTIONS {
+        offs[i] = get(&d[64 + 8 * i..], 8) as usize;
+        need(offs[i] >= HEAD && offs[i] <= d.len(), "slice partial: section offset");
+    }
+    need(offs[0] + 4 * nodes <= d.len(), "slice partial: node column bounds");
+    need(offs[6] + DOCACC_BYTES * nodes <= d.len(), "slice partial: accumulator section bounds");
+    let nfixed = &d[offs[0]..];
+    let nedge = PackedView::new(&d[offs[1]..], nodes as u64);
+    let ncount = PackedView::new(&d[offs[2]..], nodes as u64);
+    let ecode = PackedView::new(&d[offs[3]..], edges as u64);
+    let echild = PackedView::new(&d[offs[4]..], edges as u64);
+    let ecount = PackedView::new(&d[offs[5]..], edges as u64);
+    let mut out: Vec<Retained> = Vec::with_capacity(nodes);
+    let mut codes = vec![0u16; nodes];
+    let mut first = 0u64;
+    let mut kids: Vec<Vec<Child>> = Vec::with_capacity(nodes);
+    let mut counts = Vec::with_capacity(nodes);
+    for i in 0..nodes {
+        let b = &nfixed[4 * i..4 * i + 4];
+        let nchild = get(&b[1..], 2) as usize;
+        first += nedge.get(i as u64);
+        let mut children = Vec::with_capacity(nchild);
+        for e in 0..nchild {
+            let at = first + e as u64;
+            let code = ecode.get(at) as u16;
+            let down = echild.get(at) as usize;
+            let node = if down == 0 { NO_NODE } else { i as u32 - down as u32 };
+            if node != NO_NODE {
+                need((node as usize) < i, "slice partial: child after parent");
+                codes[node as usize] = code;
+            }
+            children.push(Child { code, start: 0, count: ecount.get(at), node });
+        }
+        kids.push(children);
+        counts.push(ncount.get(i as u64));
+    }
+    for i in 0..nodes {
+        let dacc = decode_docacc(&d[offs[6] + DOCACC_BYTES * i..]);
+        out.push(Retained {
+            depth: nfixed[4 * i] as usize,
+            code: codes[i],
+            count: counts[i],
+            children: std::mem::take(&mut kids[i]),
+            docs: dacc,
+        });
+    }
+    Slice {
+        depth,
+        min_support,
+        rows,
+        corpus_len,
+        docs_min_support,
+        source: get(&d[152..], 8) as u8,
+        source_mem: get(&d[160..], 8),
+        boundary_aware: get(&d[168..], 8) as u8,
+        nodes: out,
+    }
+}
+
+/// One node of the shared chain, or the root, seen from both halves: the children
+/// concatenate in code order, an equal code is the same subtree (the counts add and
+/// the node is the one merged node), and an END entry on both sides accumulates.
+fn join_node(x: &Retained, y: &Retained, map_x: &dyn Fn(u32) -> u32, map_y: &dyn Fn(u32) -> u32) -> Retained {
+    need(x.depth == y.depth && x.code == y.code, "merge: the shared chain does not line up");
+    let mut children: Vec<Child> = Vec::with_capacity(x.children.len() + y.children.len());
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < x.children.len() || j < y.children.len() {
+        let from_x = match (x.children.get(i), y.children.get(j)) {
+            (Some(p), Some(q)) => p.code <= q.code,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        let (p, map_p) = if from_x { (&x.children[i], map_x) } else { (&y.children[j], map_y) };
+        let q = if from_x { y.children.get(j) } else { x.children.get(i) };
+        if let Some(other) = q {
+            if other.code == p.code {
+                if p.node == NO_NODE || other.node == NO_NODE {
+                    need(p.node == NO_NODE && other.node == NO_NODE, "merge: an END entry against a node");
+                    children.push(Child { code: p.code, start: p.start, count: p.count + other.count, node: NO_NODE });
+                } else {
+                    need(
+                        map_x(p.node) == map_y(other.node),
+                        &format!(
+                            "merge: two halves disagree about a shared child: depth={} code={} \
+                             lower node {} -> {} upper node {} -> {}",
+                            x.depth,
+                            p.code,
+                            p.node,
+                            map_x(p.node),
+                            other.node,
+                            map_y(other.node)
+                        ),
+                    );
+                    children.push(Child {
+                        code: p.code,
+                        start: p.start,
+                        count: p.count + other.count,
+                        node: map_x(p.node),
+                    });
+                }
+                i += 1;
+                j += 1;
+                continue;
+            }
+        }
+        let node = if p.node == NO_NODE { NO_NODE } else { map_p(p.node) };
+        children.push(Child { code: p.code, start: p.start, count: p.count, node });
+        if from_x {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    Retained {
+        depth: x.depth,
+        code: x.code,
+        count: x.count + y.count,
+        children,
+        docs: merge_docs(&x.docs, &y.docs),
+    }
+}
+
+/// The merged tree in the emit order a single pass numbers it.
+///
+/// THE SHARED CHAIN is found by PATH, not by position: under a node both halves
+/// hold, the lower half's last content child and the upper half's first content
+/// child carry the same code exactly when they are the boundary continuation, and
+/// that pair is the next shared node. The lower half's copies end up at the tail of
+/// its vector (they were open when it ran out of rows); the upper half's copies close
+/// where its own rows diverge, which is also where one pass closes them, so the upper
+/// half's positions ARE the merged positions and only the lower copies are dropped.
+fn merge_trees(a: &Slice, b: &Slice) -> Vec<Retained> {
+    let (na, nb) = (a.nodes.len(), b.nodes.len());
+    let mut chain: Vec<(usize, usize)> = Vec::new(); // (lower copy, upper copy), deepest last
+    let (mut ca, mut cb) = (na - 1, nb - 1);
+    loop {
+        let x = a.nodes[ca].children.iter().rev().find(|c| c.code != END && c.node != NO_NODE);
+        let y = b.nodes[cb].children.iter().find(|c| c.code != END && c.node != NO_NODE);
+        let (x, y) = match (x, y) {
+            (Some(x), Some(y)) => (x.node as usize, y.node as usize),
+            _ => break,
+        };
+        if a.nodes[x].code != b.nodes[y].code {
+            break;
+        }
+        chain.push((x, y));
+        ca = x;
+        cb = y;
+    }
+    let d = chain.len();
+    let ka = na - 1 - d;
+    let mut in_chain = vec![NO_NODE; na];
+    for (k, &(x, y)) in chain.iter().enumerate() {
+        need(x + 2 + k == na, "merge: the lower chain is not the tail of its vector");
+        need(a.nodes[x].depth == b.nodes[y].depth, "merge: the shared chain depths differ");
+        in_chain[x] = y as u32;
+    }
+    let map_a = |i: u32| match in_chain.get(i as usize) {
+        Some(&y) if y != NO_NODE => (ka + y as usize) as u32,
+        _ => i,
+    };
+    let map_b = |i: u32| (ka + i as usize) as u32;
+    let mut out: Vec<Retained> = Vec::with_capacity(ka + nb);
+    for r in &a.nodes[..ka] {
+        let children = r
+            .children
+            .iter()
+            .map(|c| Child {
+                code: c.code,
+                start: c.start,
+                count: c.count,
+                node: if c.node == NO_NODE { NO_NODE } else { map_a(c.node) },
+            })
+            .collect();
+        out.push(Retained { depth: r.depth, code: r.code, count: r.count, children, docs: r.docs.clone() });
+    }
+    for i in 0..nb - 1 {
+        match chain.iter().find(|&&(_, y)| y == i) {
+            Some(&(x, _)) => out.push(join_node(&a.nodes[x], &b.nodes[i], &map_a, &map_b)),
+            None => {
+                let r = &b.nodes[i];
+                let children = r
+                    .children
+                    .iter()
+                    .map(|c| Child {
+                        code: c.code,
+                        start: c.start,
+                        count: c.count,
+                        node: if c.node == NO_NODE { NO_NODE } else { map_b(c.node) },
+                    })
+                    .collect();
+                out.push(Retained {
+                    depth: r.depth,
+                    code: r.code,
+                    count: r.count,
+                    children,
+                    docs: r.docs.clone(),
+                });
+            }
+        }
+    }
+    let root = join_node(&a.nodes[na - 1], &b.nodes[nb - 1], &map_a, &map_b);
+    out.push(Retained { count: a.rows + b.rows, ..root });
+    out
+}
+
+/// Emit a member payload from a retained tree, applying `min_support` as one pass
+/// does: a node below it keeps its edge (and count) but gets no record, so its
+/// subtree is unreachable, and the root is always emitted with the range's rows.
+fn emit_tree(par: &Slice, nodes: Vec<Retained>, rows: u64) -> Vec<u8> {
+    let mut e = Builder::new(par.depth, par.min_support, par.docs_min_support);
+    e.source = par.source;
+    e.source_mem = par.source_mem;
+    e.boundary_aware = par.boundary_aware;
+    let last = nodes.len() - 1;
+    let mut ids = vec![NO_NODE; nodes.len()];
+    let mut kids: Vec<Child> = Vec::new();
+    for (i, r) in nodes.iter().enumerate() {
+        if i != last && r.count < par.min_support {
+            continue;
+        }
+        kids.clear();
+        for c in r.children.iter() {
+            kids.push(Child {
+                code: c.code,
+                start: c.start,
+                count: c.count,
+                node: if c.node == NO_NODE { NO_NODE } else { ids[c.node as usize] },
+            });
+        }
+        ids[i] = e.emit_node(r.depth, r.count, &kids, &r.docs);
+    }
+    need(nodes[last].count == rows, "merge: the merged root does not hold the range's rows");
+    let nnodes = e.nnodes;
+    let edges = e.prev_edge_end;
+    need(
+        e.ecode.len() == edges && e.ecount.len() == edges && e.echild.len() == edges,
+        "edge column lengths",
+    );
+    let nfixed = std::mem::take(&mut e.nfixed);
+    let secs: [Vec<u8>; TRIE_SECTIONS] = [
+        nfixed,
+        e.nedge.finish(),
+        e.ncount.finish(),
+        e.ecode.finish(),
+        e.echild.finish(),
+        e.ecount.finish(),
+        e.dndocs.finish(),
+        e.dtop.finish(),
+        e.dfirst.finish(),
+        e.dids.finish(),
+    ];
+    let mut offs = [0u64; TRIE_SECTIONS];
+    let mut at = HEAD as u64;
+    for (i, s) in secs.iter().enumerate() {
+        offs[i] = at;
+        at += ((s.len() as u64 + 7) / 8) * 8;
+    }
+    let mut out = vec![0u8; at as usize];
+    for (i, s) in secs.iter().enumerate() {
+        out[offs[i] as usize..offs[i] as usize + s.len()].copy_from_slice(s);
+    }
+    put(&mut out[0..], TRIE_VERSION, 8);
+    put(&mut out[8..], par.depth as u64, 8);
+    put(&mut out[16..], par.min_support, 8);
+    put(&mut out[24..], rows, 8);
+    put(&mut out[32..], par.corpus_len, 8);
+    put(&mut out[40..], nnodes, 8);
+    put(&mut out[48..], edges, 8);
+    put(&mut out[56..], par.docs_min_support, 8);
+    for i in 0..TRIE_SECTIONS {
+        put(&mut out[64 + 8 * i..], offs[i], 8);
+    }
+    put(&mut out[144..], ids[last] as u64, 8);
+    put(&mut out[152..], par.source as u64, 8);
+    put(&mut out[160..], par.source_mem, 8);
+    put(&mut out[168..], par.boundary_aware as u64, 8);
+    out
+}
+
+/// Merge the partial of a LOWER row range into the partial of the adjacent upper
+/// range and return the member payload of the whole range.
+pub fn merge_slices(lower: &[u8], upper: &[u8]) -> Vec<u8> {
+    let a = decode_slice(lower);
+    let b = decode_slice(upper);
+    need(
+        a.depth == b.depth
+            && a.min_support == b.min_support
+            && a.docs_min_support == b.docs_min_support
+            && a.corpus_len == b.corpus_len
+            && a.source == b.source
+            && a.boundary_aware == b.boundary_aware,
+        "row-slice partials disagree on the build parameters",
+    );
+    let rows = a.rows + b.rows;
+    let nodes = merge_trees(&a, &b);
+    emit_tree(&a, nodes, rows)
 }
 
 // -------------------------------------------------------------------- the reader

@@ -178,6 +178,24 @@ carried per-char repair; and the cut must sit on the m1 block grid. What remains
 for I1 is the **assembler** - the K-pipeline step that applies those rules to
 produce one container - and the producer routing.
 
+## I1 step 3 - m20 slices: structure exact, one column order-dependent
+
+`Builder::finish_slice` / `merge_slices` land in `xsa/src/ctx.rs` and
+`xsa/src/build_pfp.rs`: every structural column of the m20 member merges
+byte-identically across a row split (64,353 nodes, 1,642,415 edges, node
+numbering, counts, `ecode/echild/ecount/dndocs/dfirst/nfixed`, exact document
+lists, `ndocs`, and the m15 trailer). **One column does not: `dtop`, the
+Misra-Gries heavy-document candidate, differs on 3 of 64,353 nodes** because MG
+with decrements is order-dependent, so two halves' counters cannot reproduce the
+single pass's candidate once a node overflows.
+
+That is a format decision, not a bug: either m20 stays a single stage inside I1
+(the emission floor is then the m20 feed, about 3,000 s at 10 GB, so I1 buys
+about 2x and I3 becomes the lever), or `dtop` is redefined to be order
+independent, which changes the member bytes and every existing v10 pin. Nothing
+in this step is committed to a default; the unchanged product still matches
+`eac582ca...`.
+
 ## I1 implementation sketch (call-site level)
 
 The producer already emits range by range, in order, carrying the seam in

@@ -1,0 +1,22 @@
+{
+  "label": "100m-m20slice",
+  "ticket": "I1 step 3 - m20 buildable per row slice and mergeable",
+  "verdict": "PARTIAL: every structural column merges byte-identically; one column (dtop, the Misra-Gries heavy-document candidate) is order-dependent and differs on 3 of 64,353 nodes. Blocked on a format decision, not a bug.",
+  "implemented": "Builder::set_slice/set_first_row; close_one retains every node so a node whose occurrences fall in the neighbour survives; finish_slice emits a mergeable partial (ordinary node/edge columns at min_support=1 plus one 128-byte accumulator record per node: small[8], n, over, MG mg/mgc, 64 HLL registers); merge_slices decodes both partials, merges and re-emits through the same emit_node path; the shared chain is identified by path, counts add, children concatenate in code order, END accumulates, exact doc lists union in first-appearance order, HLL register-wise max on overflow, MG counters summed. counts stay per row (no row - start).",
+  "gates": {
+    "a_product": "PASS - rebuilt by the new binary: 87,192,432 B, sha256 eac582ca...f98bd (re-verified by the parent through gates/pfp_scale.sh, 4 workers, -m 2G, pin asserted)",
+    "a_whole_range_payload": "PASS 6,803,128 B equals the product's m20 member",
+    "b_merged_member": "FAIL on dtop only: nodes 64,353 == 64,353, edges 1,642,415 == 1,642,415, payload 6,803,128 == 6,803,128; nedge/ncount/ecode/echild/ecount/dndocs/dfirst/nfixed have 0 differing entries; dtop differs on 3 nodes (31303: 6580 vs 1937, 31323: 6580 vs 1937, 31524: 4581 vs 1937), all three overflowed estimators, first differing byte 6,076,288",
+    "b_m15": "PASS 37,208 B",
+    "c_fixtures": "PASS build_pfp.py; PASS pfp_generated_v10_test.py 921f4e47... and 02508df3..."
+  },
+  "why": "dtop stores the Misra-Gries heavy-document CANDIDATE. MG with decrements is order-dependent, so summing two halves' counters cannot reproduce the single pass's candidate once a node overflows. Everything the merge can reconstruct is already exact.",
+  "decision_needed": [
+    "A: keep m20 single-threaded in I1 - the writers split (proven) and m20 stays one stage, so the emission floor is the m20 feed (~3,000 s at 10 GB) and I1 gives about 2x, with I3 (cheaper feed) as the next lever.",
+    "B: make dtop order-independent so slices merge exactly. That changes the m20 member bytes, i.e. the container format and every existing v10 pin, and needs operator approval; the historical reference products could no longer be compared."
+  ],
+  "open_risks": [
+    "a half-range partial is 3.86 GB (128 B/node of accumulator) against a 6.8 MB member, and merge_slices holds both trees resident: the accumulator must be trimmed (HLL + MG only for overflow nodes) before a K-range chain is pipeline-viable",
+    "only two ranges emit a member today; a middle group cannot yet emit a partial, so K>2 needs the assembler"
+  ]
+}
