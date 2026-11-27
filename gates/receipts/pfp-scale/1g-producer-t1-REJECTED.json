@@ -1,0 +1,25 @@
+{
+  "label": "1g-producer-t1",
+  "ticket": "T1 prefetch the per-row predecessor in expand",
+  "verdict": "REJECTED: prefetching text[p-1] eight rows ahead changes nothing (expand_pipe 15.90 -> 16.03 s, order 45.80 -> 45.58 s, both within noise).",
+  "producer_only_1g_32lanes": {
+    "without_prefetch": {
+      "order_s": 45.8,
+      "expand_pipe_s": 15.904,
+      "gather_cpu_s": 153.18,
+      "sort_cpu_s": 314.67
+    },
+    "with_prefetch": {
+      "order_s": 45.585,
+      "expand_pipe_s": 16.026,
+      "gather_cpu_s": 151.69,
+      "sort_cpu_s": 315.3
+    }
+  },
+  "finding": "The producer's OWN expansion is 15.9 s for 1,000,000,666 rows - 16 ns per row. In the end-to-end 1 GB arm expand_pipe is 380.8 s, so 96% of that phase is the producer waiting for its consumers. At 10 GB the measured 4,551 s therefore contains about 160 s of work and ~4,400 s of stall.",
+  "consequences": [
+    "T3 (heavy-class fan-in) is worthless: there is no expansion CPU to save.",
+    "T1 is closed.",
+    "Every remaining second of the emission wall is consumer side: m20 feed and the v10 writer, both single-threaded. I1 (K independent range pipelines) and I3 (m20 over context runs) are the only levers left."
+  ]
+}

@@ -171,9 +171,9 @@ Status legend: `open` / `landed` / `rejected` / `blocked`.
 
 | # | ticket | side | rung that shows it | prediction | disproof (smallest) | status |
 |---|---|---|---|---|---|---|
-| T1 | **Prefetch the per-row lookups** in `expand`: `__builtin_prefetch(text+p_next-1)` a few rows ahead, and the next tile's first span | producer | producer-only 1 GB | expansion 4,551 → ≤1,500 s at 10 GB; producer-only 1 GB `expand` −30 % or more | producer-only 1 GB expand moves <10 % | open |
-| T2 | **Ping-pong ordering**: two slot arrays, `std::merge` per level, copy back at the end; halve `slots` per grant so the second array is accounted | producer | producer-only 1 GB, then 1 GB e2e | ordering 2,037 → ~350 s at 10 GB; 1 GB ordering 99.6 → ~40 s | 1 GB ordering does not fall by ≥40 % | open |
-| T3 | **Split a heavy class across lanes**: a class with millions of occurrences emits its range in ordered chunks, one lane per chunk, `seam(prev,key)` per chunk | producer | producer-only 1 GB | expansion → ~1,000 s at 10 GB | producer-only 1 GB expand does not fall by ≥30 % | open |
+| T1 | ~~Prefetch the per-row lookups~~ | producer | producer-only 1 GB | — | — | **rejected** (R5): 15.90 → 16.03 s, no effect |
+| T2 | ~~Ping-pong comparison sort~~ | producer | — | — | — | **superseded** by I2+T4 (ordering 99.6 → 56.3 s at 1 GB) |
+| T3 | ~~Split a heavy class across lanes~~ |: a class with millions of occurrences emits its range in ordered chunks, one lane per chunk, `seam(prev,key)` per chunk | producer | producer-only 1 GB | expansion → ~1,000 s at 10 GB | producer-only 1 GB expand does not fall by ≥30 % | open |
 | T4 | **Wider row key. LANDED**: sixteen key bytes per slot; equal-key exact comparisons 500M -> 95M, ordering 7.20 -> 4.67 s |: 24-byte slot (16 key bytes + code), or compare 8 more bytes on a tie | producer | producer-only 1 GB | `text_cmp` 32 % → <5 %; ordering −15…25 % | producer-only 1 GB `text_cmp` stays above 15 % | open |
 | T5 | **m20 counts from row contiguity**: a node's rows are contiguous, so its `count` is `row - start` at close; only `docs` accumulates per row | consumer | 100 MB e2e | feed 30.2 → ≤18 s at 100 MB | feed moves <15 % | open |
 | T6 | **m20 in parallel**: split the sorted row stream at first- and second-byte bucket boundaries, build subtrees independently, concatenate in bucket order; root document accumulator merged separately | consumer | 100 MB e2e | feed /lanes; 100 MB feed ≤8 s | any pin moves, or feed does not fall by ≥2× at 32 lanes | open |
@@ -187,13 +187,18 @@ Status legend: `open` / `landed` / `rejected` / `blocked`.
 |---|---|---|
 | R1 | planner refinement of an oversized range | **rejected**: the build refuses `PFP ranges require replay`; refinement replays postings. `gates/receipts/pfp-scale/1g-refine-j32-m8G-REJECTED.json` |
 | R3 | chunk-sort + `std::merge` ping-pong ordering (T2, first attempt) | **inconclusive, reverted**: with 1,557 pieces of 17,835 records the 100 MB producer-only arm did not reach the post-sort point in 90 s where the baseline orders the same input in 9.6 s. Not isolated yet; the next step is to time one piece sort and one merge level in isolation. No code kept. |
+| R5 | prefetch in the expansion (T1) | **rejected**: 15.90 → 16.03 s at 1 GB producer-only. The producer's own expansion is 16 ns/row; the phase is 96% stall, not latency-bound work. `1g-producer-t1-REJECTED.json` |
 | R4 | packet-granularity fence instead of the per-row six-condition check (T9) | **rejected**: rows 10.51 -> 10.68 s at 100 MB, wall 50.48 -> 49.89 s, pins unchanged. The row loop's cost is run bookkeeping, not validation. `100m-t9-nopcheck-j16-REJECTED.json` |
 | R2 | `std::inplace_merge` over chunk-sorted jobs | **rejected**: 11 h 44 m of CPU on 32 cores in 22 min for 1.14 GB of rows; rotation-based merging at tens of millions of records. `1g-orderwave-j32-m8G-REJECTED.json` |
 | L1 | `MADV_HUGEPAGE` on the row view's anonymous columns and the arena | **landed** `0135d6d5`: 1 GB 620.3 → 549.7 s, same pins. Should be larger at 10 GB — not yet measured there |
 
 ## Ordering of work
 
-1. **T5** (consumer, 100 MB arm, ~60 s): the only consumer term that paces the
+1. **I1 + I5 (K range pipelines) and I3 (m20 over context runs).** After R5 the
+   producer has no meaningful CPU left to save — expansion is 16 ns/row and
+   ordering is 56 s/GB — so every remaining second is the two single-threaded
+   consumers. These are the only levers the measurements still support.
+2. **T5** (consumer, 100 MB arm, ~60 s): the only consumer term that paces the
    100 MB rung. T9 is closed — the writer's fence turned out to be free, and its
    whole own-work share at 100 MB is 19.5 s of a 50.5 s build with 37.7 s
    read-blocked.
