@@ -165,6 +165,47 @@ change, 100 MB producer-only arm), then **I3** (100 MB arm, pins), then **I1+I5*
 (the redesign), with **I4** either before I1 (if χ is to be chunked) or after (if
 a sequential handoff is acceptable at first).
 
+## I1 implementation sketch (call-site level)
+
+The producer already emits range by range, in order, carrying the seam in
+`prev`; each range group is therefore an independent slice. What has to change,
+with the exact places:
+
+1. **Producer routing.** `pfp_rows` writes its row stream to one fd today
+   (`e.emit_to(STDOUT_FILENO, ...)`). Give `Emit` a vector of K sink fds and a
+   rule: close group k when the writer-visible byte changes (`row(p,h,pred)`
+   carries the byte; the producer can track the last `pred` byte itself and end
+   the group where it differs), then open group k+1 on the next range.
+2. **Run ownership.** A run never spans a group, so each writer's open run at
+   exit is closed and counted normally; the concatenation in group order is the
+   same run sequence. This is the only invariant that makes the split safe — do
+   not cut a group inside a run.
+3. **m1/m12/m13 merge.** Each writer emits m1 payload blocks with a local
+   directory; concatenate the payloads in group order and prefix-sum the
+   `(payload, bitPos)` directory. m12 `runStart` and m13 `dirRun/dirCum` are
+   per-char sample arrays indexed by run; concatenate and shift the global run
+   index by the group's first run.
+4. **χ handoff.** `SweepImpl` state is 256 `rr_len`/`rr_pos`/`rr_act` entries plus
+   `m`, `p`, `p_sa_last`, `previous_interior`. Serialize after group k and
+   restore before group k+1 (a small binary trailer on the pipe), or implement
+   I4 so the states are computed by a scan and no handoff is needed.
+5. **m20.** Build one partial trie per group; the node numbering must be assigned
+   per group and concatenated, with the root's document accumulator merged
+   (`DocAcc` union: small set ∪, HLL register max, MG counters summed). This is
+   the part where byte identity is hardest — gate every step on
+   `pfp_generated_v10_test.py` and the 100 MB pin.
+
+## I3 correction: `row − start` is NOT the count
+
+`close_one` uses `lv.count`, and `feed` accumulates it only for levels
+`..take(bd)` where `bd = min(top, avail)` — the *in-document* cut depth. A node's
+rows are contiguous, but a row whose document ends above the node does not
+contribute. So `self.row - lv.start` would over-count and change m20. The sound
+version keeps `lv.count += 1` and batches only the document accumulator:
+per level keep `(pending_doc, pending_n)` and add `DocAcc::add_n(doc, n)` that
+increments the Misra–Gries counters by `n` while touching the HLL once per
+distinct doc. Gate on the same pins.
+
 ## Tickets
 
 Status legend: `open` / `landed` / `rejected` / `blocked`.
