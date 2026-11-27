@@ -195,6 +195,27 @@ with the exact places:
    the part where byte identity is hardest — gate every step on
    `pfp_generated_v10_test.py` and the 100 MB pin.
 
+## I1 ordering constraint found on contact (read this before starting)
+
+Both downstream stages are written against **the whole ordered stream**, which
+makes a group split deeper than it looks:
+
+* `stream-context` reads exactly `n+1` rows and then appends the m20/m15
+  trailer, so a group needs its own row count *and* its own partial trailer.
+  `XSA_CTX_ROWS=<rows>` now overrides that count (default unchanged, pins
+  re-verified), which is prerequisite 1 for slicing.
+* `xsa_finish --from-rows` derives `n` from the **byte histogram** and then
+  demands exactly `n` rows (`for(rank=0;rank<n;)`), so a partial row stream is a
+  short read, not a shorter container. A writer that accepts `--rows A:B` must
+  therefore also accept (a) an incoming open-run state and (b) an incoming
+  256-entry sweep state, because both cross the boundary.
+
+So the implementation order is forced: **writer row-range contract with explicit
+run and sweep state first**, then producer routing, then m20 partial trailers and
+their merge, then the m1/m12/m13 concatenation. Trying to prove the m1
+concatenation first, as this document originally suggested, is not possible with
+today's writer contract — there is no way to hand it half a stream.
+
 ## I3 correction: `row − start` is NOT the count
 
 `close_one` uses `lv.count`, and `feed` accumulates it only for levels

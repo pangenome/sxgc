@@ -70,10 +70,15 @@ pub fn context(raw: &str, map: &str) -> io::Result<()> {
     let mut trie = ctx::Builder::new(8, 1000, 1000);
     trie.set_source(ctx::SOURCE_IN_BUILD, 0);
     trie.set_boundary_aware();
+    
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
     let mut packet = vec![0u8; 32768 * 12];
-    let mut left = n + 1;
+    // A group of a split row stream carries its own trailer, so the count it
+    // should expect is the group's row count, not the whole stream's. Default
+    // unchanged: the whole stream is n+1 rows including the END row.
+    let left_hint = std::env::var("XSA_CTX_ROWS").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(n as u64 + 1);
+    let mut left: usize = left_hint as usize;
     let entry = std::time::Instant::now();
     let (mut read_s, mut feed_s, mut write_s) = (0.0f64, 0.0f64, 0.0f64);
     while left > 0 {
@@ -109,7 +114,7 @@ pub fn context(raw: &str, map: &str) -> io::Result<()> {
             "extra ordered rows",
         ));
     }
-    let (payload, _) = trie.finish(n as u64 + 1, n as u64);
+    let (payload, _) = trie.finish(left_hint, n as u64);
     output.write_all(&(payload.len() as u64).to_le_bytes())?;
     output.write_all(&payload)?;
     drop(payload);
