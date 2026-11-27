@@ -36,9 +36,26 @@ struct Emit {
   // Proper-prefix exhaustion between DIFFERENT finite keys can only be the EOF suffix.
   need((h==a.len && a.terminal && h<b.len) || (h<len && text[a.p+h]<text[b.p+h]),"unordered/split finite key seam");return h;}
  U skip(U b)const{if(learned)return learned->at(b);const auto& z=ix.bands[b];return z.hi==z.lo+1 && z.lo%257!=0?2:(z.lo/257==(z.hi-1)/257?1:0);}
- void order(const Job& j,Slot* a,Counts& c)const{if(j.exact)return;double ts=omp_get_wtime();const U d=j.d;U i=0,known=std::max<U>(skip(j.band),j.depth);
+ // Rank by the 8-byte slot key with a counting sort (four 16-bit digits, LSD),
+ // then break the remaining equal-key runs with the exact comparator. The key is
+ // an unsigned 64-bit word, so this replaces ~2.7e11 comparison calls on the
+ // 10 GB tape with four streaming passes over 16-byte slots.
+ void sort_slots(Slot* a,U d,Slot* tmp,Counts& c)const{need(!cached,"slot arena has no cached-order path");
+  auto exact=[&](const Slot& x,const Slot& y){++c.keycmp;if(x.key!=y.key)return x.key<y.key;++c.textcmp;return cmp(span(x),span(y))<0;};
+  if(d<2048 || !tmp){U compares=0;std::sort(a,a+d,[&](const Slot& x,const Slot& y){if(!(++compares%32768))stop.check();return exact(x,y);});return;}
+  static thread_local std::vector<U> cnt;cnt.assign(65536,0);
+  Slot* src=a;Slot* dst=tmp;
+  for(unsigned pass=0;pass<4;++pass){const unsigned shift=16*pass;
+   std::fill(cnt.begin(),cnt.end(),0);
+   for(U i=0;i<d;++i) ++cnt[(src[i].key>>shift)&0xFFFFu];
+   U sum=0;for(U& v:cnt){U k=v;v=sum;sum+=k;}
+   for(U i=0;i<d;++i) dst[cnt[(src[i].key>>shift)&0xFFFFu]++]=src[i];
+   std::swap(src,dst);}
+  need(src==a,"radix pass parity");
+  for(U i=0;i<d;){U j=i+1;while(j<d && a[j].key==a[i].key)++j;if(j-i>1) std::sort(a+i,a+j,exact);i=j;}}
+ void order(const Job& j,Slot* a,Slot* tmp,Counts& c)const{if(j.exact)return;double ts=omp_get_wtime();const U d=j.d;U i=0,known=std::max<U>(skip(j.band),j.depth);
   plan.visit(j,[&](U r,U off,U tok,Span s){need(i<d,"sort arena overrun");a[i++]=pack(r,off,tok,known,s);++c.loaded;});need(i==d,"sort arena underflow");
-  c.gather=omp_get_wtime()-ts;need(!cached,"slot arena has no cached-order path");U compares=0;std::sort(a,a+d,[&](const Slot& x,const Slot& y){if(!(++compares%32768))stop.check();++c.keycmp;if(x.key!=y.key)return x.key<y.key;++c.textcmp;return cmp(span(x),span(y))<0;});c.sort=omp_get_wtime()-ts;}
+  c.gather=omp_get_wtime()-ts;sort_slots(a,d,tmp,c);c.sort=omp_get_wtime()-ts;}
  template<class Out,class Feed>void union_group(Span key,U h0,Marks& marks,Out& out,Counts& c,Feed feed)const{
   need(!key.terminal && key.len>8,"shared EOF/short ordinary key");++c.multi;std::array<U,16> small;std::array<unsigned,16> begin{},end_at{};unsigned streams=0;U num=0,start=c.rows;
   feed([&](U head){U first=num,end=v.after_head(head);for(U r=head;r<end;++r){if(!(num%16384))stop.check();U s=v.successor(r);
@@ -66,7 +83,7 @@ struct Emit {
   need(count==job.d?c.rows==job.rows:(c.rows>=count && c.rows<=job.rows),"range row coverage");out.finish();c.produce=omp_get_wtime()-start;
  }
  static Big emit_arrays(U n,U m,U team,U nb,U pg,U slots){Big live=Big(rawview::budget(n,m,team))+Pages::bytes(pg)+Big(team)*nb*sizeof(Layout)+CELL*(sizeof(Band)+sizeof(unsigned))+team*sizeof(Stripe);
-  return live+sizeof(Slot)*Big(slots)+team*(Marks::bytes(m)+sizeof(Pipe)+(256<<10))+2*Big(Planner::LIMIT)*sizeof(Job)+(2<<20);}
+  return live+2*sizeof(Slot)*Big(slots)+team*(Marks::bytes(m)+sizeof(Pipe)+(256<<10))+2*Big(Planner::LIMIT)*sizeof(Job)+(2<<20);}
  static void add(Counts& dst,const Counts& c){dst.order.add(c.order);dst.rows+=c.rows;dst.loaded+=c.loaded;dst.groups+=c.groups;dst.multi+=c.multi;dst.bitmaps+=c.bitmaps;dst.keycmp+=c.keycmp;dst.textcmp+=c.textcmp;dst.sort+=c.sort;dst.gather+=c.gather;dst.produce+=c.produce;dst.max_tie=std::max(dst.max_tie,c.max_tie);dst.max_mass=std::max(dst.max_mass,c.max_mass);}
  void tile_wave(int sink,U lo,int lanes,const std::array<U,65>& at,const Slot* arena,Span& prev,std::vector<Marks>& marks){
   double start=omp_get_wtime();std::vector<Tile> work;U bound=divup(at[lanes],GRAIN)+U(lanes);work.reserve(bound);
@@ -94,7 +111,7 @@ struct Emit {
   if (want>grant) { U drop=U((want-grant)/sizeof(Slot))+1; slots=slots>drop?slots-drop:0; want=need_bytes(slots); }
   need(slots && want<=grant,"ordered stream array grant");arrays=narrow(want);plan.build(slots);}
  void emit_to(int sink,U through,bool tiled){const auto& jobs=plan.jobs;need(next_job<through && through<=jobs.size(),"epoch job coverage");stop.check();
-  std::vector<Slot> arena(slots);
+  std::vector<Slot> arena(slots),sort_tmp(slots);
   // The arena is read and written at random for the whole job; ask for huge
   // pages (the host only grants them on request).
   { uintptr_t lo=(uintptr_t)arena.data(), hi=lo+sizeof(Slot)*slots, pg=4096;
@@ -105,7 +122,7 @@ struct Emit {
   for(U lo=next_job,hi;lo<through;lo=hi){std::array<U,65> at{};hi=lo;while(hi<through && hi-lo<U(team)){U i=hi-lo,d=jobs[hi].exact?0:jobs[hi].d;if(d>slots-at[i])break;at[i+1]=at[i]+d;++hi;}
    int lanes=int(hi-lo);need(lanes>0,"empty wave");++waves;std::vector<Counts> stats(lanes);double ts=omp_get_wtime();
 #pragma omp parallel for num_threads(lanes) schedule(static,1)
-   for(int j=0;j<lanes;++j)order(jobs[lo+j],arena.data()+at[j],stats[j]);
+   for(int j=0;j<lanes;++j)order(jobs[lo+j],arena.data()+at[j],sort_tmp.data()+at[j],stats[j]);
    sort_wall+=omp_get_wtime()-ts;ts=omp_get_wtime();if(tiled){tile_wave(sink,lo,lanes,at,arena.data(),prev,marks);stream_wall+=omp_get_wtime()-ts;for(auto& c:stats)add(totals,c);continue;}std::array<Span,64> edges;std::vector<std::unique_ptr<Pipe>> pipes;
    for(int j=0;j<lanes;++j){edges[j]=prev;prev=jobs[lo+j].exact?jobs[lo+j].anchor:span(arena[at[j+1]-1]);pipes.emplace_back(std::make_unique<Pipe>(stop));}
    // All lanes are live (never a pool queued behind a blocked later range). Cat does no suffix comparisons.

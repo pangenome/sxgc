@@ -26,7 +26,8 @@ int main(int argc,char** argv) try {
     U d=view.stats.owned,pg=m+(d-k)/route64::PAGE;
     auto base=Emit::emit_arrays(n,m,t,1,pg,0)+Emit::tile_bytes(0,t);
     check(base<grant,"PFP row buffers exceed sort memory");
-    U slots=std::min(d,U((grant-base)/16));check(slots,"no PFP dictionary descriptor slots");
+    // Two slot arrays: the wave is ranked by a counting sort into the second one.
+    U slots=std::min(d,U((grant-base)/32));check(slots,"no PFP dictionary descriptor slots");
     U target=pfp::ceildiv(slots,2*t);
     Route ix(view,text.bytes(),n,m,int(t),stop); Route::Disjoint budget{cap,slots};
     ix.build((dir/"postings").c_str(),target,grant,0,&budget);

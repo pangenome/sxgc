@@ -1,0 +1,24 @@
+{
+  "label": "100m-i2-j16-m2G",
+  "ticket": "I2 radix ordering on the 8-byte slot key",
+  "verdict": "LANDED: counting sort (four 16-bit LSD digits) replaces the comparison sort; equal-key runs still use the exact comparator.",
+  "producer_only_100m_16lanes": {
+    "order_s_before": 9.566,
+    "order_s_after": 7.202,
+    "sort_cpu_s_before": 79.559,
+    "sort_cpu_s_after": 54.525,
+    "key_cmp_before": 2449517485,
+    "key_cmp_after": 499729791
+  },
+  "end_to_end_100m_j16_m2G": {
+    "wall_s": 41.7,
+    "emission_s": 40.508,
+    "order_s": 7.678,
+    "sort_cpu_s": 55.356,
+    "pin": "eac582ca...",
+    "matched": true,
+    "product_bytes": 87192432
+  },
+  "baseline_same_grants": "100m-t9-base-j16: wall 50.48 s, emission 49.06 s, order 9.57 s (producer-only), writer rows 10.51 s",
+  "note": "The remaining equal-key comparisons (500M for 95.4M slots) now dominate the sort CPU: the 8-byte key groups ~6 slots on average. A 16-byte key costs almost nothing under a counting sort, which is ticket T4; that is the next step on this mechanism."
+}
