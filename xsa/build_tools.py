@@ -119,8 +119,7 @@ run('g++', '-O2', '-std=c++17', repo/'tools/binbwt/stream_vs_bwt.cpp',
     '-o', bundle/'stream_vs_bwt', env=env)
 run('g++', '-O2', '-std=c++17', repo/'tools/binbwt/sa_check.cpp',
     '-o', bundle/'sa_check', env=env)
-for name in ('sxi_write', 'sxi_text_audit', 'phi_inverse_heads'):
-    run('g++', '-O3', '-std=c++17', '-fopenmp', repo/f'bit6/{name}.cpp', '-o', bundle/name, env=env)
+
 with tarfile.open(ROOT/'vendor/agc-cargo.tar.xz') as archive:
     archive.extractall(work/'agc-vendor', filter='data')
 config = (ROOT/'vendor/agc-cargo-config.toml').read_text().replace('@VENDOR@', str(work/'agc-vendor'))
@@ -129,10 +128,6 @@ run(os.environ.get('CARGO', 'cargo'), 'build', '--offline', '--locked', '--relea
     '--manifest-path', repo/'agc2flat/Cargo.toml', '--target-dir', work/'agc-target',
     '--config', config_path, env=env, cwd=work)
 shutil.copyfile(work/'agc-target/release/agc2flat', bundle/'agc2flat')
-for subdir, pattern in [('bit6', 'sxi_*.py'), ('tools', '*.py'), ('tools', '*.json')]:
-    for p in (repo/subdir).glob(pattern):
-        dest=bundle/subdir/p.name; dest.parent.mkdir(exist_ok=True)
-        shutil.copyfile(p, dest)
 # Retain dependency notices with the installed binary as well as source archives.
 for tree, label in [(deps, 'native'), (work/'agc-vendor', 'rust')]:
     for p in sorted(tree.rglob('*')):

@@ -4,6 +4,17 @@ Select PFP with `--pfp` instead of `--tape` or `--bin`. This replaces the standa
 
 The whole build is orchestrated by `xsa` itself (`xsa/src/build_pfp.rs`): it parses the arguments, plans scratch, drives the rank/lift census recursion, runs the stages through bounded pipes, and publishes the finished container with an atomic no-replace link. The stages are the bundled binaries (`pfp_parse`, `stream_rank`, `pfp_lift`, `pfp_rows`, `xsa_finish`) plus the `xsa stream-context` stage of the same executable. No interpreter is started during a build and the bundle carries no build script, so the only entry point on this path is `xsa build --pfp`.
 
+## Input adapters
+
+`xsa build` reads raw bytes: this route and the bin/tape chain (`--input` /
+`--tape` / `--bin`) both consume a finished byte stream. The genomic source
+formats (`--agc`, `--fasta`, `--fastq`) have **no route** in this build: the old
+Python source pipeline was removed with the shell phase wrapper, and
+`xsa build --agc|--fasta|--fastq` refuses before opening anything and writes
+nothing. Those adapters (AGC / FASTA / FASTQ -> raw tape) are being ported to
+Rust; when they land they emit the same raw input the chain already takes, so
+every downstream phase stays as it is.
+
 ```sh
 cargo build --release --locked --manifest-path xsa/Cargo.toml -p xsa
 xsa/target/release/xsa build --pfp corpus.bin --docs-map documents -T /scratch -o corpus.sxi2

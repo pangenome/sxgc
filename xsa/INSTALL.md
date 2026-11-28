@@ -46,14 +46,22 @@ so `python3` is needed only to compile the crate in a checkout, not to run it.
 
 Supported build host: native Linux x86_64, Python >= 3.12, a C++20 GCC/G++ with OpenMP, CMake, Make,
 patch, and the zlib/OpenSSL development libraries used by PFP/htslib. Runtime:
-Python >= 3.12, GNU `/usr/bin/time`, and the standard native runtime libraries
-reported by `ldd` (libstdc++, libgomp, zlib, OpenSSL on the tested host). AGC ghost
-mode additionally needs usable FUSE; native AGC parsing and `--fifo` remain
-available. `BUILD_JOBS` limits native parallelism (capped at four). Cross builds, non-Linux hosts and non-x86_64 targets are rejected explicitly.
+the standard native runtime libraries reported by `ldd` (libstdc++, libgomp,
+zlib, OpenSSL on the tested host) - no interpreter and no `/usr/bin/time`.
+`BUILD_JOBS` limits native parallelism (capped at four). Cross builds, non-Linux hosts and non-x86_64 targets are rejected explicitly.
+
+## Input adapters
+
+Only raw bytes are read: `xsa build --pfp` and the bin/tape chain (`--input` /
+`--tape` / `--bin`) take a finished byte stream. The genomic source formats have
+no route in this build - `xsa build --agc|--fasta|--fastq` refuses before opening
+anything and writes nothing - because the Python source pipeline that read them
+was removed. The AGC / FASTA / FASTQ -> raw-tape adapters are being ported to
+Rust and will emit the same raw input the chain already consumes.
 
 Cargo build output is embedded in xsa. On first `xsa build`, stages are extracted
 atomically below `${XDG_CACHE_HOME:-$HOME/.cache}/xsa/<manifest-sha256>/`. Every
-file is checked against its embedded SHA256 before launching Python. Later
+file is checked against its embedded SHA256 before any stage is executed. Later
 changes fail loudly; remove a damaged cache directory explicitly to re-extract.
 No repository, sibling binaries, configured XSA variables, or prebuilt tools are
 needed. Copying the installed executable to another directory works.
@@ -63,8 +71,7 @@ upstream pins, and built native/Python hashes. Pipeline journals include it and
 also record the running xsa's SHA256. A binary cannot embed its own final hash;
 its self-hash is observed, while all bundled stages are bound at build time.
 `XSA_TOOLS` overrides the native tool directory for development, preserving
-manifest checks; `XSA_PIPELINE` selects a development source pipeline. Legacy
-source manifests are still supported with that checkout's source pipeline.
+manifest checks.
 `--allow-drift` remains a logged development escape for external tool overrides;
 it never silently repairs the embedded bundle's cache.
 

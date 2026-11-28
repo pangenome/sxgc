@@ -1,100 +1,20 @@
-//! Timed, fail-closed source pipeline with endpoint samples from the vendored tap.
-use std::{ffi::OsString, path::PathBuf};
+//! `xsa build` dispatch: the ONE core (`--pfp`) and the one construction chain
+//! (`--input` / `--tape` / `--bin`). Both run natively; this binary spawns no
+//! interpreter and no shell.
+use std::ffi::OsString;
 
-#[derive(Debug)]
-struct Options {
-    kind: String,
-    input: PathBuf,
-    output: PathBuf,
-    verbose: bool,
-    extra: Vec<String>,
-}
-
-fn parse(args: &[String]) -> Result<Options, String> {
-    let mut source = None;
-    let mut output = None;
-    let mut verbose = false;
-    let mut extra = Vec::new();
-    let mut i = 0;
-    while i < args.len() {
-        let flag = &args[i];
-        match flag.as_str() {
-            "--agc" | "--fasta" | "--fastq" | "-o" | "--output" => {
-                i += 1;
-                let value = args.get(i).filter(|s| !s.is_empty() && !s.starts_with('-'))
-                    .ok_or_else(|| format!("{flag} requires a path"))?;
-                if flag == "-o" || flag == "--output" {
-                    if output.replace(PathBuf::from(value)).is_some() {
-                        return Err("specify the output only once".into());
-                    }
-                } else if source.replace((flag[2..].to_string(), PathBuf::from(value))).is_some() {
-                    return Err("choose exactly one of --agc, --fasta, --fastq".into());
-                }
-            }
-            "--manifest" | "--mode" | "--verify-text-sample" | "--threads" | "--address-space-gb" | "--scratch" | "--log-dir" | "--expect-chi" | "--expect-heads" | "--expect-ri4" => {
-                i += 1;
-                let value = args.get(i).filter(|s| !s.is_empty() && !s.starts_with('-'))
-                    .ok_or_else(|| format!("{flag} requires a value"))?;
-                extra.extend([flag.clone(), value.clone()]);
-            }
-            "--allow-drift" | "--materialize" | "--fifo" => extra.push(flag.clone()),
-            "--verbose" => verbose = true,
-            _ => return Err(format!("unknown option {flag}")),
-        }
-        i += 1;
-    }
-    let (kind, input) = source.ok_or("need one of --agc, --fasta, --fastq")?;
-    let output = output.ok_or("need -o <out.sxi>")?;
-    Ok(Options { kind, input, output, verbose, extra })
-}
-
-fn run(args: &[String]) -> Result<(), String> {
-    let options = parse(args)?;
-    // symlink_metadata also catches dangling symlinks. Never overwrite an
-    // existing output, even when construction cannot proceed.
-    match std::fs::symlink_metadata(&options.output) {
-        Ok(_) => return Err(format!("output exists: {}", options.output.display())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(format!("inspect output: {e}")),
-    }
-    let input = std::fs::File::open(&options.input)
-        .map_err(|e| format!("open {}: {e}", options.input.display()))?;
-    if !input.metadata().map_err(|e| format!("inspect input: {e}"))?.is_file() {
-        return Err("input must be a regular file".into());
-    }
-    let bundled = super::bundle::resolve()?;
-    let script = if let Some(script) = std::env::var_os("XSA_PIPELINE") {
-        PathBuf::from(script)
-    } else if std::env::var_os("XSA_TOOLS").is_some_and(|prefix| {
-        std::fs::read(PathBuf::from(prefix).join("MANIFEST.sha256"))
-            .is_ok_and(|bytes| bytes.starts_with(b"# SXI toolset v1"))
-    }) {
-        // Legacy development manifests also bind checkout sources. Locate that
-        // checkout when only XSA_TOOLS was supplied; installed JSON manifests
-        // continue using the embedded pipeline in any working directory.
-        let mut roots = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")];
-        if let Ok(cwd) = std::env::current_dir() {
-            roots.extend(cwd.ancestors().map(PathBuf::from));
-        }
-        roots.into_iter().map(|root| root.join("bit6/sxi_pipeline.py"))
-            .find(|path| path.is_file()).ok_or(
-                "legacy XSA_TOOLS manifest needs its source checkout; run from that checkout or set XSA_PIPELINE")?
-    } else {
-        bundled.join("bit6/sxi_pipeline.py")
-    };
-    let mut command = std::process::Command::new("python3");
-    command.env("XSA_INSTALL_MANIFEST_SHA256", super::bundle::ID)
-        .env("XSA_PACKAGE_VERSION", env!("CARGO_PKG_VERSION"));
-    if std::env::var_os("XSA_TOOLS").is_none() && std::env::var_os("XSA_PIPELINE").is_none() {
-        command.env("XSA_TOOLS", &bundled);
-    }
-    command.arg(script).arg(format!("--{}", options.kind)).arg(options.input)
-        .arg("--output").arg(options.output).args(options.extra)
-        .arg("--xsa").arg(std::env::current_exe().map_err(|e| e.to_string())?);
-    if options.verbose { command.arg("--verbose"); }
-    let status = command.status().map_err(|e| format!("launch pipeline: {e}"))?;
-    if status.success() { Ok(()) } else { Err(format!("pipeline failed: {status}")) }
-}
+/// The genomic source formats this build does NOT read. Their adapters are
+/// being ported to Rust; until they land the refusal names the working route.
+const ADAPTER_REFUSAL: &str = "\
+1. `xsa build --agc|--fasta|--fastq` was REMOVED: the genomic source pipeline\n   \
+   (the bundled bit6/sxi_pipeline.py and the shell sequence readers it drove)\n   \
+   is gone from this build, which runs no interpreter and no shell.\n\
+2. The AGC / FASTA / FASTQ -> raw-tape adapters are being ported to Rust. When\n   \
+   they land they will emit the same raw input the chain already consumes.\n\
+3. NOTHING WAS WRITTEN: no output file, no scratch tree, no log. Until the\n   \
+   adapters land, feed the chain directly:\n   \
+   xsa build --input <raw-file> --scratch <dir> [--docs-map <dir>]\n   \
+   xsa build --pfp <raw-file> --docs-map <dir> -T <scratch> -o <index>";
 
 pub fn command(raw: &[OsString]) {
     // The selector is an option (in any position before `--`), not a new verb.
@@ -118,7 +38,8 @@ pub fn command(raw: &[OsString]) {
         println!("usage: {}\n       See `xsa build --pfp --help` for PFP options.\n\n{}", super::build_pfp::USAGE, super::chain::USAGE);
         return;
     }
-    if let Err(e) = run(&args) {
-        super::die(&format!("build: {e}"));
+    if args.iter().any(|a| matches!(a.as_str(), "--agc" | "--fasta" | "--fastq")) {
+        super::die(&format!("build: INPUT_ADAPTER_REFUSED\n{ADAPTER_REFUSAL}"));
     }
+    super::die(&format!("build: unknown option {} (try --help)", args.first().map(String::as_str).unwrap_or("")));
 }

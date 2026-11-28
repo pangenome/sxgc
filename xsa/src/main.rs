@@ -257,6 +257,9 @@ fn usage() -> ! {
     eprintln!("             [--docs-map X]  X is a DIR holding seps.bin: embed m15, the document");
     eprintln!("              starts (SXI2 v10, boundaries as METADATA); X is a PREFIX holding");
     eprintln!("              the CORPUS V2 sidecar pair: validate it and journal CONTAINER_DOCS_V2");
+    eprintln!("  xsa build --agc|--fasta|--fastq is REFUSED: the genomic source route is gone and no");
+    eprintln!("              interpreter ships; the AGC/FASTA/FASTQ -> raw-tape adapters are being");
+    eprintln!("              ported to Rust, so today the chain takes raw bytes via --input/--tape.");
     eprintln!("  xsa docstarts embed|verify|probe|info - document starts as container member m15");
     eprintln!("           (SXI2 v10): `embed` adds it from a map, `verify` is the rank/select parity");
     eprintln!("           gate against seps.bin, `probe` answers rank/select for a positions file");

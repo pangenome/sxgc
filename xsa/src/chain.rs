@@ -211,10 +211,6 @@ const SELFTEST_SEEDS: [u64; 6] = [11, 99, 20261002, 7, 5, 13];
 /// Disc preflight: refuse when the scratch filesystem is more than this
 /// percent used (the gates' >= 15% free discipline).
 const DISC_MAX_USED_PERCENT: u32 = 85;
-/// ulimit wrapper: cap phase address space, then exec the real command.
-/// A lower inherited hard limit always wins and is journaled, never raised.
-const PHASE_WRAPPER: &str = "ulimit -v \"$1\" 2>/dev/null || ulimit -v \"$(ulimit -H -v)\" 2>/dev/null || true; shift; printf 'PHASE_CAP_KB=%s\\n' \"$(ulimit -v)\" >&2; exec \"$@\"";
-
 /// The finish's own patience for the producer's next piece, in seconds (about 31
 /// years). It is NOT a cap on the run: there is no cap. It exists only so the
 /// finish's poll loop has a number, and it must never expire on a live producer.
@@ -1472,19 +1468,98 @@ consistently by du; partial reads are held to 5pct)",
     }
 }
 
-/// Parse `/usr/bin/time -v` output for wall clock and peak RSS.
-fn parse_time_report(text: &str) -> (Option<String>, Option<u64>) {
-    let mut wall = None;
-    let mut rss = None;
-    for line in text.lines() {
-        let line = line.trim_start();
-        if line.starts_with("Elapsed (wall clock) time") {
-            wall = line.split("): ").last().map(|s| s.trim().to_string());
-        } else if let Some(rest) = line.strip_prefix("Maximum resident set size (kbytes):") {
-            rss = rest.trim().parse().ok();
+/// One phase's exit status and resource usage, taken from the `wait4(2)` call
+/// that reaped it: the wall clock, CPU split and peak RSS `/usr/bin/time -v`
+/// used to report, collected natively instead of by a shell wrapper.
+#[derive(Clone)]
+struct PhaseExit {
+    code: Option<i32>,
+    signal: Option<i32>,
+    wall_s: f64,
+    user_s: f64,
+    sys_s: f64,
+    maxrss_kb: u64,
+}
+
+impl PhaseExit {
+    fn success(&self) -> bool { self.signal.is_none() && self.code == Some(0) }
+    fn rc(&self) -> i32 { self.code.unwrap_or(-1) }
+    /// The journal's wall field, in the shape /usr/bin/time -v printed it.
+    fn wall(&self) -> String { fmt_wall(self.wall_s) }
+}
+
+/// `m:ss.cc` under an hour, `h:mm:ss.cc` above it, `d-hh:mm:ss` past a day: the
+/// `/usr/bin/time -v` conventions the old `<tag>.time` report used.
+fn fmt_wall(secs: f64) -> String {
+    let cs_total = (secs.max(0.0) * 100.0).round() as u64;
+    let (cs, s_total) = (cs_total % 100, cs_total / 100);
+    let (s, m_total) = (s_total % 60, s_total / 60);
+    let (m, h_total) = (m_total % 60, m_total / 60);
+    let (h, days) = (h_total % 24, h_total / 24);
+    if days > 0 { format!("{days}-{h:02}:{m:02}:{s:02}") }
+    else if h > 0 { format!("{h}:{m:02}:{s:02}.{cs:02}") }
+    else { format!("{m}:{s:02}.{cs:02}") }
+}
+
+/// Reap (or poll) one child with `wait4(2)`: the ONE call that returns both the
+/// exit status and the rusage `/usr/bin/time -v` reported. `Child::wait` throws
+/// that rusage away, and `RUSAGE_CHILDREN` is cumulative across every phase, so
+/// a per-phase number has to come from the reaping call itself. Returns `None`
+/// only when `nohang` and the child is still running (the same call polls).
+fn wait4_phase(pid: u32, nohang: bool) -> Result<Option<PhaseExit>, String> {
+    let mut status: libc::c_int = 0;
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    loop {
+        let rc = unsafe {
+            libc::wait4(pid as libc::pid_t, &mut status,
+                if nohang { libc::WNOHANG } else { 0 }, &mut usage)
+        };
+        if rc == 0 { return Ok(None); }   // WNOHANG: still running
+        if rc > 0 { break; }
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() != Some(libc::EINTR) {
+            return Err(format!("wait4 {pid}: {err}"));
         }
     }
-    (wall, rss)
+    let tv = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+    Ok(Some(PhaseExit {
+        code: libc::WIFEXITED(status).then(|| libc::WEXITSTATUS(status)),
+        signal: libc::WIFSIGNALED(status).then(|| libc::WTERMSIG(status)),
+        wall_s: 0.0,
+        user_s: tv(usage.ru_utime),
+        sys_s: tv(usage.ru_stime),
+        maxrss_kb: usage.ru_maxrss as u64,
+    }))
+}
+
+/// The address-space cap a phase runs under: the requested KiB, clamped to the
+/// inherited HARD limit (a lower hard limit always wins and is never raised -
+/// the `ulimit -v` fallback the shell wrapper used to swallow).
+fn phase_cap_kb(requested_kb: u64) -> u64 {
+    let mut lim: libc::rlimit = unsafe { std::mem::zeroed() };
+    let hard = if unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut lim) } == 0
+        && lim.rlim_max != libc::RLIM_INFINITY
+    { (lim.rlim_max / 1024) as u64 } else { u64::MAX };
+    requested_kb.min(hard)
+}
+
+/// `PHASE_CAP_KB=<kb>\n` into `buf`, the line the wrapper printed to the phase
+/// log. Pure stack arithmetic: this runs between fork and exec.
+fn cap_line(kb: u64, buf: &mut [u8; 48]) -> usize {
+    const PREFIX: &[u8] = b"PHASE_CAP_KB=";
+    let mut end = buf.len();
+    let mut v = kb;
+    loop {
+        end -= 1;
+        buf[end] = b'0' + (v % 10) as u8;
+        v /= 10;
+        if v == 0 { break; }
+    }
+    let digits = buf.len() - end;
+    buf.copy_within(end.., PREFIX.len());
+    buf[..PREFIX.len()].copy_from_slice(PREFIX);
+    buf[PREFIX.len() + digits] = b'\n';
+    PREFIX.len() + digits + 1
 }
 
 /// One uniform journal: every line is appended to the log and echoed.
@@ -1577,9 +1652,6 @@ fn lock_scratch(scratch: &Path) -> Result<File, String> {
     Ok(file)
 }
 
-/// Run one phase under /usr/bin/time -v with the hard RLIMIT_AS cap, exactly
-/// as the reference gates do: stdout/stderr land in `log_path`, wall/peak-RSS
-/// telemetry in `time_path`, both under the scratch tree and journaled.
 /// A phase running in the background (spawned; join later). The uniform
 /// journal writes PHASE START at spawn and PHASE END at join, so two
 /// concurrent phases interleave honestly in the one journal.
@@ -1587,11 +1659,34 @@ struct RunningPhase {
     tag: String,
     child: std::process::Child,
     log_path: PathBuf,
-    time_path: PathBuf,
+    started: Instant,
+    exit: Option<PhaseExit>,
     armed: bool,
 }
 
 impl RunningPhase {
+    /// Poll without blocking. `None` means still running.
+    fn poll(&mut self) -> Result<Option<PhaseExit>, String> {
+        if self.exit.is_none() {
+            if let Some(mut exit) = wait4_phase(self.child.id(), true)? {
+                exit.wall_s = self.started.elapsed().as_secs_f64();
+                self.exit = Some(exit);
+            }
+        }
+        Ok(self.exit.clone())
+    }
+
+    /// Block until the phase exits. Idempotent: a phase already reaped by
+    /// `poll` returns its own status instead of `ECHILD`.
+    fn reap(&mut self) -> Result<PhaseExit, String> {
+        if self.exit.is_none() {
+            let mut exit = wait4_phase(self.child.id(), false)?.ok_or("wait4 returned no status")?;
+            exit.wall_s = self.started.elapsed().as_secs_f64();
+            self.exit = Some(exit);
+        }
+        Ok(self.exit.clone().unwrap())
+    }
+
     /// SHUT ONE PHASE DOWN WITH THE COOPERATIVE CHANNEL, NEVER A SIGNAL: write
     /// `<scratch>/stop.requested`, then WAIT for the phase to observe it at its own
     /// boundary, journal STOP_OBSERVED and exit 75. There is no timeout here by
@@ -1602,8 +1697,7 @@ impl RunningPhase {
         if !self.armed { return; }
         let scratch = self.log_path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let requested = recovery::write_stop_flag(&scratch).is_ok();
-        let status = self.child.wait();
-        let rc = status.as_ref().ok().and_then(|s| s.code());
+        let rc = self.reap().ok().map(|exit| exit.rc());
         let observed = fs::read_to_string(&self.log_path).ok()
             .and_then(|t| t.lines().rev().find(|l| l.starts_with("STOP_OBSERVED")).map(|l| l.to_string()));
         eprintln!(
@@ -1618,8 +1712,12 @@ impl Drop for RunningPhase {
     fn drop(&mut self) { self.terminate(); }
 }
 
-/// Spawn one phase under /usr/bin/time -v with the hard RLIMIT_AS cap and
-/// optional per-phase environment overrides (journaled in PHASE START).
+/// Spawn one phase under the hard RLIMIT_AS cap and optional per-phase
+/// environment overrides (journaled in PHASE START).
+///
+/// The cap and the `PHASE_CAP_KB` log line are set in the child with
+/// `pre_exec`/`setrlimit(RLIMIT_AS)`; the phase's wall/CPU/RSS come from the
+/// `wait4(2)` that reaps it. No shell and no `/usr/bin/time` is involved.
 ///
 /// THERE IS NO TIMEOUT WRAPPER AND NO SUPERVISOR. Every phase is spawned
 /// directly and runs until it exits, fails, or a human stops it: a wall clock
@@ -1635,9 +1733,7 @@ fn spawn_phase(
     env: &[(String, String)],
 ) -> Result<RunningPhase, String> {
     let log_path = scratch.join(format!("{tag}.log"));
-    let time_path = scratch.join(format!("{tag}.time"));
     let _ = fs::remove_file(&log_path);
-    let _ = fs::remove_file(&time_path);
     let command_line = format!("{program} {}", args.join(" "));
     let env_note = if env.is_empty() {
         String::new()
@@ -1648,19 +1744,33 @@ fn spawn_phase(
     let log = File::options().create(true).append(true).open(&log_path)
         .map_err(|e| format!("create {}: {e}", log_path.display()))?;
     let log_err = log.try_clone().map_err(|e| format!("clone {tag} log handle: {e}"))?;
+    let cap_kb = phase_cap_kb(memory_kb);
     let mut command = {
-        let mut cmd = Command::new("bash");
-        cmd.arg("-c").arg(PHASE_WRAPPER)
-            .arg("xsa-phase") // $0
-            .arg(memory_kb.to_string()) // $1: RLIMIT_AS in KiB
-            .arg("/usr/bin/time").arg("-v").arg("-o").arg(&time_path)
-            .arg(program);
+        let mut cmd = Command::new(program);
         cmd.args(args)
             .process_group(0)
             .stdin(Stdio::null())
             .current_dir(scratch)
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err));
+        unsafe {
+            cmd.pre_exec(move || {
+                let mut lim: libc::rlimit = std::mem::zeroed();
+                if libc::getrlimit(libc::RLIMIT_AS, &mut lim) == 0 {
+                    // Only the SOFT limit is lowered; the inherited hard limit is
+                    // never raised, and a failure leaves the inherited value in
+                    // force (exactly the wrapper's fallback).
+                    lim.rlim_cur = cap_kb.saturating_mul(1024).min(lim.rlim_max);
+                    let _ = libc::setrlimit(libc::RLIMIT_AS, &lim);
+                    if libc::getrlimit(libc::RLIMIT_AS, &mut lim) == 0 {
+                        let mut buf = [0u8; 48];
+                        let n = cap_line((lim.rlim_cur / 1024) as u64, &mut buf);
+                        libc::write(2, buf.as_ptr().cast(), n);
+                    }
+                }
+                Ok(())
+            });
+        }
         cmd
     };
     for (key, value) in env {
@@ -1669,8 +1779,9 @@ fn spawn_phase(
     if scratch.join("checkpoint.journal").exists() {
         command.env("XSA_CHECKPOINT_JOURNAL", scratch.join("checkpoint.journal"));
     }
+    let started = Instant::now();
     let child = command.spawn().map_err(|e| format!("launch {tag}: {e}"))?;
-    Ok(RunningPhase { tag: tag.to_string(), child, log_path, time_path, armed: true })
+    Ok(RunningPhase { tag: tag.to_string(), child, log_path, started, exit: None, armed: true })
 }
 
 /// Wait for a spawned phase, journal its telemetry, fail loud on error.
@@ -1680,22 +1791,21 @@ fn join_phase(
     mut running: RunningPhase,
 ) -> Result<(), String> {
     let tag = running.tag.clone();
-    let status = running.child.wait().map_err(|e| format!("wait {tag}: {e}"))?;
-    let (wall, peak_rss_kb) = fs::read_to_string(&running.time_path)
-        .map(|text| parse_time_report(&text))
-        .unwrap_or((None, None));
+    let exit = running.reap().map_err(|e| format!("wait {tag}: {e}"))?;
     let used_after = tree_bytes(scratch);
     journal.line(&format!(
-        "PHASE {tag} END rc={} wall={} peak_rss_kb={} disc_scratch_bytes={}",
-        status.code().unwrap_or(-1),
-        wall.as_deref().unwrap_or("?"),
-        peak_rss_kb.map(|v| v.to_string()).unwrap_or_else(|| "?".into()),
+        "PHASE {tag} END rc={} wall={} peak_rss_kb={} disc_scratch_bytes={} cpu_user_s={:.3} cpu_sys_s={:.3}",
+        exit.rc(),
+        exit.wall(),
+        exit.maxrss_kb,
         used_after,
+        exit.user_s,
+        exit.sys_s,
     ));
-    if !status.success() {
+    if !exit.success() {
         let tail = fs::read_to_string(&running.log_path).unwrap_or_default();
         let tail: Vec<&str> = tail.lines().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect();
-        return Err(format!("PHASE {tag} FAILED (rc {}); log tail:\n{}", status.code().unwrap_or(-1), tail.join("\n")));
+        return Err(format!("PHASE {tag} FAILED (rc {}); log tail:\n{}", exit.rc(), tail.join("\n")));
     }
     running.armed = false;
     Ok(())
@@ -1723,21 +1833,21 @@ fn join_pipeline_flow(journal: &mut Journal, scratch: &Path,
         recovery::request_stop(scratch)?;
         for slot in &mut pending {
             let exited = match slot.as_mut() {
-                Some(phase) => phase.child.try_wait()
+                Some(phase) => phase.poll()
                     .map_err(|e| format!("poll {}: {e}", phase.tag))?.is_some(),
                 None => false,
             };
             if exited {
                 let mut phase = slot.take().unwrap();
-                let status = phase.child.wait().map_err(|e| e.to_string())?;
+                let exit = phase.reap().map_err(|e| e.to_string())?;
                 // rc 75 IS THE COOPERATIVE STOP: a phase that observed
                 // <scratch>/stop.requested (written by this driver when a phase
                 // failed, when the ceiling was breached, or by an operator's stop
                 // request) journals STOP_OBSERVED and exits 75. No signal is
                 // involved, so the flag file - not the driver's signal state - is
                 // what tells the two paths apart.
-                let cooperative = status.code() == Some(75) && scratch.join("stop.requested").exists();
-                if status.code() == Some(75) && (recovery::signal() != 0 || cooperative) {
+                let cooperative = exit.code == Some(75) && scratch.join("stop.requested").exists();
+                if exit.code == Some(75) && (recovery::signal() != 0 || cooperative) {
                     phase.armed = false;
                     journal.line(&format!(
                         "PHASE {tag} STOP_OBSERVED rc=75 cooperative={} (the phase exited at its own boundary)",
@@ -3442,6 +3552,45 @@ pub fn command(args: &[String]) {
 mod tests {
     use super::*;
 
+    /// THE CHILD SIDE OF THE COOPERATIVE TESTS: a real child process of this
+    /// test binary (spawned with this test's name as the harness filter), so the
+    /// channel is exercised without a shell and without an interpreter.
+    ///   XSA_TEST_STAGE=poll  poll `<XSA_TEST_STOP_DIR>/stop.requested`, journal
+    ///                        STOP_OBSERVED at the boundary, exit 75.
+    ///   XSA_TEST_STAGE=fail  exit rc `XSA_TEST_RC` after a moment (a phase that
+    ///                        failed).
+    /// Without XSA_TEST_STAGE it is a no-op and passes in the ordinary suite.
+    #[test]
+    fn phase_stand_in() {
+        let Ok(stage) = std::env::var("XSA_TEST_STAGE") else { return };
+        if stage == "fail" {
+            std::thread::sleep(Duration::from_millis(200));
+            let rc = std::env::var("XSA_TEST_RC").ok().and_then(|rc| rc.parse().ok()).unwrap_or(7);
+            std::process::exit(rc);
+        }
+        let dir = PathBuf::from(std::env::var("XSA_TEST_STOP_DIR").expect("XSA_TEST_STOP_DIR"));
+        let flag = dir.join("stop.requested");
+        let t0 = Instant::now();
+        while !flag.exists() {
+            if t0.elapsed() > Duration::from_secs(20) { std::process::exit(9); }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        eprintln!("STOP_OBSERVED phase=stand-in at_wave=7");
+        std::process::exit(75);
+    }
+
+    /// Spawn `phase_stand_in` as one phase: the stand-in phase program.
+    fn spawn_stand_in(journal: &mut Journal, dir: &Path, tag: &str, stage: &str) -> RunningPhase {
+        let exe = std::env::current_exe().unwrap();
+        let env = vec![
+            ("XSA_TEST_STAGE".to_string(), stage.to_string()),
+            ("XSA_TEST_RC".to_string(), "7".to_string()),
+            ("XSA_TEST_STOP_DIR".to_string(), dir.display().to_string()),
+        ];
+        spawn_phase(journal, dir, tag, SELFTEST_MEMORY_KB, exe.to_str().unwrap(),
+            &["--nocapture".into(), "phase_stand_in".into()], &env).unwrap()
+    }
+
     /// R1/R6, IN THE UNIT TESTS: the cooperative channel is a FILE and an EXIT CODE.
     /// A phase that polls `<scratch>/stop.requested` exits 75 when the driver writes
     /// it, and the driver's `terminate()` (which sends NO signal) reaps it and can
@@ -3454,19 +3603,15 @@ mod tests {
         let mut journal = Journal::open(&dir.join("journal")).unwrap();
         // A phase that behaves like the sorter at a wave boundary: poll, journal,
         // exit 75.
-        let script = format!(
-            "i=0; while [ $i -lt 400 ]; do if [ -e {d}/stop.requested ]; then              echo 'STOP_OBSERVED phase=test at_wave=7' >&2; exit 75; fi;              i=$((i+1)); sleep 0.02; done; exit 9",
-            d = dir.display());
-        let mut phase = spawn_phase(&mut journal, &dir, "coop", SELFTEST_MEMORY_KB,
-            "bash", &["-c".into(), script], &[]).unwrap();
+        let mut phase = spawn_stand_in(&mut journal, &dir, "coop", "poll");
         std::thread::sleep(Duration::from_millis(150));
-        assert!(phase.child.try_wait().unwrap().is_none(), "the phase must still be running");
+        assert!(phase.poll().unwrap().is_none(), "the phase must still be running");
         let t0 = Instant::now();
         phase.terminate();               // writes stop.requested, waits, NO SIGNAL
         let log = fs::read_to_string(&phase.log_path).unwrap();
         eprintln!("COOP_STOP reaped_in_ms={} observed={} log_tail={}",
             t0.elapsed().as_millis(),
-            log.contains("STOP_OBSERVED phase=test at_wave=7"),
+            log.contains("STOP_OBSERVED phase=stand-in at_wave=7"),
             log.lines().last().unwrap_or("-"));
         assert!(log.contains("STOP_OBSERVED"), "the phase must journal its boundary: {log}");
         assert!(t0.elapsed() < Duration::from_secs(10), "the stop must be observed promptly");
@@ -3520,19 +3665,13 @@ mod tests {
         assert!(lock_scratch(&dir).is_err());
         let mut journal = Journal::open(&dir.join("journal")).unwrap();
         let mut stage = spawn_phase(&mut journal, &dir, "owner", SELFTEST_MEMORY_KB,
-            "bash", &["-c".into(),
-                "touch ready; exec sleep 1".into()], &[]).unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !dir.join("ready").exists() {
-            assert!(stage.child.try_wait().unwrap().is_none());
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(10));
-        }
+            "sleep", &["1".into()], &[]).unwrap();
+        assert!(stage.poll().unwrap().is_none(), "the stage must still be running");
         drop(owner);
         fs::remove_dir_all(&dir).unwrap();
         fs::create_dir_all(&dir).unwrap();
         assert!(lock_scratch(&dir).is_err(), "orphan stage must retain ownership after scratch reset");
-        assert!(stage.child.wait().unwrap().success());
+        assert!(stage.reap().unwrap().success());
         stage.armed = false;
         assert!(lock_scratch(&dir).is_ok());
         fs::remove_dir_all(dir).unwrap();
@@ -3552,13 +3691,8 @@ mod tests {
             let mut journal = Journal::open(&dir.join("journal")).unwrap();
             let mut phases = Vec::new();
             for i in 0..3 {
-                let script = if i == failed { "sleep 0.2; exit 7".to_string() } else {
-                    format!("i=0; while [ $i -lt 3000 ]; do if [ -e {d}/stop.requested ]; then \
-                             echo STOP_OBSERVED phase=stage-{i} at_wave=1 >&2; exit 75; fi; \
-                             i=$((i+1)); sleep 0.01; done; exit 9", d = dir.display())
-                };
-                phases.push(spawn_phase(&mut journal, &dir, &format!("stage-{i}"),
-                    SELFTEST_MEMORY_KB, "bash", &["-c".into(), script], &[]).unwrap());
+                let stage = if i == failed { "fail" } else { "poll" };
+                phases.push(spawn_stand_in(&mut journal, &dir, &format!("stage-{i}"), stage));
             }
             let start = std::time::Instant::now();
             let error = join_pipeline(&mut journal, &dir, phases).unwrap_err();
@@ -3892,12 +4026,24 @@ mod tests {
 
     #[test]
     fn time_report_parse() {
-        let text = "\tElapsed (wall clock) time (h:mm:ss or m:ss): 1:07.98\n\
-                    \tMaximum resident set size (kbytes): 6048\n";
-        let (wall, rss) = parse_time_report(text);
-        assert_eq!(wall.as_deref(), Some("1:07.98"));
-        assert_eq!(rss, Some(6048));
-        let days = "\tElapsed (wall clock) time (h:mm:ss or m:ss): 1-02:03:04\n";
-        assert_eq!(parse_time_report(days).0.as_deref(), Some("1-02:03:04"));
+        assert_eq!(fmt_wall(0.05), "0:00.05");
+        assert_eq!(fmt_wall(67.98), "1:07.98");
+        assert_eq!(fmt_wall(3723.5), "1:02:03.50");
+        assert_eq!(fmt_wall(93784.0), "1-02:03:04");
+    }
+
+    /// The cap line the wrapper used to print to the phase log, and the clamp it
+    /// applied: a requested cap above the inherited HARD limit is never raised.
+    #[test]
+    fn phase_cap_line_and_clamp() {
+        let mut buf = [0u8; 48];
+        let n = cap_line(1048576, &mut buf);
+        assert_eq!(&buf[..n], b"PHASE_CAP_KB=1048576\n");
+        // The clamp: the requested cap is returned unchanged unless the inherited
+        // HARD limit is lower, in which case the hard limit wins.
+        let mut lim: libc::rlimit = unsafe { std::mem::zeroed() };
+        assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut lim) }, 0);
+        let hard_kb = if lim.rlim_max == libc::RLIM_INFINITY { u64::MAX } else { (lim.rlim_max / 1024) as u64 };
+        assert_eq!(phase_cap_kb(1024), 1024u64.min(hard_kb));
     }
 }
