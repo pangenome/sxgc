@@ -101,6 +101,15 @@ def sha256(path):
     return h.hexdigest()
 
 
+def member_bytes(c, mid):
+    """One member of a container on disk, read by its directory entry."""
+    m = c['members'][mid]
+    with open(c['path'], 'rb') as f:
+        f.seek(m['off'])
+        return f.read(m['bytes'])
+
+
+
 class Member:
     """A container member as an offset-addressable view of the assembly file."""
 
@@ -188,11 +197,11 @@ def merge_m1(groups, runs_of_group):
     their (payload, bitPos) directory prefix-sums by the preceding payload."""
     heads, payloads, dirs = [], [], []
     for g, runs in zip(groups, runs_of_group):
-        d = g[1]
+        d = bytes(g[1])
         nb = (runs + M1_BLOCK_RUNS - 1) // M1_BLOCK_RUNS
         pay = len(d) - M1_HEADER - 16 * nb
         assert pay >= 0, (len(d), nb)
-        assert struct.unpack_from('<Q', d, 2312)[0] == M1_BLOCK_RUNS
+        assert d[2312:2320] == struct.pack('<Q', M1_BLOCK_RUNS), 'm1 block grid moved'
         heads.append(d[:M1_HEADER])
         payloads.append(d[M1_HEADER:M1_HEADER + pay])
         dirs.append([struct.unpack_from('<2Q', d, M1_HEADER + pay + 16 * i) for i in range(nb)])
@@ -213,21 +222,24 @@ def merge_m12(groups, n, runs):
     group-invariant)."""
     parsed = []
     for g in groups:
-        d = g[12]
+        d = bytes(g[12])
         stride, cnt, gruns, row, l2s, l2, a, b = struct.unpack_from('<8Q', d, 0)
         body = struct.unpack_from('<%dQ' % (l2 + cnt), d, 64)
         assert a == 64 and b == 64 + 8 * l2 and len(body) == l2 + cnt
         parsed.append((stride, l2s, list(body[l2:])))
     assert all(p[0] == parsed[0][0] and p[1] == parsed[0][1] for p in parsed), 'm12 head moved'
     stride, l2s = parsed[0][0], parsed[0][1]
+    # field 1 is the number of SAMPLED run starts (one per `stride` runs), field 2
+    # is the whole run count; the two are not the same number.
     runstart = [v for p in parsed for v in p[2]]
-    assert len(runstart) == runs, (len(runstart), runs)
+    cnt = len(runstart)
+    assert (cnt - 1) * stride < runs <= cnt * stride, (cnt, stride, runs)
     l2 = (runs + l2s - 1) // l2s
     l2vals = [runstart[j * l2s // stride] for j in range(l2)]
-    head = struct.pack('<8Q', stride, runs, runs, n, l2s, l2, 64, 64 + 8 * l2)
+    head = struct.pack('<8Q', stride, cnt, runs, n, l2s, l2, 64, 64 + 8 * l2)
     return [head,
             struct.pack('<%dQ' % len(l2vals), *l2vals),
-            struct.pack('<%dQ' % runs, *runstart)]
+            struct.pack('<%dQ' % cnt, *runstart)]
 
 
 def carry_fixes(path):
@@ -309,7 +321,7 @@ def assemble(out_path, group_paths, carries, row_bases, runs_of_group, control):
         m13, patched, m13_entries = merge_m13(groups, carries, row_bases, runs, last['n'])
         parts, sparse_total = [], 0
         for g in groups:
-            d = g[11]
+            d = bytes(g[11])
             stride, cnt = struct.unpack_from('<2Q', d, 0)
             assert stride == 10 and len(d) == 16 + 8 * cnt
             parts.append(d[16:])
@@ -329,6 +341,12 @@ def assemble(out_path, group_paths, carries, row_bases, runs_of_group, control):
                 # the member is a count with no body: the writer stamps the
                 # GLOBAL run count
                 members.append((10, CODEC[10], runs, []))
+            elif mid in (15, 20):
+                # A group's writer ends at its rows, so a split never produces
+                # m20/m15: they are taken from the control pass and are NOT a
+                # split result (m20 has no whole-range merge for K>2 in any case).
+                m = control['members'][mid]
+                members.append((mid, m['codec'], m['count'], [member_bytes(control, mid)]))
             else:
                 members.append((mid, groups[-1][mid].codec, groups[-1][mid].count,
                                 [bytes(groups[-1][mid])]))
@@ -494,7 +512,11 @@ def arm(bin_dir, cfg, work, K, split_runs, timeout):
         env = dict(os.environ)
         for key in ('XSA_CTX_ROWS', 'XSA_CTX_MERGE_IN'):
             env.pop(key, None)
-        if not last:
+        # EVERY group of a split stream, the last one included, must know how many
+        # rows it owns: a stream-context that expects the whole stream's n+1 rows
+        # blocks on a short stream instead of ending with its trailer. The K=1
+        # control is the single-stream path and takes no range at all.
+        if K > 1:
             env['XSA_CTX_ROWS'] = '%d:%d' % (g['first_row'], g['first_row'] + g['rows'])
         ctx = sp.Popen(['taskset', '-c', cfg.cpus, cfg.xsa, 'stream-context', cfg.raw, cfg.map],
                        stdin=(rfd if rfd is not None else open(fifos[k], 'rb')),
@@ -502,7 +524,7 @@ def arm(bin_dir, cfg, work, K, split_runs, timeout):
         sampler.pids['k%d.g%d.ctx' % (K, k)] = ctx.pid
         live.append(ctx)
         src, head = ctx.stdout, None
-        if not last:
+        if K > 1:
             # the writer accepts a group's rows only: cut the range-local trailer
             head = sp.Popen(['head', '-c', str(ROW * g['rows'])], stdin=src, stdout=sp.PIPE, stderr=log)
             src.close()
@@ -522,8 +544,9 @@ def arm(bin_dir, cfg, work, K, split_runs, timeout):
             argv += ['--rows', '%d:%d' % (g['first_row'], g['first_row'] + g['rows'])]
             if k:
                 argv += ['--carry-in', str(gdir / ('carry.%d' % (k - 1)))]
-            if not last:
-                argv += ['--carry-out', str(gdir / ('carry.%d' % k))]
+            # every group reports its continuation state, the last one included
+            # (the writer requires it); only the first K-1 carries are consumed
+            argv += ['--carry-out', str(gdir / ('carry.%d' % k))]
             argv += ['--chi-shared', str(chi)]
         fin = sp.Popen(['taskset', '-c', cfg.cpus] + argv, stdin=src, stdout=log, stderr=log)
         src.close()
@@ -546,10 +569,14 @@ def arm(bin_dir, cfg, work, K, split_runs, timeout):
             carry_ready[k].set()
 
     def chain(k):
+        # A writer can start only once its predecessor's carry is on disk (the
+        # writer loads it before it reads a row), so every chain waits for its own
+        # predecessor and then drains its own writer -- in its own thread, so the
+        # NEXT group's context worker has a live reader as soon as the cut comes.
         if k:
             assert carry_ready[k - 1].wait(timeout), 'group %d carry never appeared' % (k - 1)
         fins[k] = start_finish(k, *started[k])
-        installed[k].set()
+        drain(k, *started[k], fins[k])
 
     def watchdog():
         time.sleep(timeout)
@@ -583,21 +610,13 @@ def arm(bin_dir, cfg, work, K, split_runs, timeout):
     dog = threading.Thread(target=watchdog, daemon=True)
     dog.start()
     fins = [None] * K
-    installed = [threading.Event() for _ in range(K)]
     waiters = []
     for k in range(K):
-        if k == 0:
-            fins[0] = start_finish(0, *started[0])
-            installed[0].set()
-        else:
-            t = threading.Thread(target=chain, args=(k,))
-            t.start()
-            waiters.append(t)
+        t = threading.Thread(target=chain, args=(k,))
+        t.start()
+        waiters.append(t)
     rc_prod = prod.wait()
     t_prod_end = time.time()
-    for k in range(K):
-        assert installed[k].wait(timeout), 'group %d writer never started' % k
-        drain(k, *started[k], fins[k])
     for t in waiters:
         t.join()
     total = time.time() - t0
@@ -684,8 +703,9 @@ def main():
     for K in ks:
         print('== K=%d' % K, flush=True)
         rep, row_base_of_group, runs_of_group = arm(bin_dir, cfg, work, K, args.split_runs, args.timeout)
-        rep['sha256'] = sha256(rep['container'])
-        rep['bytes'] = os.path.getsize(rep['container'])
+        if os.path.exists(rep['container']):
+            rep['sha256'] = sha256(rep['container'])
+            rep['bytes'] = os.path.getsize(rep['container'])
         arm_dir = Path(rep['work'])
         if K == 1:
             control = directory(rep['container'])
