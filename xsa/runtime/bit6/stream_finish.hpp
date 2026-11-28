@@ -259,22 +259,236 @@ struct RowRange {
     uint64_t from = 0, to = 0;
     std::string carry_in, carry_out, chi_shared;
 };
+
+// THE CORPUS' CODE ASSIGNMENT, in one place: a run's symbol is the v10 code of
+// its byte, so the writer, the prepass and the m7 member must agree on it.
+struct CorpusCodes {
+    std::array<uint64_t,256> hist{}, freq{};
+    uint8_t map[256];
+    uint64_t n = 1;
+    explicit CorpusCodes(const std::string& histogram) {
+        int fd=::open(histogram.c_str(),O_RDONLY|O_CLOEXEC);pf_check(fd>=0,"open byte histogram");
+        pf_read_full(fd,hist.data(),sizeof(hist),"byte histogram");::close(fd);
+        unsigned code=1;
+        for(unsigned b=0;b<256;++b)if(hist[b]) {
+            pf_check(code<256 && hist[b]<(1ull<<43) && n<=(1ull<<43)-hist[b],"v10 corpus extent/alphabet");
+            map[b]=uint8_t(code);freq[code++]=hist[b];n+=hist[b];
+        }
+        for(unsigned b=0;b<256;++b)if(!hist[b])map[b]=uint8_t(code++);
+        freq[0]=1;pf_check(n>1,"empty corpus");
+    }
+};
+
+// ------------------------------------------------------------ carry prepass
+// THE BANDS' INDEPENDENCE WIRE. A group writer starts from the state the writer
+// before it would have left (GroupCarry), and the only producer of that state is
+// that writer on its way out -- so band k cannot begin before band k-1 ends.
+// The state is a function of rows 0..A-1 alone, so ONE sequential state-only
+// replay of the band row files IN ORDER emits every carry before any writer
+// starts, and the K writers then share nothing but this pass.
+//
+// The pass advances exactly the two states a carry holds and writes no member
+// bytes: the chi sweep's cross-run state (SweepImpl::advance's own inputs, with
+// no witnesses -- ChiNullSink) and the run directories' GLOBAL sampling state
+// (StreamRunIndex::observe, the call Blocks::add makes, so the `fixes` are the
+// m13 tail-stride repairs the sequential chain reports).
+struct BandBoundary { uint64_t first_row = 0, rows = 0, first_run = 0; };
+
+// The manifest pfp_rows writes for `--band-sinks`. Only the three numbers a
+// carry is checked against are read; the band list must be contiguous from row
+// 0 and cover the corpus, which is what makes `first_row` a legal cut.
+static std::vector<BandBoundary> read_band_manifest(const std::string& path) {
+    int fd = ::open(path.c_str(), O_RDONLY|O_CLOEXEC);
+    pf_check(fd >= 0, "open band manifest " + path);
+    std::string text;
+    char buf[1<<16]; ssize_t z;
+    while ((z = ::read(fd, buf, sizeof buf)) > 0) text.append(buf, size_t(z));
+    pf_check(z == 0, "read band manifest " + path);
+    pf_check(::close(fd) == 0, "close band manifest " + path);
+    const size_t groups = text.find("\"groups\"");
+    pf_check(groups != std::string::npos, "band manifest " + path + " has no \"groups\" array");
+    auto field = [&](const char* key, size_t from) {
+        const std::string k = std::string("\"") + key + "\":";
+        const size_t at = text.find(k, from);
+        pf_check(at != std::string::npos,
+                 "band manifest " + path + " has no " + k + " at or after byte " + std::to_string(from));
+        size_t i = at + k.size();
+        while (i < text.size() && text[i] == ' ') ++i;
+        char* end = nullptr;
+        const unsigned long long v = std::strtoull(text.c_str() + i, &end, 10);
+        pf_check(end && end != text.c_str() + i, "band manifest " + path + " has a non-numeric " + k);
+        return std::pair<uint64_t,size_t>(uint64_t(v), size_t(end - text.c_str()));
+    };
+    std::vector<BandBoundary> bands;
+    for (size_t at = groups;;) {
+        if (text.find("\"first_row\":", at) == std::string::npos) break;
+        const auto first_row = field("first_row", at);
+        const auto rows = field("rows", first_row.second);
+        const auto first_run = field("first_run", rows.second);
+        bands.push_back({first_row.first, rows.first, first_run.first});
+        at = first_run.second;
+    }
+    pf_check(!bands.empty(), "band manifest " + path + " describes no groups");
+    return bands;
+}
+
+// Replay ROWFILES in order and save the carry each band would have received at
+// its own first_row as <outDir>/carry.<k> for k >= 1 (band 0 starts cold).
+static int carry_prepass(const std::string& histogram, const std::string& manifest,
+                         const std::vector<std::string>& rowFiles, const std::string& outDir) {
+    const double t_entry = now_s();
+    CorpusCodes codes(histogram);
+    const auto& freq = codes.freq;
+    const uint64_t n = codes.n;
+    const std::vector<BandBoundary> bands = read_band_manifest(manifest);
+    pf_check(bands.size() == rowFiles.size(),
+             "the manifest describes " + std::to_string(bands.size()) + " bands but " +
+             std::to_string(rowFiles.size()) + " row files were given");
+    pf_check(bands[0].first_row == 0, "the first band must start at row 0, not " +
+             std::to_string(bands[0].first_row));
+    uint64_t covered = 0;
+    for (size_t k = 0; k < bands.size(); ++k) {
+        pf_check(bands[k].first_row == covered,
+                 "band " + std::to_string(k) + " starts at row " + std::to_string(bands[k].first_row) +
+                 ", not at " + std::to_string(covered) + ": a band list must be contiguous from row 0");
+        covered += bands[k].rows;
+    }
+    pf_check(covered == n, "the manifest's bands cover " + std::to_string(covered) +
+             " rows, the corpus is n=" + std::to_string(n));
+    // The two states a carry holds, advanced exactly as Blocks and SweepImpl do.
+    SweepImpl<ChiNullSink> sweep(n);
+    StreamRunIndex samples;
+    std::array<uint64_t,256> sample_group; sample_group.fill(NO_GROUP);
+    std::vector<std::array<uint64_t,4>> fixes;
+    uint64_t runs = 0, prev = n - 1, top = 0, interior = INF;
+    uint64_t group = 0;                      // the band whose m13 owns the open samples
+    NRun run{};
+    double spend_read = 0, spend_run = 0, spend_carry = 0;
+    auto close_run = [&] {
+        if (!run.len) return;
+        const uint64_t gk = runs;            // this run's GLOBAL index (the pass starts cold)
+        const uint64_t previous_occ   = samples.lastSampleOcc[run.c];
+        const uint64_t previous_group = sample_group[run.c];
+        const uint64_t previous_run   = samples.lastSample[run.c];
+        samples.observe(gk, run.c, run.len);
+        // A sample this run takes closes the symbol's previous one. If that one
+        // belongs to an EARLIER band, its m13 member is already written and only
+        // the merge can re-stamp it: this is the (<=256 entry) repair list.
+        if (samples.lastSample[run.c] == gk) {
+            if (previous_group != NO_GROUP && previous_group != group)
+                fixes.push_back({previous_group, previous_run, run.c,
+                                 samples.lastSampleOcc[run.c] - previous_occ});
+            sample_group[run.c] = group;
+        }
+        sweep.advance(run, top, interior);
+        ++runs;
+    };
+    auto save_carry = [&](size_t k) {
+        const double s = now_s();
+        GroupCarry next;
+        next.n = n; next.row_base = bands[k].first_row; next.run_base = runs;
+        next.prev = prev;
+        // The row at the band's first_row opens a fresh run (checked below), so
+        // the band before it closed its own last run here: the carry holds no
+        // open run, only the code that run ended with.
+        next.open = false; next.c = run.c; next.len = 0; next.h = 0; next.t = 0;
+        next.top = top; next.interior = interior; next.boundary_fresh = true;
+        next.first = sweep.first; next.m = sweep.m; next.p = sweep.p;
+        next.p_sa_last = sweep.p_sa_last; next.previous_interior = sweep.previous_interior;
+        for (unsigned cc=0;cc<256;++cc) {
+            next.rr_len[cc]=sweep.rr_len[cc];next.rr_pos[cc]=sweep.rr_pos[cc];
+            next.rr_act[cc]=sweep.rr_act[cc]?1:0;
+        }
+        next.idx_row = samples.row;
+        for (unsigned cc=0;cc<256;++cc) {
+            next.occ[cc]=samples.occ[cc];next.cum[cc]=samples.cum[cc];
+            next.lastSample[cc]=samples.lastSample[cc];next.lastSampleOcc[cc]=samples.lastSampleOcc[cc];
+            next.sample_group[cc]=sample_group[cc];
+        }
+        next.fixes = fixes;
+        const std::string path = outDir + "/carry." + std::to_string(k);
+        next.save(path);
+        fprintf(stderr,"XSA_FINISH_CARRY_PREPASS_BAND band=%zu row_base=%llu run_base=%llu "
+                       "idx_row=%llu open_code=%u m13_fixes=%zu path=%s\n",
+                k,(unsigned long long)next.row_base,(unsigned long long)next.run_base,
+                (unsigned long long)next.idx_row,unsigned(next.c),
+                next.fixes.size(),path.c_str());
+        spend_carry += now_s() - s;
+    };
+    std::vector<Frame> packet(131072);
+    for (size_t band = 0; band < rowFiles.size(); ++band) {
+        const int fd = ::open(rowFiles[band].c_str(), O_RDONLY|O_CLOEXEC);
+        pf_check(fd >= 0, "open band rows " + rowFiles[band]);
+        const uint64_t lo = bands[band].first_row, hi = lo + bands[band].rows;
+        group = lo;
+        for (uint64_t rank = lo; rank < hi;) {
+            const size_t take = std::min<uint64_t>(packet.size(), hi - rank);
+            double s = now_s();
+            pf_read_full(fd, packet.data(), take*sizeof(Frame), "band rows");
+            spend_read += now_s() - s; s = now_s();
+            for (size_t j = 0; j < take; ++j, ++rank) {
+                auto f = packet[j]; unsigned b = f.tag&511;
+                uint64_t p = f.pos | uint64_t((f.tag>>9)&2047)<<32;
+                uint64_t h = f.lcp | uint64_t((f.tag>>20)&2047)<<32;
+                pf_check(f.tag>>31 && p<n && (p==n-1)==(rank==0) && b<=256 && (b==256)==(p==0) &&
+                         h<=n-1-std::max(p,prev),"invalid ordered row");
+                const uint8_t c = b==256?uint8_t(0):codes.map[b];
+                const bool opened = !run.len || run.c!=c;
+                // A band cut is a RUN boundary by construction (the producer
+                // splits the row stream where the byte changes) and the two
+                // writers' m1 blocks only concatenate if the cut run index is on
+                // their grid. Refuse with the numbers, before any writer starts.
+                if (rank == bands[band].first_row && band) {
+                    pf_check(opened,
+                             "band " + std::to_string(band) + " starts at row " +
+                             std::to_string(rank) + " inside a run (code " + std::to_string(int(c)) +
+                             " continues the " + std::to_string(run.len) + " rows of code " +
+                             std::to_string(int(run.c)) + "): a band cut must be a run boundary");
+                    close_run();
+                    pf_check(bands[band].first_run == runs,
+                             "band " + std::to_string(band) + " starts at global run " +
+                             std::to_string(runs) + ", the manifest says " +
+                             std::to_string(bands[band].first_run));
+                    pf_check(runs % M1_BLOCK_RUNS == 0,
+                             "band " + std::to_string(band) + " starts at global run " +
+                             std::to_string(runs) + ", which is " +
+                             std::to_string(runs % M1_BLOCK_RUNS) + " past the m1 block grid of " +
+                             std::to_string(M1_BLOCK_RUNS) + " runs: its m1 blocks cannot concatenate");
+                    save_carry(band);   // reports `prev` = the row before this one
+                } else if (opened) {
+                    close_run();
+                }
+                if (opened) {
+                    run = {c, 1, p, p}; top = h; interior = INF;
+                } else {
+                    ++run.len; run.t = p; interior = std::min(interior, h);
+                }
+                prev = p;
+            }
+            spend_run += now_s() - s;
+        }
+        pf_check(::close(fd) == 0, "close band rows " + rowFiles[band]);
+    }
+    close_run();
+    pf_check(samples.row == n, "the prepass observed " + std::to_string(samples.row) +
+             " rows, the corpus is n=" + std::to_string(n));
+    pf_check(std::equal(freq.begin(),freq.end(),samples.cum),"prepass BWT histogram differs from the corpus");
+    fprintf(stderr,"XSA_FINISH_CARRY_PREPASS bands=%zu rows=%llu runs=%llu carries=%zu "
+                   "read=%.6f run=%.6f carry=%.6f wall=%.6f\n",
+            bands.size(),(unsigned long long)samples.row,(unsigned long long)runs,
+            bands.size()-1,spend_read,spend_run,spend_carry,now_s()-t_entry);
+    return 0;
+}
 } // namespace rowfinish
 
 static int finish_row_stream(const char* histogram,const char* scratch,const char* output,
                              const rowfinish::RowRange& range = {}) {
     using namespace rowfinish;
     const double t_entry=now_s();
-    std::array<uint64_t,256> hist{},freq{};
-    int fd=::open(histogram,O_RDONLY|O_CLOEXEC);pf_check(fd>=0,"open byte histogram");
-    pf_read_full(fd,hist.data(),sizeof(hist),"byte histogram");::close(fd);
-    uint8_t map[256];unsigned code=1;uint64_t n=1;
-    for(unsigned b=0;b<256;++b)if(hist[b]) {
-        pf_check(code<256 && hist[b]<(1ull<<43) && n<=(1ull<<43)-hist[b],"v10 corpus extent/alphabet");
-        map[b]=uint8_t(code);freq[code++]=hist[b];n+=hist[b];
-    }
-    for(unsigned b=0;b<256;++b)if(!hist[b])map[b]=uint8_t(code++);
-    freq[0]=1;pf_check(n>1,"empty corpus");
+    CorpusCodes codes(histogram);
+    const auto& freq = codes.freq;
+    const uint8_t* const map = codes.map;
+    const uint64_t n = codes.n;
     // ---- the row range and the carried state a continued group starts from
     const uint64_t from=range.from, to=range.to?range.to:n;
     const bool group = from || to != n;
@@ -397,7 +611,7 @@ static int finish_row_stream(const char* histogram,const char* scratch,const cha
     }
     const double chi_s=now_s()-s;s=now_s();
     out.begin(4,4,0);out.num(0x434e4158,4);out.num(0);
-    out.begin(7,7,256);out.write(map,sizeof(map));out.begin(10,110,blocks.runs);
+    out.begin(7,7,256);out.write(codes.map,sizeof(codes.map));out.begin(10,110,blocks.runs);
     out.begin(11,111,blocks.sparse.size());out.num(10);out.num(blocks.sparse.size());out.write(blocks.sparse.data(),8*blocks.sparse.size());
     blocks.samples.write(out,blocks.runs);
     const uint64_t global_runs=blocks.run_base+blocks.runs;

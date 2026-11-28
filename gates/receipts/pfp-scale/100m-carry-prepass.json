@@ -1,0 +1,14 @@
+{
+  "label": "100m-carry-prepass",
+  "ticket": "I1 final wire: per-band carries from one state-only prepass, so K band writers start together",
+  "verdict": "LANDED. All four gates pass. Bands are now independent except one bounded sequential pass.",
+  "gates": {
+    "a_product_unchanged": "87,069,576 B sha256 e99fb40e... re-verified by the parent through gates/pfp_scale.sh with the new writer embedded",
+    "b_carry_identity": "prepass carry.1 == writer 0's --carry-out field for field (21 header words, 8 arrays x 256, 0 repairs)",
+    "c_concurrency": "both band writers started together: total 5.708 s = 0.61x the sequential sum (9.289 s) and 1.09x the slower writer (5.224 s); per-writer XSA_FINISH_TIME 5.696 / 3.745. Member 0 byte-identical (45,080,480 B dc1cdec5...); member 1 differs only because that arm gives each band its own witness bitmap, and a same-row same-carry A/B gives identical bytes (28,559,624 B 8682c661...)",
+    "d_prepass_wall": "3.85 s for 100,000,504 rows / 38,647,521 runs (read 0.32 s), against 7.46 s for the full inline sweep - so the serial residue is about half the sweep and about 5% of a 10 GB wall"
+  },
+  "found": "the band row files on disk are cut one frame earlier than the manifest describes (row 51,307,182 = global run 24,181,759, 1023 past the grid, versus the manifest's 51,307,183 = 24,181,760). The prepass refused the off-grid cut with the numbers and the gate moves the single 12-byte frame and then checks first_run against its own run count, so a wrong shift is a refusal and not a comment.",
+  "consequence": "everything except the carry is band-local and parallel: run formation, m1 blocks, m12/m13, m20 slices and the row work. The one serial piece is a state-only replay (chi state plus the run-directory sampling state) that costs 3.85 s per 100 MB and writes the same carry bytes the sequential chain produced.",
+  "next": "at 10 GB the projection is naming 185 + ordering 1470 + prepass ~350 + max(writer 2616/8, m20 2986/8) ~ 380 = about 2385 s (2.9x on today's 6212 s); ordering then becomes the largest term and needs the ping-pong parallel sort inside its biggest cell."
+}

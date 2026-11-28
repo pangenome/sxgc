@@ -5673,6 +5673,31 @@ static void fp_self_check(SlimFingerprint<CorpusText>& fh, const CorpusText& tex
 
 int main(int argc, char** argv) {
     try {
+        if (argc >= 3 && std::string(argv[1]) == "--carry-prepass") {
+            // I1: the per-band writer carries, computed by ONE sequential
+            // state-only prepass instead of by the previous band's writer as it
+            // exits. --carry-prepass BANDS_JSON ROW0 ROW1 ... --carries-out DIR
+            // --histogram H. Never the product path.
+            const std::string manifest = argv[2];
+            std::string outDir, histogram;
+            std::vector<std::string> rows;
+            for (int i = 3; i < argc; ++i) {
+                const std::string a = argv[i];
+                auto need = [&]() -> std::string {
+                    pf_check(i + 1 < argc, a + " requires a value");
+                    return argv[++i];
+                };
+                if (a == "--carries-out") outDir = need();
+                else if (a == "--histogram") histogram = need();
+                else if (!a.empty() && a[0] == '-') pf_fail("unknown --carry-prepass argument " + a);
+                else rows.push_back(a);
+            }
+            pf_check(!rows.empty(), "--carry-prepass needs one band row file per band");
+            pf_check(!outDir.empty(), "--carry-prepass writes carry.<k>: pass --carries-out DIR");
+            pf_check(!histogram.empty(),
+                     "--carry-prepass names a run's symbol by the corpus code map: pass --histogram PATH");
+            return rowfinish::carry_prepass(histogram, manifest, rows, outDir);
+        }
         if (argc >= 5 && std::string(argv[1]) == "--from-rows") {
             // I1 group runs: --rows A:B --carry-in F --carry-out F --chi-shared F.
             // No option at all is the single-group path (`--rows 0:n`).

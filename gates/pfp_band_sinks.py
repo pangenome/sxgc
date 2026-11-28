@@ -28,7 +28,6 @@ import os
 import shutil
 import subprocess as sp
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -108,18 +107,62 @@ def finish(cfg, cols, out, rows, carry_in, carry_out, log, stdin):
     return sp.Popen(['taskset', '-c', cfg.cpus] + argv, stdin=stdin, stdout=log, stderr=log)
 
 
-def chain(cfg, work, cols, groups, k, log, gate):
-    """One band's chain: stream-context | head -c rows*12 | xsa_finish."""
+def band_fifo(d, k):
+    """Band k's row FIFO, empty. It is created before the producer so the producer
+    can open it, and it is the only thing a band's rows ever pass through."""
+    path = d / ('rows.%d' % k)
+    if path.exists():
+        path.unlink()
+    os.mkfifo(path, 0o666)
+    return path
+
+
+def wait_log(path, marker, timeout):
+    """True once PATH contains MARKER. The producer prints 'PFP_BAND_PLAN r=<k>' on
+    unbuffered stderr immediately BEFORE it opens band k's sink with a blocking
+    O_WRONLY, so a reader started at that line is already in read() when the
+    producer's first row arrives -- and is what lets that open return at all."""
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            if marker in path.read_text(errors='replace'):
+                return True
+        except OSError:
+            pass
+        time.sleep(0.01)
+    return False
+
+
+def wait_carry(path, fin, timeout):
+    """True once PATH exists. Bounded, and it gives up as soon as the writer that
+    should produce it is gone -- a group run loads the carry before its first row."""
+    end = time.time() + timeout
+    while time.time() < end:
+        if path.exists():
+            return True
+        if fin.poll() is not None:
+            return False
+        time.sleep(0.02)
+    return False
+
+
+def context(cfg, groups, k, log, stdin):
+    """Band k's reader half: stream-context | head -c rows*12."""
     g = groups[k]
-    last = k == len(groups) - 1
     env = dict(os.environ)
     env.pop('XSA_CTX_ROWS', None)
     env['XSA_CTX_ROWS'] = '%d:%d' % (g['first_row'], g['first_row'] + g['rows'])
-    fifo = work / ('rows.%d' % k)
     ctx = sp.Popen(['taskset', '-c', cfg.cpus, cfg.xsa, 'stream-context', cfg.raw, cfg.map],
-                   stdin=open(fifo, 'rb'), stdout=sp.PIPE, stderr=log, env=env)
+                   stdin=stdin, stdout=sp.PIPE, stderr=log, env=env)
     cut = sp.Popen(['head', '-c', str(ROW * g['rows'])], stdin=ctx.stdout, stdout=sp.PIPE, stderr=log)
     ctx.stdout.close()
+    return ctx, cut
+
+
+def writer(cfg, work, cols, groups, k, log, cut):
+    """Band k's writer half. It loads band k-1's carry before it reads a row, so it
+    is the only part of a chain that waits for the band before it."""
+    g = groups[k]
     out = work / ('g%d.sxi2' % k)
     for stale in (out, out.with_suffix('.partial')):
         if stale.exists():
@@ -129,8 +172,7 @@ def chain(cfg, work, cols, groups, k, log, gate):
                  str(work / ('carry.%d' % (k - 1))) if k else None,
                  str(work / ('carry.%d' % k)), log, cut.stdout)
     cut.stdout.close()
-    gate['k%d' % k] = dict(ctx_start=time.time())
-    return ctx, cut, fin, out
+    return fin, out
 
 
 def main():
@@ -227,53 +269,64 @@ def main():
         d.mkdir(exist_ok=True)
         man = g['b']['manifest']
         groups = man['groups']
+        nb = len(groups)
         cols = columns(cfg, d / 'cols')
-        for path in list(d.glob('rows.*')) + list(d.glob('carry.*')) + list(d.glob('g*.sxi2')):
+        for path in list(d.glob('rows.*')) + list(d.glob('carry.*')) + list(d.glob('g*.sxi2')) \
+                + list(d.glob('chain.*.log')):
             path.unlink()
-        for k in range(len(groups)):
-            os.mkfifo(d / ('rows.%d' % k))
-        log = open(d / 'run.log', 'wb')
-        gate_t = {}
-        chains = []
+        fifos = [band_fifo(d, k) for k in range(nb)]
+        plog = open(d / 'run.log', 'wb')
         t0 = time.time()
-        # chain 0 first: its context takes the read end of FIFO 0, which the
-        # producer's open() waits for; chain 1's writer cannot start until chain
-        # 0's carry is on disk (the writer loads it before it reads a row).
-        chains.append(chain(cfg, d, cols, groups, 0, log, gate_t))
-        ready = threading.Event()
-
-        def second():
-            while not (d / 'carry.0').exists():
-                time.sleep(0.02)
-            chains.append(chain(cfg, d, cols, groups, 1, log, gate_t))
-            ready.set()
-        threading.Thread(target=second, daemon=True).start()
-        prod = producer(cfg, work, cols, log,
-                        band=(len(groups), str(d / 'rows.%d'), str(d / 'bands.json')))
+        prod = producer(cfg, work, cols, plog,
+                        band=(nb, str(d / 'rows.%d'), str(d / 'bands.json')))
+        # Both chains are LIVE before the producer writes: each band's context is
+        # started as soon as the producer asks for that band's sink, so it is already
+        # reading when the band's first row arrives. Only band k>0's WRITER waits --
+        # for band k-1's carry, which it loads before it reads a row.
+        announced, chains = [], []
+        for k in range(nb):
+            announced.append(wait_log(d / 'run.log', 'PFP_BAND_PLAN r=%d ' % k, args.timeout))
+            if not announced[-1]:
+                break
+            log = open(d / ('chain.%d.log' % k), 'wb')
+            ctx, cut = context(cfg, groups, k, log, open(fifos[k], 'rb'))
+            chains.append(dict(k=k, log=log, ctx=ctx, cut=cut, start=round(time.time() - t0, 3)))
+            carried = k == 0 or wait_carry(d / ('carry.%d' % (k - 1)), chains[k - 1]['fin'], args.timeout)
+            if not carried:
+                break                        # band k-1's writer died: do not spin for its carry
+            chains[-1]['fin'], chains[-1]['out'] = writer(cfg, d, cols, groups, k, log, cut)
         rc_prod = prod.wait()
         t_prod = time.time() - t0
-        outer = threading.Thread(target=lambda: None)
-        ready.wait(timeout=args.timeout)
-        rcs = [c[2].wait() for c in chains]
         for c in chains:
-            c[0].wait()
-            c[1].wait()
+            for name in ('fin', 'cut', 'ctx'):
+                proc = c.get(name)
+                c[name + '_rc'] = None if proc is None else proc.wait()
+                c[name + '_at'] = round(time.time() - t0, 3) if proc is not None else None
         total = time.time() - t0
-        log.close()
+        plog.close()
         logtext = (d / 'run.log').read_text(errors='replace')
         per = {}
-        for k, c in enumerate(chains):
-            st = gate_t['k%d' % k]
-            per['k%d' % k] = dict(wall_s=round(time.time() - st['ctx_start'], 3),
-                                  out_bytes=os.path.getsize(c[3]) if c[3].exists() else 0)
-        ok = rc_prod == 0 and all(r == 0 for r in rcs)
-        g['c'] = dict(rc_prod=rc_prod, rc_chains=rcs, producer_s=round(t_prod, 3),
-                      total_s=round(total, 3), per_chain=per,
-                      expand_pipe_s=fields(logtext, 'PFP_ROW_TIME').get('expand_pipe_s'),
-                      finish=fields(logtext, 'XSA_FINISH_TIME'), groups=groups, pass_=ok)
-        print('gate (c) %s: total=%.3fs producer=%.3fs chains=%s' %
-              ('PASS' if ok else 'FAIL', total, t_prod, per), flush=True)
-        print('gate (c) XSA_FINISH_TIME ' + json.dumps(g['c']['finish']), flush=True)
+        for c in chains:
+            text = (d / ('chain.%d.log' % c['k'])).read_text(errors='replace')
+            c['log'].close()
+            out = c.get('out')
+            per['k%d' % c['k']] = dict(ctx_start_s=c['start'], ctx_end_s=c['ctx_at'],
+                                       cut_end_s=c['cut_at'], finish_end_s=c['fin_at'],
+                                       wall_s=None if c['fin_at'] is None else round(c['fin_at'] - c['start'], 3),
+                                       out_bytes=os.path.getsize(out) if out and out.exists() else 0,
+                                       finish=fields(text, 'XSA_FINISH_TIME'))
+        ok = (rc_prod == 0 and all(announced) and len(chains) == nb
+              and all(c.get('ctx_rc') == 0 and c.get('cut_rc') == 0 and c.get('fin_rc') == 0 for c in chains))
+        g['c'] = dict(rc_prod=rc_prod, announced=announced, producer_s=round(t_prod, 3), total_s=round(total, 3),
+                      rc_chains={n: [c[n + '_rc'] for c in chains] for n in ('ctx', 'cut', 'fin')},
+                      per_chain=per, expand_pipe_s=fields(logtext, 'PFP_ROW_TIME').get('expand_pipe_s'),
+                      groups=groups, pass_=ok)
+        print('gate (c) %s: total=%.3fs producer=%.3fs expand_pipe_s=%s announced=%s' %
+              ('PASS' if ok else 'FAIL', total, t_prod, g['c']['expand_pipe_s'], announced), flush=True)
+        for k, v in per.items():
+            print('gate (c) chain %s wall=%s ctx_end=%s cut_end=%s finish_end=%s bytes=%d XSA_FINISH_TIME %s'
+                  % (k, v['wall_s'], v['ctx_end_s'], v['cut_end_s'], v['finish_end_s'], v['out_bytes'],
+                     json.dumps(v['finish'])), flush=True)
 
     (work / 'report.json').write_text(json.dumps(report, indent=1))
     print('BAND_SINKS_REPORT ' + str(work / 'report.json'))
