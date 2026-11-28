@@ -38,6 +38,12 @@ no extra parser installation is needed. This route needs no FUSE, systemd,
 reference index, source checkout or prebuilt helper. `-j` sets sort workers;
 `-m` accepts a sort-memory budget such as `3G` (not a total RSS limit).
 
+The orchestrator of that route is native code in `src/build_pfp.rs`: argument
+parsing, scratch planning, the rank/lift census recursion, the stage pipes, and
+the atomic no-replace publish all run in the `xsa` process. No Python or other
+interpreter is executed while building, and the bundle ships no build script,
+so `python3` is needed only to compile the crate in a checkout, not to run it.
+
 Supported build host: native Linux x86_64, Python >= 3.12, a C++20 GCC/G++ with OpenMP, CMake, Make,
 patch, and the zlib/OpenSSL development libraries used by PFP/htslib. Runtime:
 Python >= 3.12, GNU `/usr/bin/time`, and the standard native runtime libraries

@@ -1,31 +1,706 @@
-//! `xsa build --pfp`: fresh construction. Rows flow through bounded Unix pipes;
-//! the only bytes following the rows are the two metadata members.
+//! `xsa build --pfp`: fresh construction, orchestrated natively in this process.
+//! Rows flow through bounded Unix pipes; the only bytes following the rows are
+//! the two metadata members. The stages are the bundled binaries; nothing in
+//! this path is interpreted (no Python orchestrator, no script in the bundle).
 use crate::{ctx, die, docstarts};
-use std::fs::File;
-use std::io::{self, Read, Write};
-use std::os::unix::process::CommandExt;
-use std::process::Command;
+use std::ffi::OsString;
+use std::fs::{self, File};
+use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::os::fd::{FromRawFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdout, Command as Process, Stdio};
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::time::Instant;
 
 pub const USAGE: &str = "xsa build --pfp RAW --docs-map DIR -o INDEX [-T TMPDIR] [-j THREADS] [-m SORT_MEMORY]";
 
-pub fn command(args: &[std::ffi::OsString]) -> ! {
-    // The normal installed xsa bundle, not a checkout or a study's /tmp tools.
-    let exe = std::env::current_exe().unwrap_or_else(|e| die(&e.to_string()));
-    // Development escape for qualification: run a hand-built stage directory
-    // (same tool names) instead of the embedded, hash-verified bundle. The
-    // installed path never sets it and still verifies every embedded file.
-    let dir = match std::env::var_os("XSA_PFP_TOOLS") {
-        Some(dir) => std::path::PathBuf::from(dir),
-        None => crate::bundle::resolve().unwrap_or_else(|e| die(&e)),
+const HELP: &str = "\
+usage: xsa build --pfp [-h] [--input RAW] --docs-map DIR -o INDEX [-T DIR] [-j N]
+                       [-m SIZE] [-v] [RAW]
+
+Build a document-aware v10 suffix index by prefix-free parsing.
+
+positional arguments:
+  RAW                   raw corpus
+
+options:
+  -h, --help            show this help message and exit
+  --pfp                 selects this route (already in the command)
+  --input RAW           raw corpus instead of positional RAW
+  --docs-map DIR        XSEP map of the corpus (or of the same stream before
+                        prefix truncation)
+  -o, --output INDEX    new index; never overwrites
+  -T, --tmpdir, --scratch DIR
+                        scratch parent (default: TMPDIR or output directory)
+  -j, --threads N       sort workers (default: up to 4)
+  -m, --sort-memory SIZE
+                        sort array budget, not total RSS (default: max(256M, 2 x
+                        corpus bytes))
+  -v, --verbose         print stage diagnostics and phase times to stderr
+";
+
+/// A construction failure, kept distinct so the exit code and the wording stay
+/// the ones the previous orchestrator produced.
+enum Fail {
+    Help,
+    Usage(String), // command line: exit 2 after printing usage
+    Run(String),   // runtime: `build --pfp: <message>`, exit 1
+    Signal(i32),   // SIGINT/SIGTERM/SIGHUP: exit 128+signal
+}
+impl From<String> for Fail {
+    fn from(m: String) -> Self {
+        Fail::Run(m)
+    }
+}
+
+// SIGINT/SIGTERM/SIGHUP record the signal and return: the blocking stage wait is
+// interrupted (no SA_RESTART), the stage group is cancelled, the scratch
+// directories drop, and the process exits 128+signal.
+static TERM_SIGNAL: AtomicI32 = AtomicI32::new(0);
+
+extern "C" fn on_terminate(sig: libc::c_int) {
+    TERM_SIGNAL.store(sig, Ordering::SeqCst);
+}
+
+fn install_signal_handlers() {
+    unsafe {
+        for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = on_terminate as *const () as usize;
+            action.sa_flags = 0;
+            libc::sigemptyset(&mut action.sa_mask);
+            libc::sigaction(sig, &action, std::ptr::null_mut());
+        }
+    }
+}
+
+fn check_signal() -> Result<(), Fail> {
+    match TERM_SIGNAL.load(Ordering::SeqCst) {
+        0 => Ok(()),
+        sig => Err(Fail::Signal(sig)),
+    }
+}
+
+pub fn command(args: &[OsString]) -> ! {
+    install_signal_handlers();
+    match run(args) {
+        Ok(()) => std::process::exit(0),
+        Err(Fail::Help) => {
+            println!("{HELP}");
+            std::process::exit(0)
+        }
+        Err(Fail::Usage(msg)) => {
+            eprintln!("usage: {USAGE}");
+            eprintln!("xsa build --pfp: error: {msg}");
+            std::process::exit(2)
+        }
+        Err(Fail::Run(msg)) => die(&format!("build --pfp: {msg}")),
+        Err(Fail::Signal(sig)) => std::process::exit(128 + sig),
+    }
+}
+
+struct Options {
+    corpus: PathBuf,
+    docs_map: PathBuf,
+    output: PathBuf,
+    tmpdir: Option<PathBuf>,
+    threads: usize,
+    sort_memory: Option<u64>,
+    verbose: bool,
+}
+
+/// CPUs this process may run on, the quantity `-j` defaults from and is capped by.
+fn affinity() -> usize {
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        if libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) == 0 {
+            let count = libc::CPU_COUNT_S(std::mem::size_of::<libc::cpu_set_t>(), &set);
+            if count > 0 {
+                return count as usize;
+            }
+        }
+    }
+    1
+}
+
+/// `1K`..`1T` are binary; the value is a sort-array budget, never a file offset.
+fn byte_size(value: &str) -> Result<u64, String> {
+    let bad = || "expected bytes or a K/M/G/T/P binary suffix".to_string();
+    let upper = value.to_ascii_uppercase();
+    let (digits, shift) = match upper.strip_suffix(|c: char| "KMGTP".contains(c)) {
+        Some(rest) => {
+            let suffix = upper.as_bytes()[rest.len()] as char;
+            (rest, 10 * (" KMGTP".find(suffix).unwrap() as u32))
+        }
+        None => (upper.as_str(), 0),
     };
-    let err = Command::new("python3")
-        .arg("-I")
-        .arg(dir.join("tools/build_pfp.py"))
-        .arg(&dir)
-        .arg(exe)
-        .args(args)
-        .exec();
-    die(&format!("build --pfp: exec python3: {err}"));
+    if digits.is_empty() || digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(bad());
+    }
+    let n = digits.parse::<u128>().map_err(|_| bad())? << shift;
+    if n >= 1 << 63 {
+        return Err("size exceeds 64-bit file offsets".into());
+    }
+    Ok(n as u64)
+}
+
+fn parse(args: &[OsString]) -> Result<Options, Fail> {
+    let usage = |m: String| Fail::Usage(m);
+    let mut pfp = false;
+    let mut corpus: Option<PathBuf> = None;
+    let mut input: Option<PathBuf> = None;
+    let mut docs_map = None;
+    let mut output = None;
+    let mut tmpdir = None;
+    let mut threads = None;
+    let mut sort_memory = None;
+    let mut verbose = false;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        // A non-UTF-8 argument can only be a path value, never a flag.
+        let text = arg.to_str().unwrap_or("");
+        if !text.starts_with('-') || text == "-" {
+            if corpus.replace(PathBuf::from(arg)).is_some() {
+                return Err(usage(format!("unrecognized arguments: {text}")));
+            }
+            if input.is_some() {
+                return Err(usage("argument RAW: not allowed with argument --input".into()));
+            }
+            i += 1;
+            continue;
+        }
+        let (name, inline) = if let Some(rest) = text.strip_prefix("--") {
+            match rest.split_once('=') {
+                Some((n, v)) => (format!("--{n}"), Some(OsString::from(v))),
+                None => (text.to_string(), None),
+            }
+        } else if text.len() > 2 {
+            (text[..2].to_string(), Some(OsString::from(&text[2..])))
+        } else {
+            (text.to_string(), None)
+        };
+        let mut value = |flag: &str| -> Result<OsString, Fail> {
+            if let Some(v) = inline.clone() {
+                return Ok(v);
+            }
+            i += 1;
+            args.get(i).cloned().ok_or_else(|| usage(format!("argument {flag}: expected one argument")))
+        };
+        match name.as_str() {
+            "-h" | "--help" => return Err(Fail::Help),
+            "--pfp" => pfp = true,
+            "--input" => {
+                let v = value("--input")?;
+                if corpus.is_some() {
+                    return Err(usage("argument --input: not allowed with argument RAW".into()));
+                }
+                input = Some(PathBuf::from(v));
+            }
+            "--docs-map" => docs_map = Some(PathBuf::from(value("--docs-map")?)),
+            "-o" | "--output" => output = Some(PathBuf::from(value("-o/--output")?)),
+            "-T" | "--tmpdir" | "--scratch" => tmpdir = Some(PathBuf::from(value(&name)?)),
+            "-j" | "--threads" => {
+                let v = value(&name)?;
+                let v = v.to_string_lossy();
+                let n = v.trim().parse::<i64>().map_err(|_| usage(format!("argument -j/--threads: invalid int value: '{v}'")))?;
+                threads = Some(n);
+            }
+            "-m" | "--sort-memory" => {
+                let v = value(&name)?;
+                let v = v.to_string_lossy();
+                sort_memory = Some(byte_size(&v).map_err(|m| usage(format!("argument -m/--sort-memory: {m}")))?);
+            }
+            "-v" | "--verbose" => verbose = true,
+            _ => return Err(usage(format!("unrecognized arguments: {text}"))),
+        }
+        i += 1;
+    }
+    let mut missing: Vec<&str> = Vec::new();
+    if !pfp {
+        missing.push("--pfp");
+    }
+    if docs_map.is_none() {
+        missing.push("--docs-map");
+    }
+    if output.is_none() {
+        missing.push("-o/--output");
+    }
+    if !missing.is_empty() {
+        return Err(usage(format!("the following arguments are required: {}", missing.join(", "))));
+    }
+    let corpus = match (input, corpus) {
+        (Some(i), _) => i,
+        (None, Some(c)) => c,
+        (None, None) => return Err(usage("one of the arguments RAW --input is required".into())),
+    };
+    let cpus = affinity();
+    let threads = match threads {
+        Some(n) if n >= 1 && n <= (64usize.min(cpus)) as i64 => n as usize,
+        Some(_) => return Err(usage("thread count exceeds available CPUs or the 64-worker limit".into())),
+        None => 4.min(cpus),
+    };
+    Ok(Options {
+        corpus,
+        docs_map: docs_map.unwrap(),
+        output: output.unwrap(),
+        tmpdir,
+        threads,
+        sort_memory,
+        verbose,
+    })
+}
+/// Where the stages write: the terminal stage's stdout and every stage's stderr
+/// go to the parent's stderr with `-v`, otherwise to one unlinked-by-cleanup log
+/// whose tail is forwarded when a stage fails.
+enum Log {
+    Inherit,
+    File(File),
+}
+
+fn dup_stderr() -> Result<Stdio, Fail> {
+    let fd = unsafe { libc::dup(libc::STDERR_FILENO) };
+    if fd < 0 {
+        return Err(Fail::Run(format!("duplicate stderr: {}", io::Error::last_os_error())));
+    }
+    Ok(Stdio::from(unsafe { OwnedFd::from_raw_fd(fd) }))
+}
+
+impl Log {
+    fn stderr(&self) -> Result<Stdio, Fail> {
+        match self {
+            Log::Inherit => Ok(Stdio::inherit()),
+            Log::File(f) => Ok(Stdio::from(f.try_clone().map_err(|e| format!("duplicate log: {e}"))?)),
+        }
+    }
+    // The last stage's stdout goes where its stderr goes, so a verbose run keeps
+    // the stage output on stderr and a silent run leaves stdout untouched.
+    fn stdout(&self) -> Result<Stdio, Fail> {
+        match self {
+            Log::Inherit => dup_stderr(),
+            Log::File(f) => Ok(Stdio::from(f.try_clone().map_err(|e| format!("duplicate log: {e}"))?)),
+        }
+    }
+}
+
+fn exit_code(status: libc::c_int) -> i32 {
+    if libc::WIFEXITED(status) {
+        libc::WEXITSTATUS(status)
+    } else if libc::WIFSIGNALED(status) {
+        -libc::WTERMSIG(status)
+    } else {
+        -1
+    }
+}
+
+/// Pipe bounded kernel buffers only: each stage's stdout is handed to the next
+/// stage as stdin, so the parent holds no upstream read end and a failing
+/// downstream stage reaches its writer as EPIPE. Any failed stage cancels peers.
+fn pipeline(commands: &[Vec<OsString>], log: &Log) -> Result<(), Fail> {
+    let mut children: Vec<Option<Child>> = commands.iter().map(|_| None).collect();
+    let mut previous: Option<ChildStdout> = None;
+    let mut result = spawn_stages(commands, log, &mut children, &mut previous);
+    if result.is_ok() {
+        result = wait_stages(commands, &mut children);
+    }
+    drop(previous);
+    for slot in children.iter_mut() {
+        if let Some(mut child) = slot.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+    result
+}
+
+fn spawn_stages(
+    commands: &[Vec<OsString>],
+    log: &Log,
+    children: &mut [Option<Child>],
+    previous: &mut Option<ChildStdout>,
+) -> Result<(), Fail> {
+    for (i, argv) in commands.iter().enumerate() {
+        let mut c = Process::new(&argv[0]);
+        c.args(&argv[1..]);
+        match previous.take() {
+            Some(out) => c.stdin(Stdio::from(out)),
+            None => c.stdin(Stdio::null()),
+        };
+        if i + 1 < commands.len() {
+            c.stdout(Stdio::piped());
+        } else {
+            c.stdout(log.stdout()?);
+        }
+        c.stderr(log.stderr()?);
+        let mut child = c.spawn().map_err(|e| Fail::Run(format!("{}: {e}", argv[0].to_string_lossy())))?;
+        if i + 1 < commands.len() {
+            *previous = child.stdout.take();
+        }
+        children[i] = Some(child);
+    }
+    Ok(())
+}
+
+fn wait_stages(commands: &[Vec<OsString>], children: &mut [Option<Child>]) -> Result<(), Fail> {
+    loop {
+        check_signal()?;
+        if children.iter().all(|c| c.is_none()) {
+            return Ok(());
+        }
+        let mut status: libc::c_int = 0;
+        let pid = unsafe { libc::waitpid(-1, &mut status, 0) };
+        if pid < 0 {
+            let e = io::Error::last_os_error();
+            if e.kind() == io::ErrorKind::Interrupted {
+                continue; // check_signal at the top of the loop
+            }
+            return Err(Fail::Run(format!("wait for stages: {e}")));
+        }
+        let index = children.iter().position(|c| c.as_ref().is_some_and(|c| c.id() as libc::pid_t == pid));
+        let Some(index) = index else { continue };
+        children[index] = None;
+        let code = exit_code(status);
+        if code != 0 {
+            // Same shape as before: the stage binary's name and its first argument.
+            let name = Path::new(&commands[index][0]).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let arg = commands[index].get(1).map(|a| a.to_string_lossy().into_owned()).unwrap_or_default();
+            return Err(Fail::Run(format!("{name} {arg} exited {code}")));
+        }
+    }
+}
+
+/// Phase driver: times each stage group, journals the phase lines, and forwards
+/// the tail of the stage log when a group fails without `-v`.
+struct Phases {
+    verbose: bool,
+    log: Log,
+    errors: Option<File>,
+}
+
+impl Phases {
+    fn note(&self, message: &str) {
+        if self.verbose {
+            eprintln!("{message}");
+        }
+    }
+    fn run(&mut self, name: &str, commands: &[Vec<OsString>]) -> Result<(), Fail> {
+        check_signal()?;
+        let start = Instant::now();
+        if let Err(fail) = pipeline(commands, &self.log) {
+            if let (Some(errors), Fail::Run(_)) = (self.errors.as_mut(), &fail) {
+                let _ = forward_log_tail(errors);
+            }
+            return Err(fail);
+        }
+        let elapsed = start.elapsed().as_secs_f64();
+        self.note(&format!("build --pfp: {name} {elapsed:.3}s"));
+        Ok(())
+    }
+}
+
+fn forward_log_tail(errors: &mut File) -> io::Result<()> {
+    let end = errors.stream_position()?;
+    errors.seek(SeekFrom::Start(end.saturating_sub(4096)))?;
+    let mut tail = Vec::new();
+    errors.read_to_end(&mut tail)?;
+    let mut stderr = io::stderr().lock();
+    stderr.write_all(&tail)?;
+    stderr.flush()
+}
+
+fn tool(tools: &Path, name: &str) -> OsString {
+    tools.join(name).into_os_string()
+}
+
+fn path_arg(path: &Path) -> OsString {
+    path.as_os_str().to_owned()
+}
+
+fn file_len(path: &Path) -> Result<u64, Fail> {
+    Ok(fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?.len())
+}
+
+/// One seam: P (LE u64 IDs) -> one-based inverse(P), END rank zero.
+///
+/// `free` excludes *all* live ancestor columns. The child directory lives until
+/// the lift is over: references point into P, never into copied text.
+#[allow(clippy::too_many_arguments)]
+fn rank_tape(
+    phases: &mut Phases,
+    tools: &Path,
+    tape: &Path,
+    alphabet: u64,
+    inverse: &Path,
+    workers: &str,
+    memory: u64,
+    free: u64,
+    level: u32,
+) -> Result<(), Fail> {
+    let size = file_len(tape)?;
+    let n = size / 8;
+    if alphabet == 0 || alphabet > n || size != 8 * n {
+        return Err(Fail::Run("invalid lexical ID tape".into()));
+    }
+    if size > free {
+        return Err(Fail::Run(format!("P{level} inverse needs {size} bytes, {free} free")));
+    }
+    let ranker = tools.join("stream_rank");
+    let plan = Process::new(&ranker)
+        .arg("plan")
+        .arg(n.to_string())
+        .arg(workers)
+        .output()
+        .map_err(|e| Fail::Run(format!("{} plan: {e}", ranker.display())))?;
+    let required = match parse_plan(&plan.stdout) {
+        Some(bound) if plan.status.success() => bound,
+        _ => {
+            let tail = &plan.stderr[plan.stderr.len().saturating_sub(512)..];
+            return Err(Fail::Run(format!("invalid P{level} kernel plan: {:?}", String::from_utf8_lossy(tail))));
+        }
+    };
+    let kernel_fits = required <= memory;
+
+    // No repeated first symbol means no repeated block, and tiny tapes are
+    // cheaper as leaves. Otherwise measure the ACTUAL next dictionary. A
+    // shorter Q alone is not a work saving: count owned offsets as well.
+    if n >= 16 && (!kernel_fits || alphabet < n) {
+        let child = tempfile::Builder::new()
+            .prefix("level-")
+            .tempdir_in(inverse.parent().unwrap_or_else(|| Path::new(".")))
+            .map_err(|e| format!("create parse level: {e}"))?;
+        let dir = child.path();
+        let q = dir.join("parse.u64");
+        let qi = dir.join("inverse");
+        phases.run(
+            &format!("parse P{level}"),
+            &[vec![
+                tool(tools, "pfp_parse"),
+                "ids".into(),
+                path_arg(tape),
+                path_arg(dir),
+                workers.into(),
+                memory.to_string().into(),
+                free.to_string().into(),
+            ]],
+        )?;
+        let census = fs::read(dir.join("census")).map_err(|e| format!("census: {e}"))?;
+        if census.len() != 40 {
+            return Err(Fail::Run("bad recursive parse census".into()));
+        }
+        let word = |i: usize| u64::from_le_bytes(census[8 * i..8 * i + 8].try_into().unwrap());
+        let (lower, m, k, owned) = (word(0), word(1), word(2), word(3));
+        let child_bytes = 8 * m + 24 * k + 40;
+        if !(lower == n
+            && 0 < k
+            && k <= m
+            && m <= n
+            && k <= owned
+            && owned <= n
+            && file_len(&q)? == 8 * m
+            && file_len(&dir.join("phrases.ref"))? == 24 * k)
+        {
+            return Err(Fail::Run("bad recursive parse census".into()));
+        }
+        let lift_bytes = child_bytes + 8 * m + size + 16 * owned;
+        let use_lift = m >= 2 && 2 * m <= n && (!kernel_fits || owned + m < n) && lift_bytes <= free;
+        phases.note(&format!(
+            "PFP_CENSUS level={level} lower={n} upper={m} words={k} owned={owned} \
+             direct_bytes={required} lift_scratch={lift_bytes} free={free} descend={}",
+            u8::from(use_lift)
+        ));
+        if use_lift {
+            rank_tape(phases, tools, &q, k, &qi, workers, memory, free - child_bytes, level + 1)?;
+            phases.run(
+                &format!("lift P{}->P{level}", level + 1),
+                &[vec![
+                    tool(tools, "pfp_lift"),
+                    path_arg(tape),
+                    path_arg(dir),
+                    path_arg(inverse),
+                    workers.into(),
+                    memory.to_string().into(),
+                    (free - child_bytes - 8 * m).to_string().into(),
+                ]],
+            )?;
+            return Ok(());
+        }
+        if !kernel_fits {
+            return Err(Fail::Run(format!(
+                "P{level} direct rank needs {required} array bytes; next census {n}->{m}, \
+                 lift needs {lift_bytes} scratch bytes ({free} free)"
+            )));
+        }
+        // Unselected trial retired BEFORE allocating the direct inverse.
+    }
+    if !kernel_fits {
+        return Err(Fail::Run(format!("P{level} direct rank needs {required} array bytes, grant {memory}")));
+    }
+    phases.note(&format!("PFP_LEAF level={level} symbols={n} alphabet={alphabet} array_bound={required}"));
+    phases.run(
+        &format!("rank P{level}"),
+        &[vec![
+            ranker.into_os_string(),
+            "inverse".into(),
+            path_arg(tape),
+            path_arg(inverse),
+            workers.into(),
+            memory.to_string().into(),
+        ]],
+    )
+}
+
+/// `stream_rank plan` prints exactly one decimal line and nothing else.
+fn parse_plan(stdout: &[u8]) -> Option<u64> {
+    let digits = stdout.strip_suffix(b"\n")?.strip_prefix(b"parse64_array_bound=")?;
+    if digits.is_empty() || !digits.iter().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    std::str::from_utf8(digits).ok()?.parse().ok()
+}
+
+fn fsync_dir(dir: &Path) -> Result<(), Fail> {
+    let name = std::ffi::CString::new(dir.as_os_str().as_bytes()).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let fd = unsafe { libc::open(name.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+    if fd < 0 {
+        return Err(Fail::Run(format!("open {}: {}", dir.display(), io::Error::last_os_error())));
+    }
+    let rc = unsafe { libc::fsync(fd) };
+    unsafe { libc::close(fd) };
+    if rc != 0 {
+        return Err(Fail::Run(format!("fsync {}: {}", dir.display(), io::Error::last_os_error())));
+    }
+    Ok(())
+}
+
+fn run(args: &[OsString]) -> Result<(), Fail> {
+    let a = parse(args)?;
+    let raw = fs::canonicalize(&a.corpus).map_err(|e| format!("{}: {e}", a.corpus.display()))?;
+    let metadata = fs::metadata(&raw).map_err(|e| format!("{}: {e}", raw.display()))?;
+    let n = metadata.len();
+    if !metadata.is_file() || n == 0 || n >= 1 << 43 {
+        return Err(Fail::Usage("corpus must be a nonempty regular file shorter than 2^43 bytes".into()));
+    }
+    if !a.docs_map.join("seps.bin").is_file() {
+        return Err(Fail::Usage("--docs-map must contain seps.bin".into()));
+    }
+    if fs::symlink_metadata(&a.output).is_ok() {
+        return Err(Fail::Usage(format!("output exists: {}", a.output.display())));
+    }
+    let mem = a.sort_memory.unwrap_or_else(|| (256 << 20).max(2 * n));
+    let workers = a.threads.to_string();
+    // Logical planning, NOT a filesystem quota. Include the open key/inverse
+    // pair, bitmap, histogram and room for allocation rounding on native files.
+    let budget = 65536.max(2 * n);
+    let reserve = 16384.max(n / 8);
+    let tmp_parent = a
+        .tmpdir
+        .clone()
+        .or_else(|| std::env::var_os("TMPDIR").map(PathBuf::from).filter(|p| !p.as_os_str().is_empty()))
+        .unwrap_or_else(|| match a.output.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => PathBuf::from("."),
+        });
+    let publish_parent = match a.output.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    // This path never resumes or imports experimental finish settings.
+    std::env::remove_var("XSA_FINISH_SPOOL");
+    let tools = match std::env::var_os("XSA_PFP_TOOLS") {
+        Some(dir) => PathBuf::from(dir),
+        None => crate::bundle::resolve()?,
+    };
+    let exe = std::env::current_exe().map_err(|e| format!("current executable: {e}"))?;
+
+    let scratch = tempfile::Builder::new()
+        .prefix(".xsa-pfp-")
+        .tempdir_in(&tmp_parent)
+        .map_err(|e| format!("scratch in {}: {e}", tmp_parent.display()))?;
+    let stage = tempfile::Builder::new()
+        .prefix(".xsa-publish-")
+        .tempdir_in(&publish_parent)
+        .map_err(|e| format!("staging in {}: {e}", publish_parent.display()))?;
+    let tmp = scratch.path();
+    let cols = tmp.join("columns");
+    fs::create_dir(&cols).map_err(|e| format!("{}: {e}", cols.display()))?;
+    let tape = cols.join("parse.u64");
+    let refs = cols.join("phrases.ref");
+    let hist = cols.join("histogram");
+    let inv = cols.join("inverse");
+    let index = stage.path().join("index");
+
+    let errors = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(tmp.join("errors.log"))
+        .map_err(|e| format!("create stage log: {e}"))?;
+    let log = match a.verbose {
+        true => Log::Inherit,
+        false => Log::File(errors.try_clone().map_err(|e| format!("duplicate stage log: {e}"))?),
+    };
+    let mut phases = Phases { verbose: a.verbose, log, errors: if a.verbose { None } else { Some(errors) } };
+
+    let start = Instant::now();
+    phases.run(
+        "parse",
+        &[vec![
+            tool(&tools, "pfp_parse"),
+            path_arg(&raw),
+            path_arg(&cols),
+            workers.clone().into(),
+            mem.to_string().into(),
+            (budget - reserve).to_string().into(),
+        ]],
+    )?;
+    // The bitmap can open before the row producer retires its inputs.
+    let bitmap = (n + 8) / 8;
+    let tape_len = file_len(&tape)?;
+    let refs_len = file_len(&refs)?;
+    if 2 * tape_len + refs_len + 2048 + bitmap > budget - reserve {
+        return Err(Fail::Run("PFP columns, inverse and v10 bitmap exceed scratch budget".into()));
+    }
+    let free = budget - reserve - tape_len - refs_len - file_len(&hist)?;
+    rank_tape(&mut phases, &tools, &tape, refs_len / 24, &inv, &workers, mem, free, 1)?;
+    let prepared = start.elapsed().as_secs_f64();
+    // pfp_rows closes AND unlinks tape, inverse and refs before opening its
+    // posting file. Count the histogram and simultaneous chi bitmap.
+    let cap = budget - reserve - 2048 - bitmap;
+    phases.run(
+        "stream+finish",
+        &[
+            vec![
+                tool(&tools, "pfp_rows"),
+                path_arg(&raw),
+                path_arg(&cols),
+                workers.clone().into(),
+                mem.to_string().into(),
+                cap.to_string().into(),
+            ],
+            vec![exe.into_os_string(), "stream-context".into(), path_arg(&raw), path_arg(&a.docs_map)],
+            vec![
+                tool(&tools, "xsa_finish"),
+                "--from-rows".into(),
+                path_arg(&hist),
+                path_arg(&tmp.join("stream")),
+                path_arg(&index),
+            ],
+        ],
+    )?;
+    drop(phases);
+    // Same filesystem, atomic no-replace. No partial product at the public name,
+    // even if an upstream worker fails after emitting its last packet.
+    fs::hard_link(&index, &a.output).map_err(|e| format!("publish {}: {e}", a.output.display()))?;
+    fsync_dir(&publish_parent)?;
+    if a.verbose {
+        let size = file_len(&a.output)?;
+        eprintln!(
+            "build --pfp: {} ({size} bytes); raw-to-prepared {prepared:.3}s",
+            a.output.display()
+        );
+    }
+    Ok(())
 }
 
 // One coarse entry per 16 KiB keeps the random doc lookup to a small local

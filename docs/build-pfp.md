@@ -2,6 +2,8 @@
 
 Select PFP with `--pfp` instead of `--tape` or `--bin`. This replaces the standalone `xsa build-pfp` (formerly `build-stream`); the existing PFP arguments, defaults and v10 format are unchanged. Omitting `--pfp` does not select this path.
 
+The whole build is orchestrated by `xsa` itself (`xsa/src/build_pfp.rs`): it parses the arguments, plans scratch, drives the rank/lift census recursion, runs the stages through bounded pipes, and publishes the finished container with an atomic no-replace link. The stages are the bundled binaries (`pfp_parse`, `stream_rank`, `pfp_lift`, `pfp_rows`, `xsa_finish`) plus the `xsa stream-context` stage of the same executable. No interpreter is started during a build and the bundle carries no build script, so the only entry point on this path is `xsa build --pfp`.
+
 ```sh
 cargo build --release --locked --manifest-path xsa/Cargo.toml -p xsa
 xsa/target/release/xsa build --pfp corpus.bin --docs-map documents -T /scratch -o corpus.sxi2
