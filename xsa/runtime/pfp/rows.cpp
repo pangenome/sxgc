@@ -32,6 +32,13 @@ struct Group {
 };
 
 struct Router {
+    // I/O GRANULARITY, not cut semantics: the drain is read in buffers of this
+    // size and each contiguous stretch of a buffer is written to its group's
+    // sink with ONE write(). A group boundary inside a buffer splits that one
+    // buffer into two writes; nothing else is ever written piecemeal. The row
+    // loop below still walks every row, because the run index, the 1024 grid and
+    // the manifest are row-level facts.
+    static constexpr size_t BUFFER_BYTES = 1u << 20;   // 1 MiB
     std::vector<int> sink;      // one fd per group, opened before emission
     std::vector<Group> group;   // group.back() is the one being written
     U target = 0;               // --split-runs: runs per group, 0 = equal share
@@ -39,6 +46,8 @@ struct Router {
     U rows = 0, runs = 0;       // global row count, global index of the open run
     unsigned prev_byte = 0;
     size_t g = 0;
+    // Reported, not used: what the router actually cost in syscalls.
+    unsigned long long io_writes = 0, io_bytes = 0, io_reads = 0;
 
     Router(std::vector<int> fds, U split_runs, U stream_rows)
         : sink(std::move(fds)), target(split_runs), total(stream_rows) {}
@@ -70,7 +79,7 @@ struct Router {
         size_t left = sizeof(finiteemit::Row) * n;
         while (left) {
             ssize_t z = ::write(sink[g], p, left);
-            if (z > 0) { p += z; left -= size_t(z); }
+            if (z > 0) { p += z; left -= size_t(z); ++io_writes; io_bytes += (unsigned long long)z; }
             else pfp::check(errno == EINTR, "PFP row group sink closed");
         }
     }
@@ -96,11 +105,12 @@ struct Router {
         write(r + from, n - from);
     }
     void pump(int in) {
-        std::vector<char> buf(sizeof(finiteemit::Row) << 17);   // 1.5 MiB, a whole number of rows
+        std::vector<char> buf(BUFFER_BYTES);
         size_t fill = 0;
         for (;;) {
             ssize_t z = ::read(in, buf.data() + fill, buf.size() - fill);
             if (z < 0) { pfp::check(errno == EINTR, "PFP row group drain read"); continue; }
+            ++io_reads;
             fill += size_t(z);
             const U whole = U(fill / sizeof(finiteemit::Row));
             if (whole) rows_in(reinterpret_cast<const finiteemit::Row*>(buf.data()), whole);
@@ -129,9 +139,12 @@ struct Router {
         pfp::check(std::fclose(f) == 0, "close PFP row group manifest");
     }
     void report(const std::string& manifest) const {
-        std::fprintf(stderr, "PFP_ROW_SPLIT sinks=%zu rows=%llu runs=%llu groups=%zu split_runs=%llu manifest=%s\n",
+        std::fprintf(stderr, "PFP_ROW_SPLIT sinks=%zu rows=%llu runs=%llu groups=%zu split_runs=%llu manifest=%s"
+                     " buffer_bytes=%zu io_reads=%llu io_writes=%llu io_bytes=%llu bytes_per_write=%.1f\n",
                      sink.size(), (unsigned long long)rows, (unsigned long long)(runs + 1), group.size(),
-                     (unsigned long long)target, manifest.c_str());
+                     (unsigned long long)target, manifest.c_str(), BUFFER_BYTES,
+                     io_reads, io_writes, io_bytes,
+                     io_writes ? double(io_bytes) / double(io_writes) : 0.0);
         for (size_t i = 0; i < group.size(); ++i)
             std::fprintf(stderr, "PFP_ROW_GROUP g=%zu first_row=%llu rows=%llu first_run=%llu runs=%llu first_byte=%u\n",
                          i, (unsigned long long)group[i].first_row, (unsigned long long)group[i].rows,

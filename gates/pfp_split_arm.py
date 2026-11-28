@@ -641,6 +641,7 @@ def arm(bin_dir, cfg, work, K, split_runs, timeout):
                   container=str(out), group_containers=[str(gdir / ('g%d.sxi2' % k)) for k in range(K)],
                   carries=[str(gdir / ('carry.%d' % k)) for k in range(K - 1)],
                   work=str(real))
+    print('ARM ' + json.dumps({k: report[k] for k in ('K', 'producer_s', 'total_s', 'stage_s')}), flush=True)
     return report, row_base_of_group, runs_of_group
 
 
