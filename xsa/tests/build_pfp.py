@@ -33,7 +33,10 @@ with tempfile.TemporaryDirectory() as directory:
     assert b'not allowed' in run([*cmd,'--input',raw],False).stderr
     # Without --pfp the raw and genomic forms still go to their original parsers.
     assert b'need --scratch' in run([xsa,'build','--input',raw],False).stderr
-    assert b'need -o' in run([xsa,'build','--fasta',raw],False).stderr
+    # The genomic source route was REMOVED with the interpreter it ran: the
+    # numbered adapter refusal names it and states that nothing was written.
+    refused = run([xsa,'build','--fasta',raw],False).stderr
+    assert b'INPUT_ADAPTER_REFUSED' in refused and b'NOTHING WAS WRITTEN' in refused, refused
     assert not index.exists() and not list(scratch.iterdir())
     build = run(cmd)
     assert not build.stdout and not build.stderr, (build.stdout,build.stderr)
