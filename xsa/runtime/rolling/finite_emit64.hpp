@@ -2,6 +2,7 @@
 #include "finite_emit_refine.hpp"
 #include "finite_tile_pipe64.hpp"
 #include "finite_cache_order64.hpp"
+#include <functional>
 #include <memory>
 namespace finiteemit {
 // One arena record: the representative's first bytes past the band's known
@@ -14,6 +15,13 @@ struct Emit {
  unsigned ob=0,payload=0;bool pair=false,cached=false;U value_mask=0,arrays=0,packets=0,waves=0;double sort_wall=0,stream_wall=0,queue_blocked=0,tile_plan_s=0;Counts totals;Sink sink_stats;
  static constexpr U GRAIN=1536;
  struct Tile {U job,start,len;Span prev;bool last;};
+ // I1 per-band sinks: the cat hands each tile's rows to the sink of the tile's
+ // JOB's band instead of one shared fd, and asks this hook, once per tile, which
+ // sink the next tile takes. The hook owns the band boundaries -- it closes a
+ // band's sink at that band's last tile, so no two bands share an open fd and
+ // each band's forwarder sees EOF at its own boundary.
+ struct BandTap {std::function<int(U job,U rows)>* tile=nullptr;int fd=STDOUT_FILENO;};
+ BandTap band;
  U tiles=0,extended_cuts=0,max_piece=0,max_piece_rows=0,over_queue=0,slots=0,next_job=0;Span prev{};
  static Big tile_bytes(U slots,U team){return Big(divup(slots,GRAIN)+team)*sizeof(Tile)+team*(sizeof(TilePipe)>sizeof(Pipe)?sizeof(TilePipe)-sizeof(Pipe):0);}
  explicit Emit(const Route& index,const std::vector<U>* prefixes=nullptr):ix(index),learned(prefixes),plan(index),v(index.v),text(index.text),n(index.n),m(index.m),team(index.team),stop(index.stop){
@@ -98,8 +106,9 @@ struct Emit {
   need(!work.empty() && work.size()<=bound,"tile plan reservation");tiles+=work.size();for(auto& tile:work)max_piece=std::max(max_piece,tile.len);tile_plan_s+=omp_get_wtime()-start;
   int w=int(std::min<U>(team,work.size()));std::vector<std::unique_ptr<TilePipe>> pipes;std::array<Counts,64> results{};for(int j=0;j<w;++j)pipes.emplace_back(std::make_unique<TilePipe>(stop));
   // Static modulo lanes, all resident. A later full ring cannot prevent the head tile from running.
-  std::thread cat([&](){U emitted=0;for(U i=0;i<work.size();++i){const auto& z=work[i];U mass=plan.jobs[z.job].rows;need(emitted<mass,"overrun before last tile");U rows=pipes[i%w]->cat(sink,i,mass-emitted,sink_stats,packets);
-    need(rows>=z.len,"short tile");max_piece_rows=std::max(max_piece_rows,rows);over_queue+=rows>3*2048;emitted+=rows;if(z.last){need(emitted==mass,"tiled range mass mismatch");emitted=0;}}need(!emitted,"incomplete last range");});
+  std::thread cat([&](){U emitted=0;for(U i=0;i<work.size();++i){const auto& z=work[i];U mass=plan.jobs[z.job].rows;need(emitted<mass,"overrun before last tile");U rows=pipes[i%w]->cat(band.tile?band.fd:sink,i,mass-emitted,sink_stats,packets);
+    need(rows>=z.len,"short tile");max_piece_rows=std::max(max_piece_rows,rows);over_queue+=rows>3*2048;emitted+=rows;if(z.last){need(emitted==mass,"tiled range mass mismatch");emitted=0;}
+    if(band.tile) band.fd=(*band.tile)(z.job,rows);}need(!emitted,"incomplete last range");});
 #pragma omp parallel num_threads(w)
   {int j=omp_get_thread_num();need(omp_get_num_threads()==w,"missing tile lane");auto& q=*pipes[j];for(U i=j;i<work.size();i+=w){auto& z=work[i];Counts c;q.begin(i);expand(plan.jobs[z.job],arena+z.start,z.prev,marks[j],q,c,z.len);add(results[j],c);}q.close();}
   cat.join();for(int j=0;j<w;++j){pipes[j]->drained();queue_blocked+=pipes[j]->blocked;add(totals,results[j]);}}
@@ -113,7 +122,7 @@ struct Emit {
   Big want=need_bytes(slots);
   if (want>grant) { U drop=U((want-grant)/sizeof(Slot))+1; slots=slots>drop?slots-drop:0; want=need_bytes(slots); }
   need(slots && want<=grant,"ordered stream array grant");arrays=narrow(want);plan.build(slots);}
- void emit_to(int sink,U through,bool tiled){const auto& jobs=plan.jobs;need(next_job<through && through<=jobs.size(),"epoch job coverage");stop.check();
+ void emit_to(int sink,U through,bool tiled){const auto& jobs=plan.jobs;need(next_job<through && through<=jobs.size(),"epoch job coverage");stop.check();band.fd=sink;
   std::vector<Slot> arena(slots),sort_tmp(slots);
   // The arena is read and written at random for the whole job; ask for huge
   // pages (the host only grants them on request).
