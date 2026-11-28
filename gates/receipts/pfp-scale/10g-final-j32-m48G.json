@@ -24,52 +24,6 @@
     "expand_pipe_s": 4551.0,
     "sort_cpu_s": 17061.7
   },
-  "members_vs_historical": {
-    "0": {
-      "new": 0,
-      "old": 0,
-      "identical": true
-    },
-    "1": {
-      "new": 0,
-      "old": 0,
-      "identical": true
-    },
-    "4": {
-      "new": 12,
-      "old": 12,
-      "identical": true
-    },
-    "20": {
-      "new": 0,
-      "old": 0,
-      "identical": true
-    },
-    "27571784": {
-      "new": 1636111413,
-      "old": 1636111413,
-      "identical": true
-    },
-    "3074669720": {
-      "new": 1606585,
-      "old": 0,
-      "identical": false
-    },
-    "3085219344": {
-      "new": 0,
-      "old": 1606585,
-      "identical": false
-    },
-    "3474883891": {
-      "new": 7373241456,
-      "old": 7383791080,
-      "identical": false
-    },
-    "4166242424": {
-      "new": 0,
-      "old": 0,
-      "identical": true
-    }
-  },
-  "note": "sort CPU fell 3.7x but the ordering wall only 28%, because the phase is bound by imbalance and stall, not by comparisons; the whole 10 GB wall moved 1.11x. Members other than m20 are the check that the dtop change moved only m20."
+  "note": "sort CPU fell 3.7x but the ordering wall only 28%, because the phase is bound by imbalance and stall, not by comparisons; the whole 10 GB wall moved 1.11x. Members other than m20 are the check that the dtop change moved only m20. The member-level cross-check against the historical container was attempted and failed to parse; do not read this receipt as establishing it.",
+  "member_check": "NOT ESTABLISHED: my SXI2 directory parser misaligned for this container (40- and 36-byte entry assumptions both produced impossible member ids), so no member-level comparison is claimed. The 10.5 MB size delta (7,383,791,080 -> 7,373,241,456) is consistent with dtop = 0 packing better; the writer and m20 gates prove member identity at 100 MB, and a 1 GB comparison is the honest next check."
 }
