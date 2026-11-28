@@ -2432,6 +2432,28 @@ struct RepairStream {
 // bit6/teralcp_chi.cpp): no walks, no SA, no text access in the sweep
 // itself. The v2 corpus has one unique virtual END; content bytes do not
 // determine terminal or collection semantics.
+//
+// I4 (docs/pfp-emission-speedups.md, T8): the machine is a per-RUN map, so a
+// run stream can be swept range by range. `XSA_FINISH_CHI_DUMP=<file>` makes
+// the inline pass record its own inputs (one record per advance) so that a
+// replay can start at any run and `--chi-parallel` can sweep K chunks at once.
+// The saved stream is the sweep's INPUT, never its output; the default product
+// path opens no file and its bytes are unaffected.
+struct ChiRunRecord { uint64_t c, h, t, top, interior; };   // exactly advance()'s inputs
+static constexpr uint64_t CHI_RUN_DUMP_MAGIC = 0x314e555249485358ull;  // "XSHIRUN1"
+struct ChiRunDumpHead { uint64_t magic, n, runs; };
+// THE WHOLE cross-run memory of the machine. rr_len's max-heap is a FUNCTION of
+// rr_len (heapInit() rebuilds it index for index), so it is not carried; chi and
+// the stats are per-process counters and restart at every chunk.
+struct ChiSweepState {
+    int64_t rr_len[256];
+    uint64_t rr_pos[256];
+    uint8_t rr_act[256];
+    int64_t m;
+    int32_t p;
+    uint64_t p_sa_last, previous_interior;
+    uint8_t first;
+};
 template<class Sink = std::function<void(uint64_t)>>
 struct SweepImpl {
     bool cyclic = true;
@@ -2499,10 +2521,69 @@ struct SweepImpl {
     int32_t p = -1;
     uint64_t p_sa_last = 0;
     bool first = true;
+    // ---- I4: the run-stream log (empty unless XSA_FINISH_CHI_DUMP is set) -----
+    int dumpFd = -1;
+    std::vector<ChiRunRecord> dumpBuf;
     explicit SweepImpl(uint64_t nNorm, Sink sink = {})
         : n(nNorm), bigN(nNorm), emitWitness(std::move(sink)) {
         for (int c = 0; c < 256; ++c) { rr_len[c] = -1; rr_pos[c] = 0; rr_act[c] = false; }
         heapInit();
+        openDumpIfAsked();
+    }
+    // Opened once per process: the inline product path constructs exactly one
+    // SweepImpl, and a second one (a selftest, a replayed group) must not
+    // truncate the log the first is writing.
+    void openDumpIfAsked() {
+        static bool asked = false;
+        static const char* path = nullptr;
+        if (!asked) {
+            asked = true;
+            const char* p = std::getenv("XSA_FINISH_CHI_DUMP");
+            path = (p && *p) ? p : nullptr;
+            if (path) {
+                dumpFd = ::open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                pf_check(dumpFd >= 0, std::string("create chi run dump ") + path);
+                const ChiRunDumpHead h{CHI_RUN_DUMP_MAGIC, n, 0};
+                pf_write_full(dumpFd, &h, sizeof h, "chi run dump header");
+                fprintf(stderr, "XSA_FINISH_CHI_DUMP_RECORDING path=%s n=%llu\n", path,
+                        (unsigned long long)n);
+            }
+        }
+        if (!path) dumpFd = -1;
+    }
+    void dumpFlush() {
+        if (dumpFd < 0 || dumpBuf.empty()) return;
+        pf_write_full(dumpFd, dumpBuf.data(), dumpBuf.size() * sizeof(ChiRunRecord), "chi run dump");
+        dumpBuf.clear();
+    }
+    void dumpClose() {
+        if (dumpFd < 0) return;
+        dumpFlush();
+        const uint64_t runs = natRuns;
+        pf_check(::pwrite(dumpFd, &runs, sizeof runs, 16) == ssize_t(sizeof runs),
+                 "patch chi run dump count");
+        pf_check(::close(dumpFd) == 0, "close chi run dump");
+        dumpFd = -1;
+        fprintf(stderr, "XSA_FINISH_CHI_DUMP_DONE runs=%llu\n", (unsigned long long)runs);
+    }
+    uint64_t natRuns = 0;   // advances recorded (the dump's run count)
+    // ---- I4: the state that crosses a chunk boundary -------------------------
+    void saveState(ChiSweepState& s) const {
+        std::memcpy(s.rr_len, rr_len, sizeof rr_len);
+        std::memcpy(s.rr_pos, rr_pos, sizeof rr_pos);
+        for (int c = 0; c < 256; ++c) s.rr_act[c] = rr_act[c] ? 1 : 0;
+        s.m = m; s.p = p; s.p_sa_last = p_sa_last;
+        s.previous_interior = previous_interior; s.first = first ? 1 : 0;
+    }
+    void loadState(const ChiSweepState& s) {
+        std::memcpy(rr_len, s.rr_len, sizeof rr_len);
+        std::memcpy(rr_pos, s.rr_pos, sizeof rr_pos);
+        for (int c = 0; c < 256; ++c) rr_act[c] = s.rr_act[c] != 0;
+        m = s.m; p = s.p; p_sa_last = s.p_sa_last;
+        previous_interior = s.previous_interior; first = s.first != 0;
+        heapInit();
+        chi = 0; statAdvance = statCharChange = statScanWords = statFired = 0;
+        statActSeen = statEmit = statMaxAct = 0;
     }
     uint64_t witness(uint64_t pos) const {
         pf_check(pos < n, "chi-rspace: endpoint outside text");
@@ -2600,6 +2681,11 @@ struct SweepImpl {
     }
     static unsigned ctz64(uint64_t v) { return unsigned(__builtin_ctzll(v)); }
     void advance(const NRun& v, uint64_t topLcp, uint64_t interiorMin) {
+        if (dumpFd >= 0) {
+            dumpBuf.push_back({uint64_t(v.c), v.h, v.t, topLcp, interiorMin});
+            ++natRuns;
+            if (dumpBuf.size() == (1 << 12)) dumpFlush();
+        }
         int32_t c = v.c;
         int64_t lcp_b = int64_t(topLcp);
         if (first) {
@@ -2629,6 +2715,7 @@ struct SweepImpl {
         p_sa_last = v.t;
     }
     void finish() {
+        dumpClose();
         // final flush: m3 = -1 (emit every active witness); the scalar rule
         // is `int64_t(-1) < rr_len[cc]` with the act flag checked - the
         // threshold_reset at m3=-1 emits exactly the act set.
@@ -3022,6 +3109,204 @@ struct BitsOut {
         return spill.data();
     }
 };
+
+// ------------------------------------------------ I4: the chunked chi sweep
+// `xsa_finish --chi-parallel DUMP M5 K [--chunk-runs N]`
+//
+// DUMP is the run stream the inline sweep recorded under
+// XSA_FINISH_CHI_DUMP=<file> (SweepImpl::advance's own inputs, one 40-byte
+// record per run). Two passes:
+//
+//   1. SNAPSHOT (sequential, ONE thread): sweep the whole stream with no sink
+//      and save ChiSweepState every chunk boundary. It computes the
+//      same state the inline sweep computes and emits nothing, so it is the
+//      term that bounds the gain: total = snapshot + K-worker wall.
+//   2. WORKERS (K threads): chunk c loads state c and sweeps chunk c's runs
+//      into its own position bitmap. Witnesses are POSITIONS, so the union of
+//      the K bitmaps is the inline set exactly; the union is ORed together
+//      after the join and fed to m5's Elias-Fano encoder, which is the SAME
+//      arithmetic the inline path runs over WitnessBitmap::for_each_sorted.
+//      Witness ORDER (which the inline sweep fixes) never enters m5: the member
+//      is built from ascending set bits.
+//
+// The default product path never calls this. Nothing here changes a byte of it:
+// the inline sweep stays the writer behind `xsa build --pfp`, and the state
+// carry it relies on is the law `--selftest-sweep-monoid` already checks at
+// every split of 2048 random streams.
+// The chunk width the plan starts from (runs). It is subdivided per worker count
+// so that K=8 still has eight chunks per worker; see CHI_PARALLEL_PLAN, which
+// prints the width actually used.
+static constexpr uint64_t CHUNK_RUNS = 1ull << 22;
+struct ChiBitSink {   // one worker's position bitmap; no mmap, no sharing
+    std::vector<uint64_t>* words = nullptr;
+    uint64_t duplicates = 0;
+    void operator()(uint64_t v) {
+        uint64_t& w = (*words)[v >> 6];
+        const uint64_t m = 1ull << (v & 63);
+        if (w & m) { ++duplicates; return; }
+        w |= m;
+    }
+};
+struct ChiNullSink { void operator()(uint64_t) {} };
+static int chi_parallel(const std::string& dumpPath, const std::string& m5Path,
+                        int workers, uint64_t chunkRuns) {
+    const double tAll = tnow();
+    const uint64_t headRec = sizeof(ChiRunDumpHead), recBytes = sizeof(ChiRunRecord);
+    int fd = ::open(dumpPath.c_str(), O_RDONLY);
+    pf_check(fd >= 0, "open chi run dump " + dumpPath);
+    struct stat st {};
+    pf_check(::fstat(fd, &st) == 0, "stat chi run dump");
+    const uint64_t size = uint64_t(st.st_size);
+    ChiRunDumpHead head{};
+    pf_check(size >= headRec, "chi run dump is shorter than its header");
+    pf_pread_full(fd, &head, headRec, 0, "chi run dump header");
+    pf_check(head.magic == CHI_RUN_DUMP_MAGIC, "not a chi run dump (magic)");
+    pf_check((size - headRec) % recBytes == 0, "chi run dump has a partial record");
+    const uint64_t runs = (size - headRec) / recBytes;
+    // The count is the inline pass's own, written when its sweep closed: a dump
+    // from a killed pass says 0 and is refused rather than silently replayed short.
+    pf_check(head.runs == runs, "chi run dump was not closed by its sweep (" +
+                                std::to_string(head.runs) + " of " + std::to_string(runs) + " runs)");
+    const uint64_t n = head.n;
+    pf_check(runs && n > 1, "empty chi run dump");
+    pf_check(chunkRuns, "--chunk-runs must be positive");
+    // Chunk WIDTH is CHUNK_RUNS, subdivided so that no worker runs out of chunks:
+    // a state restore costs one 4.7 KB copy plus heapInit, so chunks finer than
+    // CHUNK_RUNS are free and are what keeps K=8 busy on a 100 MB stream (10
+    // chunks at 1<<22 runs would leave two workers with all the work).
+    chunkRuns = std::min<uint64_t>(chunkRuns, std::max<uint64_t>(1, runs / (8 * uint64_t(workers))));
+    const uint64_t chunks = (runs + chunkRuns - 1) / chunkRuns;
+    fprintf(stderr, "CHI_PARALLEL_PLAN n=%llu runs=%llu chunk_runs=%llu chunks=%llu workers=%d\n",
+            (unsigned long long)n, (unsigned long long)runs, (unsigned long long)chunkRuns,
+            (unsigned long long)chunks, workers);
+    std::vector<ChiRunRecord> recBuf(1u << 14);
+    auto readChunk = [&](uint64_t lo, uint64_t cnt, ChiRunRecord* out) {
+        pf_pread_full(fd, out, cnt * recBytes, headRec + lo * recBytes, "chi run dump chunk");
+    };
+    // ------------------------------------------------------- 1. snapshot pass
+    const double tSnap = tnow();
+    std::vector<ChiSweepState> states(chunks);
+    {
+        SweepImpl<ChiNullSink> s(n);
+        s.saveState(states[0]);
+        for (uint64_t at = 0; at < runs;) {
+            const uint64_t cnt = std::min<uint64_t>(recBuf.size(), runs - at);
+            readChunk(at, cnt, recBuf.data());
+            for (uint64_t i = 0; i < cnt; ++i) {
+                const uint64_t r = at + i;
+                if (r && r % chunkRuns == 0) s.saveState(states[r / chunkRuns]);
+                const ChiRunRecord& q = recBuf[i];
+                s.advance(NRun{uint8_t(q.c), 1, q.h, q.t}, q.top, q.interior);
+            }
+            at += cnt;
+        }
+    }
+    const double snapshotS = tnow() - tSnap;
+    fprintf(stderr, "CHI_PARALLEL_SNAPSHOT runs=%llu states=%llu wall=%.3f\n",
+            (unsigned long long)runs, (unsigned long long)chunks, snapshotS);
+    // ---------------------------------------------------------- 2. K workers
+    const uint64_t words = (n + 63) / 64;
+    const size_t nw = size_t(workers);
+    std::vector<std::vector<uint64_t>> maps(nw);
+    std::vector<uint64_t> dups(nw, 0), emitCalls(nw, 0);
+    const double tWork = tnow();
+    std::vector<std::thread> pool;
+    std::vector<std::string> failures(nw);
+    for (int w = 0; w < workers; ++w) {
+        pool.emplace_back([&, w]() {
+            try {
+                maps[size_t(w)].assign(size_t(words), 0);
+                ChiBitSink sink{&maps[size_t(w)], 0};
+                SweepImpl<ChiBitSink> s(n, sink);
+                for (uint64_t c = uint64_t(w); c < chunks; c += uint64_t(workers)) {
+                    s.loadState(states[size_t(c)]);
+                    const uint64_t lo = c * chunkRuns, cnt = std::min(chunkRuns, runs - lo);
+                    std::vector<ChiRunRecord> buf(size_t(std::min<uint64_t>(recBuf.size(), cnt)));
+                    for (uint64_t at = lo; at < lo + cnt;) {
+                        const uint64_t z = std::min<uint64_t>(buf.size(), lo + cnt - at);
+                        readChunk(at, z, buf.data());
+                        for (uint64_t i = 0; i < z; ++i) {
+                            const ChiRunRecord& q = buf[i];
+                            s.advance(NRun{uint8_t(q.c), 1, q.h, q.t}, q.top, q.interior);
+                        }
+                        at += z;
+                    }
+                    // The inline sweep's LAST event is finish()'s m3 = -1 flush,
+                    // which emits the still-active witnesses: it belongs to the
+                    // chunk that ends the stream, not to every chunk.
+                    if (lo + cnt == runs) s.finish();
+                    emitCalls[size_t(w)] += s.chi;
+                    dups[size_t(w)] += s.emitWitness.duplicates;
+                }
+            } catch (const std::exception& e) { failures[size_t(w)] = e.what(); }
+        });
+    }
+    for (auto& t : pool) t.join();
+    for (auto& f : failures) pf_check(f.empty(), "chi parallel worker: " + f);
+    const double workersS = tnow() - tWork;
+    uint64_t emitTotal = 0, dupTotal = 0;
+    for (int w = 0; w < workers; ++w) { emitTotal += emitCalls[size_t(w)]; dupTotal += dups[size_t(w)]; }
+    fprintf(stderr, "CHI_PARALLEL_WORKERS workers=%d wall=%.3f emit_calls=%llu per_worker_duplicates=%llu\n",
+            workers, workersS, (unsigned long long)emitTotal, (unsigned long long)dupTotal);
+    // -------------------------------------------------------------- 3. union
+    const double tMerge = tnow();
+    std::vector<uint64_t> uni(size_t(words), 0);
+    for (int w = 0; w < workers; ++w)
+        for (uint64_t i = 0; i < words; ++i) uni[size_t(i)] |= maps[size_t(w)][size_t(i)];
+    uint64_t chi = 0;
+    for (uint64_t i = 0; i < words; ++i) chi += uint64_t(__builtin_popcountll(uni[size_t(i)]));
+    maps.clear(); maps.shrink_to_fit();
+    const double mergeS = tnow() - tMerge;
+    // ---------------------------------------------------- 4. m5 Elias-Fano
+    const double tEnc = tnow();
+    unsigned l = chi ? unsigned(std::max(0, int(std::log2(double(n + 1) / double(chi))))) : 0;
+    if (l > 63) l = 63;
+    const uint64_t lowbits = chi * l, highbits = chi ? (n >> l) + chi + 1 : 0;
+    BitsOut low(m5Path + ".bits-low"), high(m5Path + ".bits-high");
+    uint64_t hpos = 0, prev = ~0ull, i = 0;
+    for (uint64_t w = 0; w < words; ++w) {
+        uint64_t bits = uni[size_t(w)];
+        while (bits) {
+            const uint64_t v = w * 64 + uint64_t(__builtin_ctzll(bits));
+            bits &= bits - 1;
+            pf_check(v < n && (prev == ~0ull || v > prev), "chi parallel positions not increasing");
+            prev = v;
+            low.lsb(v, l);
+            const uint64_t mark = (v >> l) + i;
+            pf_check(mark >= hpos && mark < highbits, "chi parallel EF high extent");
+            high.putzeros(mark - hpos); high.bit(1);
+            hpos = mark + 1; ++i;
+        }
+    }
+    pf_check(i == chi, "chi parallel EF count");
+    if (highbits > hpos) { high.putzeros(highbits - hpos); hpos = highbits; }
+    pf_check(low.bitPos == lowbits && high.bitPos == highbits, "chi parallel EF dimensions");
+    low.pad();
+    high.pad();
+    // The member bytes: exactly `container.num(l); num(lowbits); num(highbits)`
+    // followed by the two payloads, which is what the inline m5 member holds.
+    struct MemberOut {
+        int fd = -1;
+        void write(const void* p, size_t z) { pf_write_full(fd, p, z, "chi parallel m5 member"); }
+    } member;
+    member.fd = ::open(m5Path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    pf_check(member.fd >= 0, "create chi parallel m5 member " + m5Path);
+    const uint64_t dims[3] = {uint64_t(l), lowbits, highbits};
+    for (uint64_t d : dims) { unsigned char e[8]; put(e, d, 8); member.write(e, 8); }
+    low.copyTo(member);
+    high.copyTo(member);
+    pf_check(::fsync(member.fd) == 0, "fsync chi parallel m5 member");
+    pf_check(::close(member.fd) == 0, "close chi parallel m5 member");
+    const double encodeS = tnow() - tEnc;
+    const uint64_t memberBytes = 24 + low.bytes() + high.bytes();
+    fprintf(stderr, "CHI_PARALLEL_RESULT entries=%llu member_bytes=%llu l=%u lowbits=%llu highbits=%llu "
+                    "snapshot_s=%.3f workers_s=%.3f union_s=%.3f encode_s=%.3f total_s=%.3f\n",
+            (unsigned long long)chi, (unsigned long long)memberBytes, l,
+            (unsigned long long)lowbits, (unsigned long long)highbits,
+            snapshotS, workersS, mergeS, encodeS, tnow() - tAll);
+    ::close(fd);
+    return 0;
+}
 
 // ---------------------------------------------------- ROUTE B: one-pass m1
 //
@@ -5418,6 +5703,25 @@ int main(int argc, char** argv) {
                 else pf_fail("unknown --from-rows argument " + a);
             }
             return finish_row_stream(argv[2], argv[3], argv[4], range);
+        }
+        if (argc >= 2 && std::string(argv[1]) == "--chi-parallel") {
+            // I4: --chi-parallel DUMP M5 K [--chunk-runs N]; opt-in, never the product.
+            auto amount = [](const std::string& v) {
+                char* end = nullptr;
+                const unsigned long long x = std::strtoull(v.c_str(), &end, 10);
+                pf_check(!v.empty() && end && *end == '\0', "--chi-parallel counts are decimal: " + v);
+                return uint64_t(x);
+            };
+            pf_check(argc >= 5, "--chi-parallel DUMP M5 K [--chunk-runs N]");
+            int workers = int(amount(argv[4]));
+            uint64_t chunkRuns = CHUNK_RUNS;
+            for (int i = 5; i < argc; ++i) {
+                const std::string a = argv[i];
+                pf_check(a == "--chunk-runs" && i + 1 < argc, "unknown --chi-parallel argument " + a);
+                chunkRuns = amount(argv[++i]);
+            }
+            pf_check(workers >= 1 && workers <= 256, "--chi-parallel needs 1..256 workers");
+            return chi_parallel(argv[2], argv[3], workers, chunkRuns);
         }
         if (argc == 2 && std::string(argv[1]) == "--benchmark-repair-chunks") return benchmark_repair_chunks();
         if (argc == 2 && std::string(argv[1]) == "--selftest-packed-bits") return selftest_packed_bits();
