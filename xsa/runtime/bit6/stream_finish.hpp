@@ -50,8 +50,8 @@ static constexpr uint64_t NO_GROUP = ~0ull;
 
 struct GroupCarry {
     static constexpr uint64_t MAGIC = 0x3130505247574f52ull;   // "ROWGRP01", little endian
-    static constexpr uint64_t VERSION = 1;
-    static constexpr size_t HEADER_WORDS = 20, ARRAY_WORDS = 8*256, GROUPS = 256;
+    static constexpr uint64_t VERSION = 2;
+    static constexpr size_t HEADER_WORDS = 21, ARRAY_WORDS = 8*256, GROUPS = 256;
     uint64_t n = 0;             // corpus extent this state belongs to
     uint64_t row_base = 0;      // A: the row this state starts at
     uint64_t run_base = 0;      // global index of the first run this group closes
@@ -59,6 +59,13 @@ struct GroupCarry {
     bool open = false;          // an open run ends at row A-1
     uint8_t c = 0;
     uint64_t len = 0, h = 0, t = 0, top = 0, interior = 0;
+    // The group ended AT a run boundary: it closed its own last run (a producer
+    // cuts on a byte change, so the row at B starts a run that belongs to the
+    // next group), `c` still names that run's code, and the continuing group's
+    // first row must open a DIFFERENT run. Without this the writer would leave
+    // its last run open, stamp run_base one run short of the producer's cut and
+    // put every continued group off the m1 block grid.
+    bool boundary_fresh = false;
     bool first = true;          // the sweep has not advanced yet
     int64_t m = 0;
     int32_t p = -1;
@@ -82,7 +89,8 @@ struct GroupCarry {
         w.reserve(words());
         for (uint64_t v : {MAGIC, VERSION, n, row_base, run_base, prev, uint64_t(open), uint64_t(c),
                            len, h, t, top, interior, uint64_t(first), uint64_t(m), uint64_t(int64_t(p)),
-                           p_sa_last, previous_interior, idx_row, uint64_t(fixes.size())})
+                           p_sa_last, previous_interior, idx_row, uint64_t(fixes.size()),
+                           uint64_t(boundary_fresh)})
             w.push_back(v);
         for (int64_t v : rr_len) w.push_back(uint64_t(v));
         for (const auto* a : {&rr_pos, &rr_act, &occ, &cum, &lastSample, &lastSampleOcc, &sample_group})
@@ -103,6 +111,7 @@ struct GroupCarry {
         g.first = w[13] != 0; g.m = int64_t(w[14]); g.p = int32_t(int64_t(w[15]));
         g.p_sa_last = w[16]; g.previous_interior = w[17]; g.idx_row = w[18];
         const uint64_t fixes = w[19];
+        g.boundary_fresh = w[20] != 0;
         pf_check(w.size() == HEADER_WORDS + ARRAY_WORDS + 4*fixes,
                  "row-range carry length " + std::to_string(w.size()) + " is not " +
                  std::to_string(HEADER_WORDS) + " + " + std::to_string(ARRAY_WORDS) + " + 4*" +
@@ -298,6 +307,8 @@ static int finish_row_stream(const char* histogram,const char* scratch,const cha
     }
     if (group) {
         pf_check(!range.carry_in.empty() || from==0, "a group that does not start at row 0 needs --carry-in");
+        pf_check(!carried || !carry.boundary_fresh || !carry.open,
+                 "row-range carry " + range.carry_in + " claims a run boundary AND an open run");
         pf_check(!range.chi_shared.empty(), "a group run ORs its witnesses into a shared bitmap: pass --chi-shared PATH");
         pf_check(!range.carry_out.empty(), "a group run reports its continuation state: pass --carry-out PATH");
     }
@@ -350,16 +361,32 @@ static int finish_row_stream(const char* histogram,const char* scratch,const cha
                          std::to_string(int(carry.c)) + ", " + std::to_string(carry.len) +
                          " rows) nor opens a new one (code " + std::to_string(int(c)) + ", " +
                          std::to_string(run.len) + " rows)");
+            // A producer cuts on a byte change, so the group before this one
+            // closed its own last run and this row must open a different one.
+            if (carried && rank==from && carry.boundary_fresh)
+                pf_check(run.len==1 && run.c!=carry.c,
+                         "row " + std::to_string(rank) + " does not open a fresh run: the group carry "
+                         "declares a run boundary after code " + std::to_string(int(carry.c)) +
+                         " but this row's code is " + std::to_string(int(c)) + " (" +
+                         std::to_string(run.len) + " rows in the open run)");
         }
         spend_row+=now_s()-s;
     }
-    // A group that does not end the stream leaves its last run open: the group
-    // that continues it closes it exactly as this writer would have.
+    // A group that does not end the stream ends AT a run boundary: the row at
+    // `to` starts the next group's first run, so this group's own last run is
+    // complete. Close it here, exactly as that row would have, so the runs this
+    // group contributes are all of them and the carry's run_base lands on the m1
+    // block grid the producer cut on.
     double sweep_finish_s=0;
+    bool boundary_fresh=false;
+    unsigned boundary_code=0;
     if (to==n) {
         close_run();double sweep_s=now_s();sweep.finish();blocks.finish(true);
         sweep_finish_s=now_s()-sweep_s;
-    } else blocks.finish(false);
+    } else {
+        close_run();boundary_code=run.c;run={};boundary_fresh=true;
+        blocks.finish(false);
+    }
     if (to==n) pf_check(std::equal(freq.begin(),freq.end(),blocks.samples.cum),"BWT histogram differs from corpus");
     else for(unsigned c=0;c<256;++c)
         pf_check(blocks.samples.cum[c]<=freq[c],"group run histogram overruns the corpus histogram");
@@ -388,8 +415,9 @@ static int finish_row_stream(const char* histogram,const char* scratch,const cha
     if (!range.carry_out.empty()) {
         GroupCarry next;
         next.n=n;next.row_base=to;next.run_base=global_runs;next.prev=prev;
-        next.open=run.len!=0;next.c=run.c;next.len=run.len;next.h=run.h;next.t=run.t;
-        next.top=top;next.interior=interior;
+        next.open=run.len!=0;next.c=boundary_fresh?uint8_t(boundary_code):run.c;
+        next.len=run.len;next.h=run.h;next.t=run.t;
+        next.top=top;next.interior=interior;next.boundary_fresh=boundary_fresh;
         next.first=sweep.first;next.m=sweep.m;next.p=sweep.p;next.p_sa_last=sweep.p_sa_last;
         next.previous_interior=sweep.previous_interior;
         for (unsigned cc=0;cc<256;++cc) {
@@ -404,9 +432,11 @@ static int finish_row_stream(const char* histogram,const char* scratch,const cha
         next.fixes=blocks.fixes;
         next.save(range.carry_out);
         fprintf(stderr,"XSA_FINISH_ROW_CARRY out=%s next_row=%llu row_base=%llu run_base=%llu open_run=%llu "
-                       "open_code=%u m13_fixes=%zu\n",
+                       "open_code=%u boundary_fresh=%u runs=%llu m13_fixes=%zu\n",
                 range.carry_out.c_str(),(unsigned long long)to,(unsigned long long)from,
-                (unsigned long long)global_runs,(unsigned long long)run.len,unsigned(run.c),blocks.fixes.size());
+                (unsigned long long)global_runs,(unsigned long long)run.len,
+                unsigned(next.c),unsigned(boundary_fresh),(unsigned long long)blocks.runs,
+                blocks.fixes.size());
     }
     if (group)
         fprintf(stderr,"XSA_FINISH_ROWS from=%llu to=%llu carried=%d run_base=%llu runs=%llu open_run=%llu\n",

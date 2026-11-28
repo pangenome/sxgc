@@ -237,9 +237,9 @@ def carry_fixes(path):
     b = Path(path).read_bytes()
     assert len(b) % 8 == 0 and len(b) >= 8 * 20
     w = struct.unpack('<%dQ' % (len(b) // 8), b)
-    assert w[0] == 0x3130505247574f52, hex(w[0])
+    assert w[0] == 0x3130505247574f52 and w[1] == 2, (hex(w[0]), w[1])
     nfix = w[19]
-    at = 20 + 8 * 256
+    at = 21 + 8 * 256          # HEADER_WORDS (v2 carry adds boundary_fresh) + 8 arrays
     assert len(w) == at + 4 * nfix, (len(w), at, nfix)
     return [(w[at + 4 * i], w[at + 4 * i + 1], w[at + 4 * i + 2], w[at + 4 * i + 3]) for i in range(nfix)]
 
