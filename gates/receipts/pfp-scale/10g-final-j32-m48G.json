@@ -1,0 +1,75 @@
+{
+  "label": "10g-final-j32-m48G",
+  "scope": "10 GB ladder rung, K=1, everything landed: radix ordering (I2), 16-byte key (T4), huge pages, 1.5 MiB writer packets, order-independent dtop",
+  "wall_s": 6211.794767131098,
+  "raw_to_prepared_s": 185.356,
+  "emission_s": 6024.852,
+  "output_bytes": 7373241456,
+  "sha256": "25598aca3ab1551c70197b3f31174bec234fe02cef730708ef0efcbd04268576",
+  "previous_pin": "ecb2e766... retired by the approved dtop change",
+  "cgroup_memory_peak": 67686342656,
+  "scratch_logical_sample": 13622377141,
+  "cpu_per_wall_s": 3.141109592391047,
+  "prior_wall_s": 6919.5,
+  "factor": 1.114,
+  "phases": {
+    "order_s": 1470.188,
+    "expand_pipe_s": 4403.855,
+    "sort_cpu_s": 4580.154,
+    "gather_cpu_s": 2171.164,
+    "key_cmp": 86047611467
+  },
+  "prior_phases": {
+    "order_s": 2036.9,
+    "expand_pipe_s": 4551.0,
+    "sort_cpu_s": 17061.7
+  },
+  "members_vs_historical": {
+    "0": {
+      "new": 0,
+      "old": 0,
+      "identical": true
+    },
+    "1": {
+      "new": 0,
+      "old": 0,
+      "identical": true
+    },
+    "4": {
+      "new": 12,
+      "old": 12,
+      "identical": true
+    },
+    "20": {
+      "new": 0,
+      "old": 0,
+      "identical": true
+    },
+    "27571784": {
+      "new": 1636111413,
+      "old": 1636111413,
+      "identical": true
+    },
+    "3074669720": {
+      "new": 1606585,
+      "old": 0,
+      "identical": false
+    },
+    "3085219344": {
+      "new": 0,
+      "old": 1606585,
+      "identical": false
+    },
+    "3474883891": {
+      "new": 7373241456,
+      "old": 7383791080,
+      "identical": false
+    },
+    "4166242424": {
+      "new": 0,
+      "old": 0,
+      "identical": true
+    }
+  },
+  "note": "sort CPU fell 3.7x but the ordering wall only 28%, because the phase is bound by imbalance and stall, not by comparisons; the whole 10 GB wall moved 1.11x. Members other than m20 are the check that the dtop change moved only m20."
+}
