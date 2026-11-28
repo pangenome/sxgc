@@ -55,6 +55,15 @@ struct Router {
         return U(std::ceil(estimate * ((long double)(U(g) + 1) / (long double)sink.size())));
     }
     void open_group(U first_row, U first_run, unsigned byte) { group.push_back(Group{first_row, 0, first_run, 0, byte}); }
+    // A group's sink is closed the moment its last row is written. A group's
+    // stream-context reads exactly its own rows and then needs END OF FILE,
+    // which this process never sends while it holds every sink open to the end:
+    // the chain then stalls on the group boundary and no carry is ever written.
+    void close_sink(size_t k) {
+        if (sink[k] >= 0 && sink[k] != STDOUT_FILENO) ::close(sink[k]);
+        sink[k] = -1;
+    }
+    void close_all() { for (size_t k = 0; k < sink.size(); ++k) if (sink[k] >= 0) close_sink(k); }
     void write(const finiteemit::Row* r, U n) {
         if (!n) return;
         const char* p = reinterpret_cast<const char*>(r);
@@ -76,6 +85,7 @@ struct Router {
                     write(r + from, i - from); from = i;     // the cut sits between two runs
                     group.back().runs = runs - group.back().first_run;
                     open_group(rows, runs, byte);
+                    close_sink(g);                           // group g is complete: its chain needs EOF
                     ++g;
                 }
             }
@@ -101,6 +111,7 @@ struct Router {
         pfp::check(!fill, "PFP row group drain ended inside a row");
         pfp::check(!group.empty(), "PFP row stream is empty");
         group.back().runs = (runs + 1) - group.back().first_run;   // the open run is this group's
+        close_all();                                              // the last group's chain needs EOF too
         pfp::check(rows == total, "PFP row group coverage");
         pfp::check(sink.size() == 1 || group.size() <= sink.size(), "PFP row group count");
     }
